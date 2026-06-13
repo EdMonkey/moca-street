@@ -82,7 +82,7 @@ const Game = (() => {
       m.scale.setScalar(1.3);
       Player.setHeld(m);
     }
-    updateHeldUI();
+    UI.held();
   }
   function drinkIngredients(d) {
     const out = [];
@@ -95,23 +95,6 @@ const Game = (() => {
     if (d.syrup) out.push({ vanilla: '바닐라', caramel: '카라멜', choco: '초코' }[d.syrup]);
     if (d.whip) out.push('휘핑');
     return out;
-  }
-  function updateHeldUI() {
-    const el = $('held');
-    if (!held) { el.classList.add('hidden'); return; }
-    el.classList.remove('hidden');
-    if (held.type === 'drink') {
-      const match = Object.keys(RECIPES).find(k => matchesRecipe(held.drink, k));
-      const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}</b>` : '제조 중인 음료';
-      el.innerHTML = `${name}<div class="ing">${drinkIngredients(held.drink).join(' + ')}</div>`;
-    } else if (held.type === 'portafilter') {
-      const info = held.state === 'filled' ? '원두 채움 — 머신에 장착하세요'
-        : held.state === 'used' ? '사용한 가루 — 넉박스에 비우세요'
-        : '비어 있음 — 그라인더에서 분쇄하세요';
-      el.innerHTML = `<b style="color:var(--accent2)">포터필터</b><div class="ing">${info}</div>`;
-    } else {
-      el.innerHTML = `<b style="color:var(--accent2)">${DESSERTS[held.kind].name}</b>`;
-    }
   }
 
   /* ===== 아이템 내려놓기 / 집기 ===== */
@@ -173,7 +156,7 @@ const Game = (() => {
   /* ===== 주문 ===== */
   function generateOrder(customer) {
     // 튜토리얼 중에는 가장 단순한 메뉴(아메리카노)로 고정
-    if (tut) {
+    if (Tutorial.active()) {
       return { num: ++orderSeq, customer, items: [{ type: 'drink', recipeId: 'americano', done: false }], total: drinkPrice('americano') };
     }
     const pool = unlockedRecipes();
@@ -193,99 +176,15 @@ const Game = (() => {
     return it.type === 'drink' ? RECIPES[it.recipeId].name : DESSERTS[it.kind].name;
   }
 
-  /* 티켓은 주문 시 1회만 생성하고, 이후엔 내용만 제자리 갱신
-   * (매번 DOM을 재생성하면 슬라이드 애니메이션이 반복 재생되어 흔들림) */
-  function addTicketEl(o) {
-    const div = document.createElement('div');
-    div.className = 'ticket panel';
-    div.innerHTML =
-      `<div class="tname">주문 #${o.num}</div><div class="titems"></div>` +
-      `<div class="tbar"><div style="width:100%"></div></div>`;
-    o.el = div;
-    o.itemsEl = div.querySelector('.titems');
-    o.barEl = div.querySelector('.tbar div');
-    renderTicketItems(o);
-    $('tickets').appendChild(div);
-  }
-  function renderTicketItems(o) {
-    o.itemsEl.innerHTML = o.items.map(it => {
-      const hint = (!it.done && it.type === 'drink')
-        ? `<div class="thint">${RECIPES[it.recipeId].steps.join(' → ')}</div>` : '';
-      return `<div class="${it.done ? 'done' : ''}">· ${itemName(it)}</div>${hint}`;
-    }).join('');
-  }
-  function removeTicketEl(o) { if (o.el) { o.el.remove(); o.el = null; } }
-  function updateTicketBars() {
-    orders.forEach(o => {
-      if (!o.el) return;
-      const frac = Math.max(0, o.customer.patience / o.customer.patienceMax);
-      o.barEl.style.width = (frac * 100) + '%';
-      o.el.classList.toggle('angry', frac < 0.3);
-    });
-  }
-
-  /* ===== 튜토리얼 ===== */
-  const TUT_STEPS = [
-    { text: '<b>W A S D</b>로 이동하고, 마우스로 주변을 둘러보세요',
-      check: () => tut.startPos && Player.position.distanceTo(tut.startPos) > 2 },
-    { text: '<b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>를 눌러 손님의 주문을 받으세요',
-      check: () => orders.length > 0 },
-    { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
-      check: () => (held && held.type === 'portafilter') || env.machines.grinderJobs.some(j => j.busy) },
-    { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 원두를 분쇄하세요 — 완료 후 <b>[E]</b>로 꺼내기',
-      check: () => env.machines.grinderJobs.some(j => j.busy) || (held && held.type === 'portafilter' && (held.state === 'filled' || held.state === 'tamped')) },
-    { text: '<b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 원두를 다지세요 (퍼펙트 존에서 떼면 보너스)',
-      check: () => (held && held.type === 'portafilter' && held.state === 'tamped') || env.machines.espressoSlots.some(s => s.pfState === 'tamped' || s.busy) },
-    { text: '탬핑된 포터필터를 들고 <b>에스프레소 머신</b>에 가서 <b>[E]</b>로 장착하세요',
-      check: () => env.machines.espressoSlots.some(s => s.pfState === 'tamped' || s.busy) },
-    { text: '컵 디스펜서에서 <b>머그컵</b>을 집어 머신에 올린 뒤, 빈손으로 <b>[E]</b>를 눌러 추출을 시작하세요',
-      check: () => env.machines.espressoSlots.some(s => s.busy) || (held && held.type === 'drink' && !!held.drink.espresso) },
-    { text: '추출 완료! <b>[E]</b>로 컵을 꺼낸 뒤 주문표의 나머지 재료를 채우세요 — 모르면 <b>[R]</b> 레시피북',
-      check: () => held && held.type === 'drink' && orders.some(o => o.items.some(it => !it.done && it.type === 'drink' && matchesRecipe(held.drink, it.recipeId))) },
-    { text: '음료 완성! <b>PICK UP</b> 팻말 아래 픽업대에서 <b>[E]</b>로 손님에게 서빙하세요', event: 'served' },
-  ];
-  let tut = null;   // { step, startPos }
-
-  function startTutorial() {
-    tut = { step: 0, startPos: Player.position.clone() };
-    showTutStep();
-  }
-  function showTutStep() {
-    $('tutStep').textContent = `튜토리얼 ${tut.step + 1}/${TUT_STEPS.length}`;
-    $('tutText').innerHTML = TUT_STEPS[tut.step].text;
-    $('tutorial').classList.remove('hidden');
-  }
-  function tutAdvance() {
-    tut.step++;
-    AudioFX.ding();
-    if (tut.step >= TUT_STEPS.length) { endTutorial(true); return; }
-    showTutStep();
-  }
-  function endTutorial(completed) {
-    tut = null;
-    $('tutorial').classList.add('hidden');
-    if (completed) { toast('🎓 튜토리얼 완료! 이제 진짜 영업 시작입니다', 'gold', 4000); AudioFX.levelup(); }
-  }
-  function tutEvent(name) {
-    if (!tut) return;
-    // 서빙 = 튜토리얼의 최종 목표 — 단계와 무관하게 완료 처리
-    if (name === 'served') endTutorial(true);
-  }
-  function updateTutorial() {
-    if (!tut) return;
-    const st = TUT_STEPS[tut.step];
-    if (st.check && st.check()) tutAdvance();
-  }
-
   /* ===== 손님 훅 ===== */
   function onAngryLeave(c) {
     const i = orders.findIndex(o => o.customer === c);
-    if (i >= 0) { removeTicketEl(orders[i]); orders.splice(i, 1); }
+    if (i >= 0) { UI.removeTicket(orders[i]); orders.splice(i, 1); }
     S.rep = Math.max(0, S.rep - 4);
     dayStats.angry++;
     toast('손님이 화나서 떠났어요… (평판 -4)', 'bad');
     AudioFX.err();
-    updateHUD();
+    UI.hud();
   }
 
   /* ===== 상호작용 ===== */
@@ -311,7 +210,7 @@ const Game = (() => {
       const order = generateOrder(c);
       orders.push(order);
       Customers.takeOrder(c, order);
-      addTicketEl(order);
+      UI.addTicket(order);
       AudioFX.ding();
       toast(`주문 #${order.num} — ${order.items.map(itemName).join(', ')}`, 'gold');
       return;
@@ -337,7 +236,7 @@ const Game = (() => {
       S.stocks.cups--;
       setHeld({ type: 'drink', drink: { cup: id === 'cupHot' ? 'hot' : id === 'cupIce' ? 'ice' : 'espresso' } });
       AudioFX.cupClink(0.55);
-      updateHUD();
+      UI.hud();
       return;
     }
 
@@ -377,7 +276,7 @@ const Game = (() => {
       WORLD.setPortafilterState(job.pfMesh, 'empty');
       job.sound = AudioFX.grind(job.dur);
       AudioFX.metalClack();
-      updateHUD();
+      UI.hud();
       return;
     }
 
@@ -486,7 +385,7 @@ const Game = (() => {
       job.cupMesh = cm;
       job.sound = AudioFX.steam(job.dur);
       AudioFX.cupClink(0.35);
-      updateHUD();
+      UI.hud();
       return;
     }
 
@@ -544,7 +443,7 @@ const Game = (() => {
       S.stocks.dessert--;
       setHeld({ type: 'dessert', kind: it.kind });
       AudioFX.pick();
-      updateHUD();
+      UI.hud();
       return;
     }
 
@@ -606,7 +505,7 @@ const Game = (() => {
       S.stocks[it.kind] += r.amount;
       toast(`${r.name} +${r.amount} (${fmt(price)})${emergency ? ' · 비상 보충 ⚡' : ''}`, emergency ? 'bad' : 'good');
       AudioFX.cash();
-      updateHUD();
+      UI.hud();
       return;
     }
   }
@@ -635,7 +534,7 @@ const Game = (() => {
           const px = env.pickupPos.x + (Math.random() - 0.5) * 0.5;
           Effects.spawnServe(new THREE.Vector3(px, env.machines.pickupTrayY || 1.07, env.pickupPos.z), fxMesh);
         }
-        renderTicketItems(o);
+        UI.renderTicketItems(o);
         if (o.items.every(i => i.done)) completeOrder(o, servedDrink);
         else toast(`${itemName(item)} 전달! 나머지 항목도 준비하세요`, 'good');
         return;
@@ -666,14 +565,14 @@ const Game = (() => {
     dayStats.served++;
     S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1));
     gainXP(Math.round(o.total / 100));
-    removeTicketEl(o);
+    UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
     Customers.serve(c, null);
     toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
     AudioFX.cash();
-    updateHUD();
-    tutEvent('served');
+    UI.hud();
+    Tutorial.event('served');
   }
 
   function gainXP(amount) {
@@ -685,9 +584,9 @@ const Game = (() => {
       const names = [...newR, ...newD];
       toast(`🎉 레벨 업! Lv.${S.level}${names.length ? ' — 신메뉴: ' + names.join(', ') : ''}`, 'gold', 4500);
       AudioFX.levelup();
-      renderRecipeBook();
+      UI.recipeBook();
     }
-    updateHUD();
+    UI.hud();
   }
 
   /* ===== 머신 비동기 작업 (그라인더·스티머·온수/냉수) =====
@@ -858,182 +757,8 @@ const Game = (() => {
     return true;
   }
 
-  /* ===== 조준 프롬프트 ===== */
-  function promptFor(it) {
-    if (!it) return null;
-    const E = '<b>[E]</b> ';
-    switch (it.id) {
-      case 'register': return Customers.frontCustomer() ? E + '주문 받기' : '대기 중인 손님이 없습니다';
-      case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
-      case 'placedItem': return held ? '손을 비우면 집을 수 있어요' : E + itemLabel(it.rec.item) + ' 집기';
-      case 'cupHot': return E + '머그컵 잡기';
-      case 'cupIce': return E + '아이스컵 잡기';
-      case 'cupEsp': return E + '에스프레소 잔 잡기';
-      case 'ice': return E + '얼음 담기';
-      case 'grinder': {
-        const job = it.job;
-        if (job.busy) {
-          if (!job.done) return `분쇄 중… ${Math.ceil(job.dur - job.t)}s`;
-          return held ? '손을 비우면 포터필터를 꺼낼 수 있어요' : E + '분쇄 완료 — 포터필터 꺼내기';
-        }
-        if (!held) return '머신에서 포터필터를 분리해 오세요';
-        if (held.type !== 'portafilter') return '포터필터를 들고 오세요';
-        if (held.state === 'used') return '넉박스에 가루를 먼저 비우세요';
-        if (held.state === 'filled') return '이미 분쇄된 포터필터예요';
-        if (held.state === 'tamped') return '이미 탬핑된 포터필터예요';
-        if (S.stocks.beans <= 0) return '원두 없음 — 창고에서 보충하세요';
-        return E + '원두 분쇄 시작';
-      }
-      case 'espresso': {
-        const slot = env.machines.espressoSlots[it.slot];
-        if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
-        if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
-        // 컵을 들고 있으면 샷잔 올리기
-        if (held && held.type === 'drink' && !held.drink.espresso)
-          return slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '샷잔 올리기';
-        if (held && held.type === 'drink') return '이미 샷이 추출된 컵이에요';
-        if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
-        // 빈손 + 컵이 올라가 있음 → 추출 버튼
-        if (slot.cupMesh) {
-          if (slot.pfState === 'tamped') return E + '에스프레소 추출 ▶';
-          if (slot.pfState === 'filled') return E + '샷잔 내리기 (탬핑 필요)';
-          if (slot.pfState === 'used') return E + '샷잔 내리기 (사용한 가루 비우기)';
-          if (slot.pfState === 'empty') return E + '샷잔 내리기 (포터필터 분쇄 필요)';
-          return E + '샷잔 내리기 (포터필터 장착·탬핑 필요)';
-        }
-        // 빈손 + 컵 없음 → 포터필터 분리
-        if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
-        if (slot.pfState === 'tamped') return E + '포터필터 분리 (탬핑 완료 ✓ — 샷잔을 올리세요)';
-        if (slot.pfState === 'filled') return E + '포터필터 분리 (탬핑 필요 — 탬핑 스테이션으로)';
-        return E + `포터필터 분리 (${slot.pfState === 'used' ? '사용한 가루 — 넉박스에 비우세요' : '비어 있음 — 분쇄하세요'})`;
-      }
-      case 'steamer': {
-        const job = it.job;
-        if (job.busy) {
-          if (!job.done) return `스팀 중… ${Math.ceil(job.dur - job.t)}s`;
-          return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
-        }
-        if (held && held.type === 'drink')
-          return held.drink.milk ? E + '컵 올려 우유 거품 만들기' : E + '컵 올려 우유 스팀';
-        return '컵을 들고 오세요';
-      }
-      case 'waterHot': case 'waterCold': {
-        const job = env.machines.waterJobs[it.id];
-        const nm = it.id === 'waterHot' ? '온수' : '냉수';
-        if (job.busy) {
-          if (!job.done) return `${nm} 받는 중…`;
-          return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
-        }
-        if (held && held.type === 'drink' && !held.drink.water) return E + `컵 올려 ${nm} 받기`;
-        return '물이 없는 컵을 들고 오세요';
-      }
-      case 'syrup': return E + { vanilla: '바닐라', caramel: '카라멜', choco: '초코' }[it.kind] + ' 시럽 넣기';
-      case 'whip': return E + '휘핑크림 올리기';
-      case 'dessert': return E + DESSERTS[it.kind].name + ' 꺼내기 (' + fmt(DESSERTS[it.kind].price) + ')';
-      case 'knockbox': {
-        if (held && held.type === 'portafilter') {
-          if (held.state === 'used') return E + '사용한 가루 털어내기';
-          return (held.state === 'filled' || held.state === 'tamped') ? '추출 전이에요 — 머신에 장착하세요' : '비울 가루가 없어요';
-        }
-        return '사용한 포터필터를 들고 오세요';
-      }
-      case 'tamp': {
-        if (!held || held.type !== 'portafilter') return '분쇄된 포터필터를 들고 오세요';
-        if (held.state === 'empty') return '먼저 그라인더에서 원두를 분쇄하세요';
-        if (held.state === 'used') return '사용한 가루예요 — 넉박스에 비우세요';
-        if (held.state === 'tamped') return '이미 탬핑이 끝났어요 — 머신에 장착하세요';
-        return '<b>[E]</b> 탬핑 시작 (이후 다시 누르고 있어 게이지 채우기)';
-      }
-      case 'trash': {
-        if (held && held.type === 'portafilter')
-          return held.state === 'used' ? E + '사용한 가루 털어내기 (포터필터는 유지됩니다)' : '⛔ 포터필터는 버릴 수 없어요';
-        return E + '버리기';
-      }
-      case 'restock': {
-        const r = RESTOCK[it.kind];
-        return E + `${r.name} 보충 +${r.amount} (${fmt(r.price)})`;
-      }
-    }
-    return null;
-  }
 
-  /* ===== HUD ===== */
-  function updateHUD() {
-    $('money').textContent = fmt(S.money);
-    $('dayLabel').textContent = 'DAY ' + S.day;
-    const stars = Math.round(S.rep / 20);
-    $('repRow').firstChild.textContent = '★'.repeat(stars) + '☆'.repeat(5 - stars) + ' ';
-    $('repVal').textContent = `평판 ${S.rep}`;
-    $('lvl').textContent = S.level;
-    const prev = LEVEL_XP[S.level - 1], next = LEVEL_XP[S.level];
-    if (S.level >= MAX_LVL) {
-      $('xpBar').style.width = '100%';
-      $('xpTxt').textContent = 'MAX · 마스터(팁+12%)';
-    } else {
-      $('xpBar').style.width = ((S.xp - prev) / (next - prev) * 100) + '%';
-      $('xpTxt').textContent = `${S.xp}/${next} XP`;
-    }
-    const st = S.stocks;
-    $('stocks').innerHTML =
-      `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span><br>` +
-      `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span><br>` +
-      `<span class="${st.cups <= 6 ? 'low' : ''}">🥤 컵 <span class="val">${st.cups}</span></span><br>` +
-      `<span class="${st.dessert <= 2 ? 'low' : ''}">🍰 디저트 <span class="val">${st.dessert}</span></span>`;
-  }
 
-  function updateClock() {
-    const os = $('openState');
-    if (mode === 'prep') {
-      $('clock').textContent = '08:00';
-      os.textContent = '● 영업 준비 중'; os.className = 'closed';
-      return;
-    }
-    const h = 9 + (timeSec / DAY_LEN) * 9;
-    const hh = Math.min(18, h) | 0;
-    const mm = Math.min(59, ((h - hh) * 60) | 0);
-    $('clock').textContent = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
-    if (open) { os.textContent = '● 영업 중'; os.className = 'open'; }
-    else { os.textContent = '● 마감 — 남은 손님 응대'; os.className = 'closed'; }
-  }
-
-  /* ===== 레시피북 ===== */
-  function renderRecipeBook() {
-    const grid = $('recipeGrid');
-    grid.innerHTML = '';
-    // 에스프레소 샷 추출 과정 안내 카드
-    const guide = document.createElement('div');
-    guide.className = 'recipe';
-    guide.style.gridColumn = '1 / -1';
-    guide.innerHTML =
-      `<div class="rname"><span>⚙️ 에스프레소 샷 내리는 법</span></div>` +
-      `<ol class="rsteps"><li><b>에스프레소 머신</b>에서 <b>[E]</b>로 포터필터를 분리하세요</li>` +
-      `<li><b>그라인더</b>에 가져가 <b>[E]</b>로 원두를 분쇄하고 꺼내세요</li>` +
-      `<li><b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 다지세요 (퍼펙트 존에서 떼면 팁 보너스)</li>` +
-      `<li>탬핑된 포터필터를 머신에 <b>장착</b>하고, 샷잔을 올린 뒤 <b>빈손으로 [E]</b>를 눌러 추출하세요</li>` +
-      `<li>추출이 끝나면 <b>[E]</b>로 컵을 꺼내세요 — 포터필터는 머신에 남아요</li>` +
-      `<li>포터필터를 분리해 <b>넉박스</b>에서 <b>[E]</b>로 가루를 털어내면 다음 샷 준비 완료!</li></ol>`;
-    grid.appendChild(guide);
-    Object.keys(RECIPES).forEach(k => {
-      const r = RECIPES[k];
-      const locked = r.lvl > S.level;
-      const div = document.createElement('div');
-      div.className = 'recipe' + (locked ? ' locked' : '');
-      div.innerHTML =
-        `<div class="rname"><span>☕ ${r.name}</span><span>${locked ? `<span class="lockTag">🔒 Lv.${r.lvl}</span>` : fmt(drinkPrice(k))}</span></div>` +
-        `<ol class="rsteps">${r.steps.map(s => `<li>${s}</li>`).join('')}</ol>`;
-      grid.appendChild(div);
-    });
-    Object.keys(DESSERTS).forEach(k => {
-      const d = DESSERTS[k];
-      const locked = d.lvl > S.level;
-      const div = document.createElement('div');
-      div.className = 'recipe' + (locked ? ' locked' : '');
-      div.innerHTML =
-        `<div class="rname"><span>🍰 ${d.name}</span><span>${locked ? `<span class="lockTag">🔒 Lv.${d.lvl}</span>` : fmt(d.price)}</span></div>` +
-        `<ol class="rsteps"><li>쇼케이스에서 꺼내 바로 서빙</li></ol>`;
-      grid.appendChild(div);
-    });
-  }
 
   /* ===== 하루 사이클 (준비 → 영업 → 정산) ===== */
   let timeSec = 0, open = false;
@@ -1067,7 +792,7 @@ const Game = (() => {
     dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
-    if (tut) endTutorial(false);
+    Tutorial.cancel();
     Customers.clear();
     resetStations();
     prepPanelOpen = false;
@@ -1076,7 +801,7 @@ const Game = (() => {
     $('hud').classList.remove('hidden');
     mode = 'prep';
     Player.enabled = true;
-    updateHUD(); updateClock();
+    UI.hud(); UI.clock();
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
   }
 
@@ -1094,10 +819,10 @@ const Game = (() => {
     resetStations();
     mode = 'playing';
     Player.enabled = true;
-    updateHUD(); updateClock();
+    UI.hud(); UI.clock();
     toast(`DAY ${S.day} — 영업 시작! 오늘 목표 순이익 ${fmt(dailyGoalFor(S.day))} 이상 ☕`, 'gold', 4000);
     AudioFX.bell();
-    if (pendingTutorial) { pendingTutorial = false; startTutorial(); }
+    if (pendingTutorial) { pendingTutorial = false; Tutorial.start(); }
   }
 
   function openPrepPanel() {
@@ -1199,7 +924,7 @@ const Game = (() => {
         save();
         renderUpgrades();
         refreshPrepMoney();
-        updateHUD();
+        UI.hud();
       };
     });
   }
@@ -1243,7 +968,7 @@ const Game = (() => {
     AudioFX.cash();
     renderEquipment();
     refreshPrepMoney();
-    updateHUD();
+    UI.hud();
     toast(`${e.name} 구매 완료! [B] 편집 모드로 위치를 옮길 수 있어요`, 'good', 4500);
   }
   function renderEquipment() {
@@ -1286,7 +1011,7 @@ const Game = (() => {
     if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); return; }
     const aimData = Player.aim();
     if (aimData && aimData.id === 'restock') {
-      pr.innerHTML = promptFor(aimData);
+      pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
       pr.classList.add('hidden'); $('crosshair').classList.remove('active');
@@ -1304,7 +1029,7 @@ const Game = (() => {
       toast('영업 마감! 남은 손님을 응대하세요', 'gold', 3500);
       AudioFX.bell();
     }
-    updateClock();
+    UI.clock();
 
     // 손님 스폰
     if (open) {
@@ -1326,7 +1051,7 @@ const Game = (() => {
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
     const tamping = updateTampGame(dt, aimData);
-    let p = promptFor(aimData);
+    let p = UI.prompt(aimData);
     if (tamping) {
       if (tampGame && tampGame.locked) p = '🔧 탬핑!';
       else if (tampGame && tampGame.phase === 'holding') {
@@ -1360,9 +1085,9 @@ const Game = (() => {
 
     // 인내심 바만 주기적으로 갱신 (티켓 DOM은 재생성하지 않음)
     barTimer -= dt;
-    if (barTimer <= 0) { updateTicketBars(); barTimer = 0.25; }
+    if (barTimer <= 0) { UI.ticketBars(); barTimer = 0.25; }
 
-    updateTutorial();
+    Tutorial.update();
   }
 
   /* ===== 외부 API ===== */
@@ -1370,8 +1095,17 @@ const Game = (() => {
     scene = s; env = e;
     S = freshState();
     Effects.init(scene);
+    // 표현/튜토리얼 모듈에 코어 상태 라이브 게터 + 헬퍼 주입
+    UI.init({
+      S: () => S, held: () => held, orders: () => orders, mode: () => mode,
+      env: () => env, timeSec: () => timeSec, open: () => open,
+      fmt, drinkPrice, matchesRecipe, drinkIngredients, itemLabel, itemName,
+    });
+    Tutorial.init({
+      orders: () => orders, held: () => held, env: () => env, matchesRecipe, toast,
+    });
     if (hasSave()) $('btnContinue').classList.remove('hidden');
-    renderRecipeBook();
+    UI.recipeBook();
 
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
@@ -1404,7 +1138,7 @@ const Game = (() => {
         else { setHeld(null); toast('버렸습니다'); }
       }
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
-      if (ev.code === 'KeyT' && tut) endTutorial(false);
+      if (ev.code === 'KeyT') Tutorial.cancel();
     });
     $('recipeBtn').onclick = () => { if (!editing()) $('recipeBook').classList.toggle('hidden'); };
     $('recipeBook').addEventListener('click', ev => {
@@ -1422,14 +1156,14 @@ const Game = (() => {
 
   function newGame() {
     S = freshState();
-    renderRecipeBook();
+    UI.recipeBook();
     pendingTutorial = true;      // 튜토리얼은 첫 영업 시작 때 시작
     startPrep();
   }
   function continueGame() {
     load();
     recreateEquipment();   // 저장된 구매 장비 복원 (위치 포함)
-    renderRecipeBook();
+    UI.recipeBook();
     startPrep();
   }
   function nextDay() {
@@ -1444,7 +1178,7 @@ const Game = (() => {
     get mode() { return mode; },
     set mode(v) { mode = v; },
     get prepPanelOpen() { return prepPanelOpen; },
-    get inTutorial() { return !!tut; },
+    get inTutorial() { return Tutorial.active(); },
     notifyEditMode(on) {
       if (on) {
         // 내려놓기 표시·레시피북 숨김 (머신 작업은 계속 표시되며 시간만 정지)
