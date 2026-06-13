@@ -1011,6 +1011,11 @@ const Game = (() => {
     $('hud').classList.remove('hidden');
     mode = 'prep';
     Player.enabled = true;
+    if (env.doorSign) env.doorSign.setOpen(false);             // 영업 전 = CLOSE 팻말
+    if (typeof Weather !== 'undefined') {                      // 오늘 바깥 날씨 결정 + 실외 분위기 갱신
+      const w = Weather.setForDay(S.day);
+      if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
+    }
     UI.hud(); UI.clock();
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
   }
@@ -1023,6 +1028,7 @@ const Game = (() => {
     $('prepPanel').classList.add('hidden');
     $('prepBar').classList.add('hidden');
     open = true; timeSec = 0;
+    if (env.doorSign) env.doorSign.setOpen(true);   // 영업 중 = OPEN 팻말
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
     spawnTimer = S.day === 1 ? 7 : 2.5;   // 첫날은 첫 손님 입장까지 여유를 둠
@@ -1064,6 +1070,7 @@ const Game = (() => {
   function endDay() {
     mode = 'dayEnd';
     Player.enabled = false;
+    if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
     env.placeIndicator.visible = false;
     document.exitPointerLock && document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정

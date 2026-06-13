@@ -397,10 +397,13 @@ const WORLD = (() => {
       door.position.set(4.75, 0, z - 0.1);
       door.rotation.y = -0.9;
       scene.add(door);
-      // OPEN 팻말
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), textLabel('OPEN', 160, 80, '700 44px Georgia', '#7fb069', '#23291f'));
+      // OPEN/CLOSE 팻말 — 영업 상태에 따라 교체 (game.js가 env.doorSign.setOpen 호출)
+      const openMat  = textLabel('OPEN',  160, 80, '700 44px Georgia', '#7fb069', '#23291f');
+      const closeMat = textLabel('CLOSE', 160, 80, '700 40px Georgia', '#e0846c', '#2a1c18');
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), closeMat);   // 시작은 영업 전 = CLOSE
       sign.position.set(5.5, 2.35, z - 0.15); sign.rotation.y = Math.PI;
       scene.add(sign);
+      env.doorSign = { mesh: sign, setOpen(b) { sign.material = b ? openMat : closeMat; } };
     })();
 
     // 충돌: 외벽 + 앞벽(문 구간 제외 — 손님만 통과, 플레이어도 영업중엔 매장 안에)
@@ -1018,7 +1021,8 @@ const WORLD = (() => {
 
     /* ---------- 조명 ---------- */
     (function lights() {
-      scene.add(new THREE.HemisphereLight(0xfff4e0, 0x4a3826, 0.55));
+      const hemi = new THREE.HemisphereLight(0xfff4e0, 0x4a3826, 0.55);
+      scene.add(hemi); env.hemi = hemi;   // 날씨 모듈이 흐림·비에 환경광을 낮춤
       const sun = new THREE.DirectionalLight(0xffeed0, 3.0);
       sun.position.set(7, 11, 17);
       sun.target.position.set(-1, 0, -1);
