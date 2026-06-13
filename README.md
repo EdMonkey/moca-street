@@ -45,9 +45,13 @@ npx serve .   # 또는 python -m http.server
 - localStorage 자동 저장 (하루 마감 시) — `이어하기` 지원
 
 ## 파일 구조
+빌드 없이 전역 IIFE 패턴으로 로드됩니다 (`index.html`의 `<script>` 순서 = 의존성 순서). 유지보수·공동작업을 위해 관심사별로 분리:
+- `js/audio.js` — `AudioFX`: WebAudio 효과음 신스 (게임 로직과 독립 — 사운드만 튜닝)
+- `js/data.js` — `DATA`: 레시피·디저트·업그레이드·장비·창고·경제/탬핑 밸런스 수치 (콘텐츠·밸런스만 튜닝)
 - `js/textures.js` — 프로시저럴 캔버스 텍스처 (마루/대리석/벽돌/칠판/거리 배경)
 - `js/world.js` — 카페 인테리어·머신 모델·조명·충돌 박스
 - `js/customers.js` — 손님 모델·대기열 AI·인내심
 - `js/player.js` — 1인칭 컨트롤러·상호작용 레이캐스트
-- `js/game.js` — 레시피·주문·경제·하루 사이클·HUD·사운드(WebAudio)
+- `js/effects.js` — `Effects`: 서빙 완료 연출(체크 팝·금색 파티클·컵 사라짐) — `scene`만 주입
+- `js/game.js` — 게임 코어: 상태·주문/제조/서빙·하루 사이클·경제·HUD·상호작용 (데이터/사운드/연출은 위 모듈에서 가져다 씀)
 - `js/main.js` — 렌더러(ACES 톤매핑, 소프트 섀도)·증기 파티클·메인 루프

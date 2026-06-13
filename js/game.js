@@ -3,350 +3,15 @@
  * ============================================================ */
 const $ = id => document.getElementById(id);
 
-/* ---------------- 사운드 (WebAudio 물리 모델링 신스) ---------------- */
-const AudioFX = (() => {
-  let ctx = null, master = null, noiseBuf = null;
-
-  function ensure() {
-    if (!ctx) {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -16; comp.ratio.value = 5;
-      comp.connect(ctx.destination);
-      master = ctx.createGain();
-      master.gain.value = 0.9;
-      master.connect(comp);
-      // 공용 화이트노이즈 버퍼 (2초, 루프 재생용)
-      const len = ctx.sampleRate * 2;
-      noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const d = noiseBuf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    }
-    if (ctx.state === 'suspended') ctx.resume();
-    return ctx;
-  }
-
-  /* ----- 빌딩 블록 ----- */
-  function tone(f, dur, type = 'sine', vol = 0.15, when = 0, slideTo = null) {
-    const a = ensure();
-    const o = a.createOscillator(), g = a.createGain();
-    o.type = type; o.frequency.value = f;
-    const t0 = a.currentTime + when;
-    if (slideTo) o.frequency.linearRampToValueAtTime(slideTo, t0 + dur);
-    g.gain.setValueAtTime(vol, t0);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    o.connect(g); g.connect(master);
-    o.start(t0); o.stop(t0 + dur + 0.05);
-  }
-  // 루프 노이즈 소스 (랜덤 오프셋에서 시작)
-  function noiseSrc(a) {
-    const s = a.createBufferSource();
-    s.buffer = noiseBuf; s.loop = true;
-    return s;
-  }
-  // 짧은 노이즈 버스트 (충돌·튐 소리)
-  function burst(when, freq, dur = 0.03, vol = 0.1, q = 1.5, type = 'bandpass') {
-    const a = ensure();
-    const src = noiseSrc(a);
-    const f = a.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
-    const g = a.createGain();
-    g.gain.setValueAtTime(vol, when);
-    g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
-    src.connect(f); f.connect(g); g.connect(master);
-    src.start(when, Math.random() * 1.5);
-    src.stop(when + dur + 0.05);
-  }
-  // 지속음 핸들: stop()으로 조기 중단 가능, dur 후 자동 종료
-  function sustainedHandle(stopFn, dur) {
-    const h = { stopped: false, stop() { if (h.stopped) return; h.stopped = true; stopFn(); } };
-    setTimeout(() => h.stop(), dur * 1000);
-    return h;
-  }
-
-  /* ----- 도자기 컵 클링크 (배음 모달 합성) ----- */
-  function cupClink(vol = 0.5) {
-    const a = ensure(), t0 = a.currentTime;
-    [1900, 2750, 3620, 5150].forEach((f, i) => {
-      const o = a.createOscillator();
-      o.frequency.value = f * (0.99 + Math.random() * 0.02);
-      const g = a.createGain();
-      const t = t0 + i * 0.0045;
-      g.gain.setValueAtTime(vol * 0.09 / (i + 1), t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1 + Math.random() * 0.07);
-      o.connect(g); g.connect(master);
-      o.start(t); o.stop(t + 0.25);
-    });
-    burst(t0, 6200, 0.012, vol * 0.1, 0.7, 'highpass'); // 접촉 트랜지언트
-  }
-
-  /* ----- 그라인더: 모터 험 + 분쇄 크래클 + 스핀다운 ----- */
-  function grind(dur = 1.6) {
-    const a = ensure(), t0 = a.currentTime;
-    const osc = a.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 88;
-    const osc2 = a.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = 179;
-    const lfo = a.createOscillator(); lfo.frequency.value = 9;
-    const lfoG = a.createGain(); lfoG.gain.value = 4;
-    lfo.connect(lfoG); lfoG.connect(osc.frequency);
-    const mLP = a.createBiquadFilter(); mLP.type = 'lowpass'; mLP.frequency.value = 340;
-    const mG = a.createGain();
-    mG.gain.setValueAtTime(0, t0);
-    mG.gain.linearRampToValueAtTime(0.085, t0 + 0.07);
-    osc.connect(mLP); osc2.connect(mLP); mLP.connect(mG); mG.connect(master);
-    // 원두 갈리는 노이즈 (대역 통과 + 크래클 LFO)
-    const n = noiseSrc(a);
-    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 950; bp.Q.value = 0.9;
-    const nG = a.createGain();
-    nG.gain.setValueAtTime(0, t0);
-    nG.gain.linearRampToValueAtTime(0.11, t0 + 0.1);
-    const crk = a.createOscillator(); crk.type = 'square'; crk.frequency.value = 27;
-    const crkG = a.createGain(); crkG.gain.value = 0.035;
-    crk.connect(crkG); crkG.connect(nG.gain);
-    n.connect(bp); bp.connect(nG); nG.connect(master);
-    // 원두 알갱이 튀는 소리
-    for (let i = 0; i < 9; i++)
-      burst(t0 + 0.1 + Math.random() * Math.max(0.1, dur - 0.4), 1500 + Math.random() * 2600, 0.02, 0.05, 2);
-    [osc, osc2, lfo, crk, n].forEach(x => x.start(t0));
-    return sustainedHandle(() => {
-      const t = a.currentTime;
-      osc.frequency.setTargetAtTime(50, t, 0.1);          // 스핀다운
-      mG.gain.setTargetAtTime(0, t, 0.09);
-      nG.gain.setTargetAtTime(0, t, 0.04);
-      [osc, osc2, lfo, crk, n].forEach(x => x.stop(t + 0.5));
-    }, dur);
-  }
-
-  /* ----- 물 따르는 소리: 노이즈 스윕 + 버블 ----- */
-  function pourWater(dur = 0.9) {
-    const a = ensure(), t0 = a.currentTime;
-    const n = noiseSrc(a);
-    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.7;
-    bp.frequency.setValueAtTime(620, t0);
-    bp.frequency.linearRampToValueAtTime(1080, t0 + dur);   // 컵이 차며 음높이 상승
-    const g = a.createGain();
-    g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(0.14, t0 + 0.08);
-    g.gain.setValueAtTime(0.14, t0 + dur - 0.12);
-    g.gain.linearRampToValueAtTime(0, t0 + dur);
-    n.connect(bp); bp.connect(g); g.connect(master);
-    // 보글거림
-    const n2 = noiseSrc(a);
-    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300;
-    const g2 = a.createGain(); g2.gain.value = 0.05;
-    const wob = a.createOscillator(); wob.frequency.value = 12;
-    const wobG = a.createGain(); wobG.gain.value = 0.03;
-    wob.connect(wobG); wobG.connect(g2.gain);
-    n2.connect(lp); lp.connect(g2); g2.connect(master);
-    burst(t0 + 0.02, 1300, 0.07, 0.07, 1);                   // 첫 물줄기 스플래시
-    [n, n2, wob].forEach(x => x.start(t0));
-    return sustainedHandle(() => {
-      const t = a.currentTime;
-      g.gain.setTargetAtTime(0, t, 0.04);
-      g2.gain.setTargetAtTime(0, t, 0.04);
-      [n, n2, wob].forEach(x => x.stop(t + 0.25));
-    }, dur);
-  }
-
-  /* ----- 스팀: 강한 히스 + 흔들림 ----- */
-  function steam(dur = 2.4) {
-    const a = ensure(), t0 = a.currentTime;
-    const n = noiseSrc(a);
-    const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
-    const g = a.createGain();
-    g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(0.12, t0 + 0.06);
-    const flut = a.createOscillator(); flut.frequency.value = 6;
-    const flutG = a.createGain(); flutG.gain.value = 0.025;
-    flut.connect(flutG); flutG.connect(g.gain);
-    n.connect(hp); hp.connect(g); g.connect(master);
-    const n2 = noiseSrc(a);                                   // 고역 쇳소리
-    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 5200; bp.Q.value = 2.2;
-    const g2 = a.createGain(); g2.gain.value = 0.04;
-    n2.connect(bp); bp.connect(g2); g2.connect(master);
-    [n, n2, flut].forEach(x => x.start(t0));
-    return sustainedHandle(() => {
-      const t = a.currentTime;
-      g.gain.setTargetAtTime(0, t, 0.07);
-      g2.gain.setTargetAtTime(0, t, 0.07);
-      [n, n2, flut].forEach(x => x.stop(t + 0.4));
-    }, dur);
-  }
-
-  /* ----- 에스프레소 추출: 펌프 험 + 드립 ----- */
-  function brewing(dur = 3.4) {
-    const a = ensure(), t0 = a.currentTime;
-    const osc = a.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 51;
-    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 210;
-    const g = a.createGain();
-    g.gain.setValueAtTime(0, t0);
-    g.gain.linearRampToValueAtTime(0.09, t0 + 0.12);
-    osc.connect(lp); lp.connect(g); g.connect(master);
-    const n = noiseSrc(a);                                    // 추출 히스
-    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2300; bp.Q.value = 1.4;
-    const g2 = a.createGain(); g2.gain.value = 0.022;
-    n.connect(bp); bp.connect(g2); g2.connect(master);
-    for (let t = 0.7; t < dur - 0.1; t += 0.22 + Math.random() * 0.15)   // 커피 방울
-      burst(t0 + t, 480 + Math.random() * 220, 0.04, 0.035, 2.5);
-    [osc, n].forEach(x => x.start(t0));
-    return sustainedHandle(() => {
-      const t = a.currentTime;
-      osc.frequency.setTargetAtTime(34, t, 0.1);
-      g.gain.setTargetAtTime(0, t, 0.08);
-      g2.gain.setTargetAtTime(0, t, 0.05);
-      [osc, n].forEach(x => x.stop(t + 0.5));
-    }, dur);
-  }
-
-  /* ----- 단발 효과음 ----- */
-  function ice() {
-    const a = ensure(), t0 = a.currentTime;
-    for (let i = 0; i < 4; i++)
-      burst(t0 + i * 0.07 + Math.random() * 0.04, 2500 + Math.random() * 1800, 0.04, 0.09, 3);
-    tone(190, 0.12, 'sine', 0.1, 0.02, 95);                  // 낮은 덜그럭
-  }
-  function syrupPump() {
-    tone(290, 0.16, 'sine', 0.09, 0, 140);
-    burst(ensure().currentTime + 0.02, 420, 0.13, 0.07, 1, 'lowpass');
-  }
-  function whipSpray() {
-    const a = ensure(), t0 = a.currentTime;
-    const n = noiseSrc(a);
-    const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2600;
-    const g = a.createGain();
-    g.gain.setValueAtTime(0.1, t0);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.38);
-    const wob = a.createOscillator(); wob.frequency.value = 33;
-    const wobG = a.createGain(); wobG.gain.value = 0.04;
-    wob.connect(wobG); wobG.connect(g.gain);
-    n.connect(hp); hp.connect(g); g.connect(master);
-    n.start(t0); wob.start(t0);
-    n.stop(t0 + 0.45); wob.stop(t0 + 0.45);
-  }
-  function trashThud() {
-    tone(105, 0.22, 'sine', 0.2, 0, 42);
-    burst(ensure().currentTime, 190, 0.1, 0.1, 1, 'lowpass');
-  }
-  function metalClack() {
-    const t0 = ensure().currentTime;
-    burst(t0, 3300, 0.035, 0.12, 3);
-    tone(760, 0.07, 'sine', 0.07);
-    tone(1130, 0.05, 'sine', 0.05, 0.005);
-  }
-  // 넉박스: 통을 두드려 가루를 털어내는 낮은 소리 2회
-  function knock() {
-    const t0 = ensure().currentTime;
-    [0, 0.13].forEach(d => {
-      tone(95, 0.12, 'sine', 0.16, d, 40);
-      burst(t0 + d, 220, 0.09, 0.1, 1, 'lowpass');
-    });
-  }
-  // 서빙 완료: 저음 펀치(타격감) + 밝은 상승 3음 + 반짝
-  function serveSuccess() {
-    const t0 = ensure().currentTime;
-    tone(165, 0.16, 'sine', 0.2, 0, 58);              // 저음 임팩트 슬라이드다운
-    burst(t0, 240, 0.09, 0.12, 1, 'lowpass');          // 펀치 노이즈
-    [784, 1047, 1319].forEach((f, i) => tone(f, 0.2, 'sine', 0.13, 0.05 + i * 0.05));  // 띠링 상승
-    tone(1760, 0.32, 'sine', 0.07, 0.18);              // 반짝 꼬리
-  }
-
-  /* ----- 탬핑: 누르는 동안 차오르는 험(음 상승) + 완료 '쿵' + 퍼펙트 차임 ----- */
-  function tampHold(dur = 1.3) {
-    const a = ensure(), t0 = a.currentTime;
-    const o = a.createOscillator(); o.type = 'sawtooth';
-    o.frequency.setValueAtTime(70, t0);
-    o.frequency.linearRampToValueAtTime(150, t0 + dur);   // 게이지가 차오르며 음이 높아짐
-    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
-    const g = a.createGain();
-    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.06, t0 + 0.1);
-    o.connect(lp); lp.connect(g); g.connect(master); o.start(t0);
-    return sustainedHandle(() => { const t = a.currentTime; g.gain.setTargetAtTime(0, t, 0.05); o.stop(t + 0.2); }, dur + 0.3);
-  }
-  function tampDone() {
-    const t0 = ensure().currentTime;
-    tone(120, 0.14, 'sine', 0.18, 0, 58);          // 단단한 압착 임팩트
-    burst(t0, 200, 0.07, 0.12, 1, 'lowpass');
-    burst(t0, 1600, 0.03, 0.08, 2, 'bandpass');    // 가루 다져지는 사각거림
-    tone(880, 0.05, 'sine', 0.05, 0.04);           // 마무리 클릭
-  }
-  // 퍼펙트 탬핑 보너스 차임
-  function tampPerfectSfx() {
-    [1047, 1319, 1568].forEach((f, i) => tone(f, 0.16, 'sine', 0.1, 0.04 + i * 0.05));
-    tone(2093, 0.25, 'sine', 0.06, 0.17);
-  }
-
-  return {
-    ensure,
-    // 신규 사운드
-    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock, serveSuccess, tampHold, tampDone, tampPerfectSfx,
-    // 기존 UI/이벤트 음
-    ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
-    cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
-    err: () => tone(150, 0.3, 'sawtooth', 0.1),
-    pick: () => tone(540, 0.08, 'triangle', 0.1),
-    put: () => tone(380, 0.08, 'triangle', 0.1),
-    levelup: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'sine', 0.13, i * 0.1)),
-    bell: () => { tone(1760, 0.4, 'sine', 0.1); tone(2217, 0.5, 'sine', 0.06, 0.02); },
-  };
-})();
-
 /* ---------------- 게임 본체 ---------------- */
 const Game = (() => {
 
-  /* ===== 메뉴 데이터 ===== */
-  // target: {cup, ice, espresso, water, milk, foam, syrup, whip}
-  const RECIPES = {
-    espresso:   { name: '에스프레소',        price: 2500, lvl: 1, target: { cup: 'espresso', espresso: 1 },
-      steps: ['에스프레소 잔', '에스프레소 샷'] },
-    americano:  { name: '아메리카노',        price: 3000, lvl: 1, target: { cup: 'hot', espresso: 1, water: 'hot' },
-      steps: ['머그컵', '에스프레소 샷', '온수'] },
-    iceAmericano:{ name: '아이스 아메리카노', price: 3500, lvl: 2, target: { cup: 'ice', ice: 1, espresso: 1, water: 'cold' },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '냉수'] },
-    latte:      { name: '카페라떼',          price: 4000, lvl: 2, target: { cup: 'hot', espresso: 1, milk: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크'] },
-    iceLatte:   { name: '아이스 라떼',       price: 4500, lvl: 3, target: { cup: 'ice', ice: 1, espresso: 1, milk: 1 },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크'] },
-    vanillaLatte:{ name: '바닐라 라떼',      price: 4800, lvl: 3, target: { cup: 'hot', espresso: 1, milk: 1, syrup: 'vanilla' },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '바닐라 시럽'] },
-    cappuccino: { name: '카푸치노',          price: 4500, lvl: 4, target: { cup: 'hot', espresso: 1, milk: 1, foam: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '우유 거품(스티머 1회 더)'] },
-    mocha:      { name: '카페모카',          price: 5000, lvl: 4, target: { cup: 'hot', espresso: 1, milk: 1, syrup: 'choco', whip: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '초코 시럽', '휘핑크림'] },
-    caramelMac: { name: '카라멜 마끼아또',   price: 5300, lvl: 5, target: { cup: 'ice', ice: 1, espresso: 1, milk: 1, syrup: 'caramel' },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크', '카라멜 시럽'] },
-  };
-  const DESSERTS = {
-    croissant: { name: '크루아상',   price: 3500, lvl: 3 },
-    muffin:    { name: '초코 머핀',  price: 3000, lvl: 3 },
-    cake:      { name: '치즈케이크', price: 5500, lvl: 5 },
-  };
-  const LEVEL_XP = [0, 120, 320, 620, 1050, 1600];   // 누적 XP → 레벨 (최대 6)
-  const MAX_LVL = 6;
-  const UPGRADES = {
-    fastShot:  { name: '고속 추출 보일러', desc: '에스프레소 추출 시간 -40%', price: 20000 },
-    dualHead:  { name: '듀얼 그룹헤드',    desc: '에스프레소 2잔 동시 추출', price: 30000 },
-    fastSteam: { name: '자동 밀크 스티머', desc: '우유 스팀 속도 2배', price: 18000 },
-    interior:  { name: '인테리어 리모델링', desc: '손님 인내심 +35%', price: 25000 },
-    ads:       { name: 'SNS 광고',         desc: '손님 방문 빈도 +30%', price: 15000 },
-    grinder:   { name: '프리미엄 그라인더', desc: '모든 음료 가격 +15%', price: 22000 },
-  };
-  // 구매 가능한 추가 장비 (영업 준비 단계에서 구입 → 빈 카운터에 배치)
-  const EQUIPMENT = {
-    grinder:  { name: '추가 그라인더',      desc: '원두를 병렬로 분쇄해 병목 해소', price: 18000, w: 0.45, d: 0.5, max: 2 },
-    espresso: { name: '2번째 에스프레소 머신', desc: '추출 슬롯 2개 추가',          price: 35000, w: 1.45, d: 0.8, max: 1 },
-    steamer:  { name: '추가 밀크 스티머',    desc: '우유를 병렬로 스팀',            price: 15000, w: 0.62, d: 0.55, max: 2 },
-  };
-  const RESTOCK = {
-    beans:   { name: '원두',   amount: 30, price: 8000 },
-    milk:    { name: '우유',   amount: 20, price: 6000 },
-    cups:    { name: '컵',     amount: 40, price: 5000 },
-    dessert: { name: '디저트', amount: 12, price: 9000 },
-  };
-  const DAY_LEN = 300;            // 실제 5분 = 게임 9시간 (09:00~18:00)
-  const SAVE_KEY = 'mochaStreetSave_v1';
-  // 경영(Stage 3): 임대료 = 고정 지출, 일일 목표 = 동기, 폐업 = 소프트 실패
-  const RENT_BASE = 8000, RENT_PER_DAY = 2000;
-  const BANKRUPT_LIMIT = -50000;
-  const rentFor = day => RENT_BASE + (day - 1) * RENT_PER_DAY;
-  const dailyGoalFor = day => 5000 + day * 2500;   // 임대료 차감 후 목표 순이익
+  /* ===== 정적 데이터 · 밸런스 (data.js의 DATA에서) ===== */
+  const {
+    RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
+    DAY_LEN, SAVE_KEY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
+    TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
+  } = DATA;
 
   /* ===== 상태 ===== */
   let env = null, scene = null;
@@ -362,10 +27,6 @@ const Game = (() => {
   let indPulse = 0;
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
-  const TAMP_DUR = 2.2;           // 게이지가 끝까지 차는 시간(초)
-  const TAMP_MIN = 0.45;          // 이보다 일찍 떼면 약하게 눌림(재시도)
-  const TAMP_PERF_W = 0.10;       // 퍼펙트 존 폭
-  const TAMP_PERF_MIN = 0.55, TAMP_PERF_MAX = 0.80; // 퍼펙트 존 시작 위치 랜덤 범위
 
   function freshState() {
     return {
@@ -951,139 +612,6 @@ const Game = (() => {
   }
 
   /* ===== 서빙 ===== */
-  /* ===== 서빙 완료 연출 (컵 내려놓기 → 체크 팝 → 사라짐) ===== */
-  let serveFxList = [];
-  let sparkPool = [];
-  let checkTex = null;
-
-  function buildCheckTex() {
-    const [c, x] = TEX.canvas(128, 128);
-    x.fillStyle = '#7fb069';
-    x.beginPath(); x.arc(64, 64, 44, 0, 7); x.fill();
-    x.strokeStyle = 'rgba(255,255,255,.45)'; x.lineWidth = 5;
-    x.beginPath(); x.arc(64, 64, 44, 0, 7); x.stroke();
-    x.strokeStyle = '#ffffff'; x.lineWidth = 12; x.lineCap = 'round'; x.lineJoin = 'round';
-    x.beginPath(); x.moveTo(44, 66); x.lineTo(58, 82); x.lineTo(86, 46); x.stroke();
-    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-  function buildSparkTex() {
-    const [c, x] = TEX.canvas(64, 64);
-    const g = x.createRadialGradient(32, 32, 1, 32, 32, 30);
-    g.addColorStop(0, 'rgba(255,244,210,1)');
-    g.addColorStop(0.4, 'rgba(255,205,120,.85)');
-    g.addColorStop(1, 'rgba(255,180,90,0)');
-    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
-    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-  }
-  function initServeFx() {
-    checkTex = buildCheckTex();
-    const sparkTex = buildSparkTex();
-    for (let i = 0; i < 28; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: sparkTex, transparent: true, depthWrite: false, depthTest: false,
-        blending: THREE.AdditiveBlending, opacity: 0
-      }));
-      s.visible = false; s.renderOrder = 7;
-      s.userData = { life: 0, max: 1, vx: 0, vy: 0, vz: 0 };
-      scene.add(s);
-      sparkPool.push(s);
-    }
-  }
-  function emitSparks(pos, n) {
-    let spawned = 0;
-    for (const s of sparkPool) {
-      if (s.visible) continue;
-      const a = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 1.3;
-      s.position.copy(pos);
-      s.userData.vx = Math.cos(a) * sp;
-      s.userData.vz = Math.sin(a) * sp;
-      s.userData.vy = 0.9 + Math.random() * 1.5;
-      s.userData.life = 0;
-      s.userData.max = 0.4 + Math.random() * 0.3;
-      s.scale.setScalar(0.06 + Math.random() * 0.05);
-      s.material.opacity = 1;
-      s.visible = true;
-      if (++spawned >= n) break;
-    }
-  }
-  function updateSparks(dt) {
-    for (const s of sparkPool) {
-      if (!s.visible) continue;
-      const u = s.userData;
-      u.life += dt;
-      if (u.life >= u.max) { s.visible = false; s.material.opacity = 0; continue; }
-      u.vy -= 4 * dt;
-      s.position.x += u.vx * dt;
-      s.position.y += u.vy * dt;
-      s.position.z += u.vz * dt;
-      s.material.opacity = 1 - u.life / u.max;
-    }
-  }
-  function flashServeBadge() {
-    const b = $('serveBadge'); b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
-    const f = $('serveFlash'); f.classList.remove('show'); void f.offsetWidth; f.classList.add('show');
-  }
-  function spawnServeFx(worldPos, mesh) {
-    mesh.position.copy(worldPos);
-    mesh.position.y += 0.12;     // 살짝 위에서 드롭인
-    scene.add(mesh);
-    const check = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: checkTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0
-    }));
-    check.renderOrder = 8;
-    check.scale.setScalar(0.001);
-    check.position.set(worldPos.x, worldPos.y + 0.34, worldPos.z);
-    scene.add(check);
-    serveFxList.push({ t: 0, cup: mesh, check, pos: worldPos.clone(), sparked: false, cupGone: false });
-  }
-  function updateServeFx(dt) {
-    updateSparks(dt);
-    for (let i = serveFxList.length - 1; i >= 0; i--) {
-      const fx = serveFxList[i];
-      fx.t += dt;
-      const T = fx.t;
-      // 1) 드롭인: 컵이 트레이에 내려앉음
-      fx.cup.position.y = T < 0.18 ? fx.pos.y + 0.12 * (1 - T / 0.18) : fx.pos.y;
-      // 2) 임팩트: 체크 팝 + 파티클 + 사운드 + 화면 펀치 (1회)
-      if (!fx.sparked && T >= 0.2) {
-        fx.sparked = true;
-        emitSparks(new THREE.Vector3(fx.pos.x, fx.pos.y + 0.06, fx.pos.z), 16);
-        AudioFX.serveSuccess();
-        flashServeBadge();
-      }
-      // 3) 체크 오버슛 스케일 + 상승 + 페이드아웃
-      if (T >= 0.2) {
-        const ct = T - 0.2;
-        let s;
-        if (ct < 0.16) s = 1.35 * (1 - Math.pow(1 - ct / 0.16, 3));   // 0→1.35 오버슛
-        else if (ct < 0.26) s = 1.35 - 0.35 * ((ct - 0.16) / 0.1);    // 1.35→1.0 정착
-        else s = 1;
-        const op = ct > 0.62 ? Math.max(0, 1 - (ct - 0.62) / 0.28) : 1;
-        fx.check.scale.set(0.3 * s, 0.3 * s, 1);
-        fx.check.material.opacity = op;
-        fx.check.position.y = fx.pos.y + 0.34 + Math.min(0.08, ct * 0.25);
-      }
-      // 4) 컵 사라짐: 살짝 떠오르며 줄어듦
-      if (!fx.cupGone && T >= 0.28) {
-        const vt = (T - 0.28) / 0.32;
-        if (vt >= 1) { scene.remove(fx.cup); fx.cupGone = true; }
-        else { fx.cup.scale.setScalar(1 - vt); fx.cup.position.y = fx.pos.y + vt * 0.16; }
-      }
-      // 정리
-      if (T >= 1.05) {
-        if (!fx.cupGone) scene.remove(fx.cup);
-        scene.remove(fx.check);
-        serveFxList.splice(i, 1);
-      }
-    }
-  }
-  function clearServeFx() {
-    serveFxList.forEach(fx => { if (!fx.cupGone) scene.remove(fx.cup); scene.remove(fx.check); });
-    serveFxList = [];
-    sparkPool.forEach(s => { s.visible = false; s.material.opacity = 0; });
-  }
 
   function tryServe() {
     if (!held) { toast('서빙할 음료나 디저트를 들고 오세요'); return; }
@@ -1105,7 +633,7 @@ const Game = (() => {
         setHeld(null);
         if (fxMesh) {
           const px = env.pickupPos.x + (Math.random() - 0.5) * 0.5;
-          spawnServeFx(new THREE.Vector3(px, env.machines.pickupTrayY || 1.07, env.pickupPos.z), fxMesh);
+          Effects.spawnServe(new THREE.Vector3(px, env.machines.pickupTrayY || 1.07, env.pickupPos.z), fxMesh);
         }
         renderTicketItems(o);
         if (o.items.every(i => i.done)) completeOrder(o, servedDrink);
@@ -1516,7 +1044,7 @@ const Game = (() => {
   function resetStations() {
     setHeld(null);
     clearPlacedItems();
-    clearServeFx();
+    Effects.clear();
     env.placeIndicator.visible = false;
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
@@ -1793,7 +1321,7 @@ const Game = (() => {
     Customers.update(dt);
     updateSlots(dt);
     updateJobs(dt);
-    updateServeFx(dt);
+    Effects.update(dt);
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
@@ -1841,7 +1369,7 @@ const Game = (() => {
   function init(s, e) {
     scene = s; env = e;
     S = freshState();
-    initServeFx();
+    Effects.init(scene);
     if (hasSave()) $('btnContinue').classList.remove('hidden');
     renderRecipeBook();
 
