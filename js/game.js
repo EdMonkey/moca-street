@@ -971,21 +971,22 @@ const Game = (() => {
         if (pt && !placeBlocked(pt)) placeItem(pt);
       }
     }
+    // const Editor는 window 속성이 아니므로 typeof로 확인해야 게이트가 작동함
+    const editing = () => typeof Editor !== 'undefined' && Editor.active;
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing') return;
-      if (window.Editor && Editor.active) return;   // 편집 모드 중엔 에디터가 입력 처리
+      if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
       if (ev.code === 'KeyE') onUse();
       if (ev.code === 'KeyQ' && held) { setHeld(null); toast('버렸습니다'); }
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT' && tut) endTutorial(false);
     });
-    $('recipeBtn').onclick = () => $('recipeBook').classList.toggle('hidden');
+    $('recipeBtn').onclick = () => { if (!editing()) $('recipeBook').classList.toggle('hidden'); };
     $('recipeBook').addEventListener('click', ev => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
     document.addEventListener('mousedown', ev => {
-      if (mode === 'playing' && document.pointerLockElement && ev.button === 0
-        && !(window.Editor && Editor.active))
+      if (mode === 'playing' && document.pointerLockElement && ev.button === 0 && !editing())
         onUse();
     });
   }
@@ -1014,13 +1015,14 @@ const Game = (() => {
     get inTutorial() { return !!tut; },
     notifyEditMode(on) {
       if (on) {
-        // 진행 중인 채널링 취소 + 내려놓기 표시 숨김
+        // 진행 중인 채널링 취소 + 내려놓기 표시·레시피북 숨김
         if (channel) {
           channel = null;
           $('progressWrap').classList.add('hidden');
         }
         env.placeIndicator.visible = false;
         $('prompt').classList.add('hidden');
+        $('recipeBook').classList.add('hidden');
       }
     },
     isBrewing: () => env.machines.espressoSlots.some(s => s.busy && !s.done),
