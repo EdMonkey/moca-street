@@ -302,7 +302,6 @@ const Game = (() => {
   let S = null;                   // 저장되는 상태
   let held = null;                // {type:'drink',drink:{...}} | {type:'dessert',kind}
   let orders = [];                // {customer, items:[{type,recipeId|kind,done}], total}
-  let channel = null;             // {t,dur,key,label,onDone}
   let spawnTimer = 3;
   let dayStats = null;
   let orderSeq = 0;
@@ -504,8 +503,8 @@ const Game = (() => {
       check: () => tut.startPos && Player.position.distanceTo(tut.startPos) > 2 },
     { text: '손님이 줄을 서면 <b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>로 주문을 받으세요',
       check: () => orders.length > 0 },
-    { text: '<b>그라인더</b>에서 <b>[E]</b>를 길게 바라보며 원두를 분쇄해 포터필터를 채우세요',
-      check: () => (held && held.type === 'portafilter') || env.machines.espressoSlots.some(s => s.loaded || s.busy) },
+    { text: '<b>그라인더</b>에 <b>[E]</b>로 분쇄를 시작하고, 끝나면 다시 <b>[E]</b>로 포터필터를 꺼내세요',
+      check: () => (held && held.type === 'portafilter') || env.machines.grinderJob.busy || env.machines.espressoSlots.some(s => s.loaded || s.busy) },
     { text: '<b>에스프레소 머신</b>에 포터필터를 장착하세요 <b>[E]</b>',
       check: () => env.machines.espressoSlots.some(s => s.loaded || s.busy) },
     { text: '컵 디스펜서에서 <b>머그컵</b>을 잡아 머신에 올리고 추출을 시작하세요 <b>[E]</b>',
@@ -566,7 +565,7 @@ const Game = (() => {
   }
 
   function interact(it) {
-    if (!it || channel) return;
+    if (!it) return;
     const id = it.id;
 
     /* --- 주문 받기 --- */
@@ -617,26 +616,27 @@ const Game = (() => {
       return;
     }
 
-    /* --- 그라인더 (원두 분쇄 → 포터필터) --- */
+    /* --- 그라인더: 분쇄 시작 → (자유 행동) → 완료되면 포터필터 꺼내기 --- */
     if (id === 'grinder') {
+      const job = env.machines.grinderJob;
+      if (job.busy) {
+        if (!job.done) { toast('분쇄 중입니다…'); return; }
+        if (held) { toast('손이 비어있어야 포터필터를 꺼낼 수 있어요'); return; }
+        resetJob(job);
+        setHeld({ type: 'portafilter' });
+        AudioFX.metalClack();
+        return;
+      }
       if (held) {
-        toast(held.type === 'portafilter' ? '이미 포터필터를 들고 있어요' : '손이 비어있어야 분쇄할 수 있어요');
+        toast(held.type === 'portafilter' ? '이미 포터필터를 들고 있어요' : '손이 비어있어야 분쇄를 시작할 수 있어요');
         return;
       }
       if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      const grindDur = 1.6;
-      startChannel({
-        dur: grindDur,
-        key: 'grinder',
-        label: '원두 분쇄 중…',
-        onDone: () => {
-          S.stocks.beans--;
-          setHeld({ type: 'portafilter' });
-          AudioFX.metalClack();
-          updateHUD();
-        }
-      });
-      channel.sound = AudioFX.grind(grindDur);
+      S.stocks.beans--;
+      job.busy = true; job.done = false; job.t = 0; job.dur = 1.6;
+      job.pfMesh.visible = true;
+      job.sound = AudioFX.grind(job.dur);
+      updateHUD();
       return;
     }
 
@@ -655,6 +655,7 @@ const Game = (() => {
         slot.pf.visible = false;
         const drink = slot.drink;
         slot.cupMesh = null; slot.drink = null;
+        slot.progress.hide();
         setHeld({ type: 'drink', drink });
         AudioFX.cupClink(0.5);
         return;
@@ -690,35 +691,62 @@ const Game = (() => {
       return;
     }
 
-    /* --- 밀크 스티머 (채널링) --- */
+    /* --- 밀크 스티머: 컵 올려두기 → (자유 행동) → 완료되면 꺼내기 --- */
     if (id === 'steamer') {
+      const job = env.machines.steamerJob;
+      if (job.busy) {
+        if (!job.done) { toast('스팀 중입니다…'); return; }
+        if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
+        const drink = job.drink;
+        resetJob(job);
+        setHeld({ type: 'drink', drink });
+        AudioFX.cupClink(0.5);
+        return;
+      }
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.foam) { toast('이미 거품까지 올렸어요'); return; }
       if (S.stocks.milk <= 0) { toast('우유가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      const makingFoam = !!held.drink.milk;
-      const steamDur = S.upgrades.fastSteam ? 1.2 : 2.4;
-      startChannel({
-        dur: steamDur,
-        key: 'steamer',
-        label: makingFoam ? '우유 거품 올리는 중…' : '우유 스팀 중…',
-        onDone: () => {
-          S.stocks.milk--;
-          if (makingFoam) held.drink.foam = 1; else held.drink.milk = 1;
-          setHeld(held);
-          updateHUD();
-        }
-      });
-      channel.sound = AudioFX.steam(steamDur);
+      S.stocks.milk--;
+      const drink = held.drink;
+      setHeld(null);
+      job.busy = true; job.done = false; job.t = 0;
+      job.dur = S.upgrades.fastSteam ? 1.2 : 2.4;
+      job.makingFoam = !!drink.milk;
+      job.drink = drink;
+      const cm = WORLD.makeDrinkMesh(drink);
+      cm.position.copy(job.localPos);
+      job.st.root.add(cm);
+      job.cupMesh = cm;
+      job.sound = AudioFX.steam(job.dur);
+      AudioFX.cupClink(0.35);
+      updateHUD();
       return;
     }
 
-    /* --- 온수/냉수 --- */
+    /* --- 온수/냉수: 컵 올려두기 → 물 받기 → 완료되면 꺼내기 --- */
     if (id === 'waterHot' || id === 'waterCold') {
+      const job = env.machines.waterJobs[id];
+      if (job.busy) {
+        if (!job.done) { toast('물 받는 중입니다…'); return; }
+        if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
+        const drink = job.drink;
+        resetJob(job);
+        setHeld({ type: 'drink', drink });
+        AudioFX.cupClink(0.5);
+        return;
+      }
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.water) { toast('이미 물이 들어있어요'); return; }
-      held.drink.water = id === 'waterHot' ? 'hot' : 'cold';
-      setHeld(held);
-      AudioFX.pourWater(0.9);
+      const drink = held.drink;
+      setHeld(null);
+      job.busy = true; job.done = false; job.t = 0; job.dur = 1.2;
+      job.drink = drink;
+      const cm = WORLD.makeDrinkMesh(drink);
+      cm.position.copy(job.localPos);
+      job.st.root.add(cm);
+      job.cupMesh = cm;
+      job.sound = AudioFX.pourWater(job.dur);
+      AudioFX.cupClink(0.35);
       return;
     }
 
@@ -841,29 +869,47 @@ const Game = (() => {
     updateHUD();
   }
 
-  /* ===== 채널링 (스티머 등) ===== */
-  function startChannel(ch) {
-    channel = { ...ch, t: 0 };
-    $('progressWrap').classList.remove('hidden');
+  /* ===== 머신 비동기 작업 (그라인더·스티머·온수/냉수) =====
+   * 컵/재료를 올려두고 자리를 떠나도 진행되며, 머신 위 프로그레스 바로 상태 표시 */
+  function machineJobs() {
+    return [env.machines.grinderJob, env.machines.steamerJob,
+      env.machines.waterJobs.waterHot, env.machines.waterJobs.waterCold];
   }
-  function updateChannel(dt, aimData) {
-    if (!channel) return;
-    if (!aimData || aimData.id !== channel.key) {   // 시선을 떼면 취소
-      if (channel.sound) channel.sound.stop();
-      channel = null;
-      $('progressWrap').classList.add('hidden');
-      toast('중단되었어요 — 기계를 계속 바라보세요');
-      return;
-    }
-    channel.t += dt;
-    $('progressBar').style.width = Math.min(100, channel.t / channel.dur * 100) + '%';
-    if (channel.t >= channel.dur) {
-      const done = channel.onDone;
-      channel = null;
-      $('progressWrap').classList.add('hidden');
-      done();
-      AudioFX.ding();
-    }
+  function swapJobCup(job) {
+    job.st.root.remove(job.cupMesh);
+    const cm = WORLD.makeDrinkMesh(job.drink);
+    cm.position.copy(job.localPos);
+    job.st.root.add(cm);
+    job.cupMesh = cm;
+  }
+  function updateJobs(dt) {
+    machineJobs().forEach(job => {
+      if (!job || !job.busy) return;
+      if (!job.done) {
+        job.t += dt;
+        if (job.t >= job.dur) {
+          job.done = true;
+          if (job.sound) { job.sound.stop(); job.sound = null; }
+          if (job.kind === 'steamer') {
+            if (job.makingFoam) job.drink.foam = 1; else job.drink.milk = 1;
+            swapJobCup(job);
+          } else if (job.kind === 'water') {
+            job.drink.water = job.waterType;
+            swapJobCup(job);
+          }
+          AudioFX.ding();
+        }
+      }
+      job.progress.draw(job.t / job.dur, job.done);
+    });
+  }
+  function resetJob(job) {
+    if (job.sound) { job.sound.stop(); job.sound = null; }
+    if (job.cupMesh) { job.st.root.remove(job.cupMesh); job.cupMesh = null; }
+    if (job.pfMesh) job.pfMesh.visible = false;
+    job.busy = job.done = false;
+    job.drink = null;
+    job.progress.hide();
   }
 
   /* ===== 에스프레소 슬롯 업데이트 ===== */
@@ -871,9 +917,11 @@ const Game = (() => {
     env.machines.espressoSlots.forEach(slot => {
       if (!slot.busy || slot.done) return;
       slot.t += dt;
+      slot.progress.draw(slot.t / slot.dur, false);
       if (slot.t >= slot.dur) {
         slot.done = true;
         if (slot.sound) { slot.sound.stop(); slot.sound = null; }
+        slot.progress.draw(1, true);
         slot.stream.visible = false;
         slot.drink.espresso = 1;
         // 컵 메시를 채워진 버전으로 교체
@@ -903,10 +951,16 @@ const Game = (() => {
       case 'cupIce': return E + '아이스컵 잡기';
       case 'cupEsp': return E + '에스프레소 잔 잡기';
       case 'ice': return E + '얼음 담기';
-      case 'grinder':
+      case 'grinder': {
+        const job = env.machines.grinderJob;
+        if (job.busy) {
+          if (!job.done) return `분쇄 중… ${Math.ceil(job.dur - job.t)}s`;
+          return held ? '손을 비우면 포터필터를 꺼낼 수 있어요' : E + '포터필터 꺼내기';
+        }
         if (held) return held.type === 'portafilter' ? '이미 포터필터를 들고 있어요' : '손을 비우고 분쇄하세요';
         if (S.stocks.beans <= 0) return '원두 없음 — 창고에서 보충하세요';
-        return E + '원두 분쇄 (포터필터 채우기)';
+        return E + '원두 분쇄 시작';
+      }
       case 'espresso': {
         if (it.slot === 1 && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
         const slot = env.machines.espressoSlots[it.slot];
@@ -916,9 +970,26 @@ const Game = (() => {
         if (held && held.type === 'drink' && !held.drink.espresso) return E + '에스프레소 추출';
         return '장착 완료 ✓ — 컵을 들고 오세요';
       }
-      case 'steamer': return held && held.type === 'drink' && held.drink.milk ? E + '우유 거품 올리기' : E + '우유 스팀하기';
-      case 'waterHot': return E + '온수 받기';
-      case 'waterCold': return E + '냉수 받기';
+      case 'steamer': {
+        const job = env.machines.steamerJob;
+        if (job.busy) {
+          if (!job.done) return `스팀 중… ${Math.ceil(job.dur - job.t)}s`;
+          return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
+        }
+        if (held && held.type === 'drink')
+          return held.drink.milk ? E + '컵 올려 우유 거품 만들기' : E + '컵 올려 우유 스팀';
+        return '컵을 들고 오세요';
+      }
+      case 'waterHot': case 'waterCold': {
+        const job = env.machines.waterJobs[it.id];
+        const nm = it.id === 'waterHot' ? '온수' : '냉수';
+        if (job.busy) {
+          if (!job.done) return `${nm} 받는 중…`;
+          return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
+        }
+        if (held && held.type === 'drink' && !held.drink.water) return E + `컵 올려 ${nm} 받기`;
+        return '물이 없는 컵을 들고 오세요';
+      }
       case 'syrup': return E + { vanilla: '바닐라', caramel: '카라멜', choco: '초코' }[it.kind] + ' 시럽 넣기';
       case 'whip': return E + '휘핑크림 올리기';
       case 'dessert': return E + DESSERTS[it.kind].name + ' 꺼내기 (' + fmt(DESSERTS[it.kind].price) + ')';
@@ -1021,7 +1092,9 @@ const Game = (() => {
       if (s.sound) { s.sound.stop(); s.sound = null; }
       s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.stream.visible = false;
       s.loaded = false; s.pf.visible = false;
+      s.progress.hide();
     });
+    machineJobs().forEach(j => j && resetJob(j));
     mode = 'playing';
     Player.enabled = true;
     updateHUD(); updateClock();
@@ -1126,12 +1199,13 @@ const Game = (() => {
 
     Customers.update(dt);
     updateSlots(dt);
+    updateJobs(dt);
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
     let p = promptFor(aimData);
     let placePoint = null;
-    if (!aimData && held && !channel) {
+    if (!aimData && held) {
       const pt = Player.aimSurface();
       if (pt) {
         if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
@@ -1151,8 +1225,6 @@ const Game = (() => {
     if (p) { pr.innerHTML = p; pr.classList.remove('hidden'); $('crosshair').classList.add('active'); }
     else { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); }
 
-    updateChannel(dt, aimData);
-
     // 인내심 바만 주기적으로 갱신 (티켓 DOM은 재생성하지 않음)
     barTimer -= dt;
     if (barTimer <= 0) { updateTicketBars(); barTimer = 0.25; }
@@ -1171,7 +1243,7 @@ const Game = (() => {
     function onUse() {
       const aimData = Player.aim();
       if (aimData) { interact(aimData); return; }
-      if (held && !channel) {
+      if (held) {
         const pt = Player.aimSurface();
         if (pt && !placeBlocked(pt)) placeItem(pt);
       }
@@ -1220,11 +1292,7 @@ const Game = (() => {
     get inTutorial() { return !!tut; },
     notifyEditMode(on) {
       if (on) {
-        // 진행 중인 채널링 취소 + 내려놓기 표시·레시피북 숨김
-        if (channel) {
-          channel = null;
-          $('progressWrap').classList.add('hidden');
-        }
+        // 내려놓기 표시·레시피북 숨김 (머신 작업은 계속 표시되며 시간만 정지)
         env.placeIndicator.visible = false;
         $('prompt').classList.add('hidden');
         $('recipeBook').classList.add('hidden');

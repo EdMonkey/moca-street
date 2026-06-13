@@ -207,6 +207,40 @@ const WORLD = (() => {
       return m;
     }
 
+    /* 머신 위 진행 상태 바 (빌보드 스프라이트) */
+    function makeProgress(parent, lx, ly, lz) {
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 24;
+      const pctx = c.getContext('2d');
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+      s.scale.set(0.52, 0.098, 1);
+      s.position.set(lx, ly, lz);
+      s.renderOrder = 5;
+      s.visible = false;
+      parent.add(s);
+      return {
+        draw(frac, done) {
+          s.visible = true;
+          pctx.clearRect(0, 0, 128, 24);
+          pctx.fillStyle = 'rgba(10,6,3,.78)';
+          pctx.beginPath(); pctx.roundRect(2, 4, 124, 16, 8); pctx.fill();
+          pctx.fillStyle = done ? '#7fb069' : '#e8b86d';
+          const w = Math.max(0, Math.min(1, frac)) * 118;
+          if (w > 2) { pctx.beginPath(); pctx.roundRect(5, 7, w, 10, 5); pctx.fill(); }
+          if (done) {
+            pctx.fillStyle = '#1d2916';
+            pctx.font = '700 14px "Malgun Gothic",sans-serif';
+            pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
+            pctx.fillText('✓ 완료', 64, 13);
+          }
+          tex.needsUpdate = true;
+        },
+        hide() { s.visible = false; }
+      };
+    }
+
     /* ---------- 바닥 / 천장 / 벽 ---------- */
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(18, 13), M().floor);
     floor.rotation.x = -Math.PI / 2;
@@ -460,6 +494,7 @@ const WORLD = (() => {
         g.add(stream);
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
+          progress: makeProgress(g, ox, 0.72, 0.45),
           stream, pf, loaded: false, busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
@@ -519,9 +554,16 @@ const WORLD = (() => {
       g.add(lbl);
       env.steamEmitters.push({ st, local: new THREE.Vector3(0.2, 0.2, 0.15) });
       childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamer' });
+      env.machines.steamerJob = {
+        kind: 'steamer',
+        st, localPos: new THREE.Vector3(0.2, 0, 0.22),
+        progress: makeProgress(g, 0, 0.78, 0.15),
+        busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
+      };
     })();
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
+    env.machines.waterJobs = {};
     (function water() {
       [['waterHot', -0.55, '온수', 0xd9534f], ['waterCold', 0.15, '냉수', 0x5a9adf]].forEach(([id, x, name, dot]) => {
         const st = station(id, name + ' 디스펜서', x, -4.3, 0.32, 0.35);
@@ -538,6 +580,12 @@ const WORLD = (() => {
         lbl.position.set(0, 0.6, 0.15);
         r.add(lbl);
         childHitbox(st, 0.32, 0.7, 0.55, 0, 0.3, 0.1, { id });
+        env.machines.waterJobs[id] = {
+          kind: 'water', waterType: id === 'waterHot' ? 'hot' : 'cold',
+          st, localPos: new THREE.Vector3(0, 0, 0.22),
+          progress: makeProgress(r, 0, 0.74, 0.15),
+          busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, sound: null
+        };
       });
     })();
 
@@ -630,6 +678,17 @@ const WORLD = (() => {
       glbl.position.set(0, 0.78, 0.18);
       g.add(glbl);
       childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder' });
+      // 분쇄 결과물(포터필터)이 받침 위에 표시됨
+      const pfOut = makePortafilterMesh();
+      pfOut.position.set(0, 0.145, 0.13);
+      pfOut.visible = false;
+      g.add(pfOut);
+      env.machines.grinderJob = {
+        kind: 'grinder',
+        st, pfMesh: pfOut,
+        progress: makeProgress(g, 0, 0.95, 0.15),
+        busy: false, done: false, t: 0, dur: 0, sound: null
+      };
     })();
 
     /* ---------- 장식 ---------- */
