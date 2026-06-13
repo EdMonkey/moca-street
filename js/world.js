@@ -207,15 +207,15 @@ const WORLD = (() => {
       return m;
     }
 
-    /* 머신 위 진행 상태 바 (빌보드 스프라이트) */
+    /* 머신 위 진행 상태 바 (빌보드 스프라이트) — 얇은 바, 완료 시 체크 아이콘만 */
     function makeProgress(parent, lx, ly, lz) {
       const c = document.createElement('canvas');
-      c.width = 128; c.height = 24;
+      c.width = 128; c.height = 32;
       const pctx = c.getContext('2d');
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-      s.scale.set(0.52, 0.098, 1);
+      s.scale.set(0.4, 0.1, 1);
       s.position.set(lx, ly, lz);
       s.renderOrder = 5;
       s.visible = false;
@@ -223,17 +223,25 @@ const WORLD = (() => {
       return {
         draw(frac, done) {
           s.visible = true;
-          pctx.clearRect(0, 0, 128, 24);
-          pctx.fillStyle = 'rgba(10,6,3,.78)';
-          pctx.beginPath(); pctx.roundRect(2, 4, 124, 16, 8); pctx.fill();
-          pctx.fillStyle = done ? '#7fb069' : '#e8b86d';
-          const w = Math.max(0, Math.min(1, frac)) * 118;
-          if (w > 2) { pctx.beginPath(); pctx.roundRect(5, 7, w, 10, 5); pctx.fill(); }
+          pctx.clearRect(0, 0, 128, 32);
           if (done) {
-            pctx.fillStyle = '#1d2916';
-            pctx.font = '700 14px "Malgun Gothic",sans-serif';
-            pctx.textAlign = 'center'; pctx.textBaseline = 'middle';
-            pctx.fillText('✓ 완료', 64, 13);
+            // 초록 원 + 흰색 체크만
+            pctx.fillStyle = '#7fb069';
+            pctx.beginPath(); pctx.arc(64, 16, 13, 0, 7); pctx.fill();
+            pctx.strokeStyle = '#ffffff';
+            pctx.lineWidth = 3.5;
+            pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+            pctx.beginPath();
+            pctx.moveTo(57, 16.5); pctx.lineTo(62, 21.5); pctx.lineTo(71, 11);
+            pctx.stroke();
+          } else {
+            pctx.fillStyle = 'rgba(10,6,3,.75)';
+            pctx.beginPath(); pctx.roundRect(14, 12, 100, 8, 4); pctx.fill();
+            const w = Math.max(0, Math.min(1, frac)) * 96;
+            if (w > 2) {
+              pctx.fillStyle = '#e8b86d';
+              pctx.beginPath(); pctx.roundRect(16, 14, w, 4, 2); pctx.fill();
+            }
           }
           tex.needsUpdate = true;
         },
@@ -494,7 +502,7 @@ const WORLD = (() => {
         g.add(stream);
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
-          progress: makeProgress(g, ox, 0.72, 0.45),
+          progress: makeProgress(g, ox, 0.52, 0.42),
           stream, pf, loaded: false, busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
@@ -557,7 +565,7 @@ const WORLD = (() => {
       env.machines.steamerJob = {
         kind: 'steamer',
         st, localPos: new THREE.Vector3(0.2, 0, 0.22),
-        progress: makeProgress(g, 0, 0.78, 0.15),
+        progress: makeProgress(g, 0, 0.72, 0.18),
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
     })();
@@ -583,7 +591,7 @@ const WORLD = (() => {
         env.machines.waterJobs[id] = {
           kind: 'water', waterType: id === 'waterHot' ? 'hot' : 'cold',
           st, localPos: new THREE.Vector3(0, 0, 0.22),
-          progress: makeProgress(r, 0, 0.74, 0.15),
+          progress: makeProgress(r, 0, 0.68, 0.18),
           busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, sound: null
         };
       });
@@ -686,7 +694,7 @@ const WORLD = (() => {
       env.machines.grinderJob = {
         kind: 'grinder',
         st, pfMesh: pfOut,
-        progress: makeProgress(g, 0, 0.95, 0.15),
+        progress: makeProgress(g, 0, 0.68, 0.22),
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
     })();
