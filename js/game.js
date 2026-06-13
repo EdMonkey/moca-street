@@ -620,6 +620,7 @@ const Game = (() => {
       toast(`${r.name} +${r.amount} (${fmt(price)})${emergency ? ' · 비상 보충 ⚡' : ''}`, emergency ? 'bad' : 'good');
       AudioFX.cash();
       UI.hud();
+      save();   // 구매(장비·업그레이드)와 동일하게 즉시 저장 — 새로고침 시 되돌아가는 불일치 방지
       return;
     }
   }
@@ -1025,7 +1026,7 @@ const Game = (() => {
     open = true; timeSec = 0;
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
-    spawnTimer = S.day === 1 ? 7 : 2.5;   // 첫날은 첫 손님 입장까지 여유를 둠
+    spawnTimer = S.day <= 3 ? [7, 4.5, 3][S.day - 1] : 2.5;   // 초반일수록 첫 손님 입장까지 여유
     resetStations();
     mode = 'playing';
     Player.enabled = true;
@@ -1052,9 +1053,14 @@ const Game = (() => {
     $('prepPanel').classList.add('hidden');
   }
 
+  // 초반 며칠은 점진적으로 바빠지도록 완화 (1일차 가장 한산 → 4일차부터 정상)
+  function earlyEaseFactor() {
+    return S.day <= 3 ? [1.6, 1.3, 1.12][S.day - 1] : 1;
+  }
+
   function spawnInterval() {
     let base = 15 - S.day * 0.6;
-    if (S.day === 1) base *= 1.6;   // 첫날은 한산하게 — 조작에 적응할 시간을 줌
+    base *= earlyEaseFactor();      // 초반 적응 구간 완화
     if (S.upgrades.ads) base *= 0.72;
     base *= S.rep >= 70 ? 0.85 : S.rep <= 30 ? 1.3 : 1;
     base = Math.max(5.5, base);
@@ -1357,6 +1363,9 @@ const Game = (() => {
     // 탬핑 홀드 해제: [E]/좌클릭에서 손을 떼면 게이지 판정
     document.addEventListener('keyup', ev => { if (ev.code === 'KeyE') useDown = false; });
     document.addEventListener('mouseup', ev => { if (ev.button === 0) useDown = false; });
+    // 포커스/포인터락이 풀리면 keyup·mouseup이 안 와 useDown이 눌린 채로 남는다 → 강제 해제
+    window.addEventListener('blur', () => { useDown = false; });
+    document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) useDown = false; });
   }
 
   function newGame() {
