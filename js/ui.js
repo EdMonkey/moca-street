@@ -33,6 +33,12 @@ const UI = (() => {
         : h.state === 'used' ? '사용한 가루 — 넉박스에 비우세요'
         : '비어 있음 — 그라인더에서 분쇄하세요';
       el.innerHTML = `<b style="color:var(--accent2)">포터필터</b><div class="ing">${info}</div>`;
+    } else if (h.type === 'shotglass') {
+      const info = h.filled ? '에스프레소 — 컵에 따르세요' : '비어 있음 — 머신에서 샷을 받으세요';
+      el.innerHTML = `<b style="color:var(--accent2)">샷잔</b><div class="ing">${info}</div>`;
+    } else if (h.type === 'pitcher') {
+      const info = h.foam ? '우유+거품 — 컵에 부으세요' : h.milk ? '데운 우유 — 컵에 부으세요' : '비어 있음 — 스티머에서 데우세요';
+      el.innerHTML = `<b style="color:var(--accent2)">스팀 피처</b><div class="ing">${info}</div>`;
     } else {
       el.innerHTML = `<b style="color:var(--accent2)">${DESSERTS[h.kind].name}</b>`;
     }
@@ -77,10 +83,33 @@ const UI = (() => {
     switch (it.id) {
       case 'register': return Customers.frontCustomer() ? E + '주문 받기' : '대기 중인 손님이 없습니다';
       case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
-      case 'placedItem': return held ? '손을 비우면 집을 수 있어요' : E + itemLabel(it.rec.item) + ' 집기';
+      case 'placedItem': {
+        const tgt = it.rec.item;
+        if (held && held.type === 'shotglass') {
+          if (!held.filled) return '샷잔이 비어 있어요 — 머신에서 샷을 받으세요';
+          if (tgt.type !== 'drink' || tgt.drink.cup === 'shot') return '샷은 컵에만 따를 수 있어요';
+          return tgt.drink.espresso ? '이미 샷이 들어 있는 컵이에요' : E + '샷 붓기 ☕';
+        }
+        if (held && held.type === 'pitcher') {
+          if (!held.milk && !held.foam) return '피처가 비어 있어요 — 스티머에서 우유를 데우세요';
+          if (tgt.type !== 'drink' || tgt.drink.cup === 'shot') return '우유는 컵에만 부을 수 있어요';
+          return tgt.drink.milk ? '이미 우유가 들어 있는 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
+        }
+        return held ? '손을 비우면 집을 수 있어요' : E + itemLabel(tgt) + ' 집기';
+      }
       case 'cupHot': return E + '머그컵 잡기';
       case 'cupIce': return E + '아이스컵 잡기';
       case 'cupEsp': return E + '에스프레소 잔 잡기';
+      case 'shotrack': {
+        if (held && held.type === 'shotglass')
+          return held.filled ? '샷이 들어있어요 — 컵에 따르세요' : E + '샷잔 반납';
+        return held ? '손을 비우면 샷잔을 집을 수 있어요' : E + '샷잔 집기 (재사용 도구)';
+      }
+      case 'pitcherrack': {
+        if (held && held.type === 'pitcher')
+          return (held.milk || held.foam) ? '우유가 들어있어요 — 컵에 부으세요' : E + '스팀 피처 반납';
+        return held ? '손을 비우면 피처를 집을 수 있어요' : E + '스팀 피처 집기 (재사용 도구)';
+      }
       case 'ice': return E + '얼음 담기';
       case 'grinder': {
         const job = it.job;
@@ -102,8 +131,10 @@ const UI = (() => {
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
         // 컵을 들고 있으면 샷잔 올리기
         if (held && held.type === 'drink' && !held.drink.espresso)
-          return slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '샷잔 올리기';
+          return slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '컵 올리기';
         if (held && held.type === 'drink') return '이미 샷이 추출된 컵이에요';
+        if (held && held.type === 'shotglass')
+          return held.filled ? '샷이 든 샷잔 — 컵에 따르세요' : slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '샷잔 올리기';
         if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
         // 빈손 + 컵이 올라가 있음 → 추출 버튼
         if (slot.cupMesh) {
@@ -123,11 +154,12 @@ const UI = (() => {
         const job = it.job;
         if (job.busy) {
           if (!job.done) return `스팀 중… ${Math.ceil(job.dur - job.t)}s`;
-          return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
+          return held ? '손을 비우면 피처를 꺼낼 수 있어요' : E + '스팀 피처 꺼내기';
         }
-        if (held && held.type === 'drink')
-          return held.drink.milk ? E + '컵 올려 우유 거품 만들기' : E + '컵 올려 우유 스팀';
-        return '컵을 들고 오세요';
+        if (held && held.type === 'pitcher')
+          return held.foam ? '이미 거품까지 만들었어요 — 컵에 부으세요' : held.milk ? E + '꾹 눌러 우유 거품(마이크로폼)' : E + '꾹 눌러 우유 스팀';
+        if (held && held.type === 'drink') return '컵에 직접 스팀 불가 — 스팀 피처를 사용하세요';
+        return held ? '스팀 피처를 들고 오세요' : E + '스팀 분사 (노브 돌리기)';
       }
       case 'waterHot': case 'waterCold': {
         const job = env.machines.waterJobs[it.id];
@@ -154,7 +186,7 @@ const UI = (() => {
         if (held.state === 'empty') return '먼저 그라인더에서 원두를 분쇄하세요';
         if (held.state === 'used') return '사용한 가루예요 — 넉박스에 비우세요';
         if (held.state === 'tamped') return '이미 탬핑이 끝났어요 — 머신에 장착하세요';
-        return '<b>[E]</b> 탬핑 시작 (이후 다시 누르고 있어 게이지 채우기)';
+        return '<b>[E]</b> 꾹 눌러 탬핑 (퍼펙트 존에서 떼면 보너스)';
       }
       case 'trash': {
         if (held && held.type === 'portafilter')
@@ -223,8 +255,9 @@ const UI = (() => {
       `<ol class="rsteps"><li><b>에스프레소 머신</b>에서 <b>[E]</b>로 포터필터를 분리하세요</li>` +
       `<li><b>그라인더</b>에 가져가 <b>[E]</b>로 원두를 분쇄하고 꺼내세요</li>` +
       `<li><b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 다지세요 (퍼펙트 존에서 떼면 팁 보너스)</li>` +
-      `<li>탬핑된 포터필터를 머신에 <b>장착</b>하고, 샷잔을 올린 뒤 <b>빈손으로 [E]</b>를 눌러 추출하세요</li>` +
+      `<li>탬핑된 포터필터를 머신에 <b>장착</b>하고, 컵(또는 <b>샷잔</b>)을 올린 뒤 <b>빈손으로 [E]</b>를 눌러 추출하세요</li>` +
       `<li>추출이 끝나면 <b>[E]</b>로 컵을 꺼내세요 — 포터필터는 머신에 남아요</li>` +
+      `<li>💡 <b>샷잔</b>에 받은 샷은 컵을 바닥/카운터에 내려놓고 샷잔을 들어 <b>[E]</b>로 부을 수 있어요 (샷잔은 재사용)</li>` +
       `<li>포터필터를 분리해 <b>넉박스</b>에서 <b>[E]</b>로 가루를 털어내면 다음 샷 준비 완료!</li></ol>`;
     grid.appendChild(guide);
     Object.keys(RECIPES).forEach(k => {

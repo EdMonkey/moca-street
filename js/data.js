@@ -7,25 +7,27 @@
 const DATA = (() => {
 
   // target: {cup, ice, espresso, water, milk, foam, syrup, whip}
+  // seq: 정확한 제조 순서(재료 추가 순서). 지키면 추가 팁 + 평판. 컵 종류는 시작 용기라 제외.
+  //   에스프레소+물 음료는 '물 먼저 → 샷 나중'이라야 크레마가 위에 살아남아 정답.
   const RECIPES = {
     espresso:   { name: '에스프레소',        price: 2500, lvl: 1, target: { cup: 'espresso', espresso: 1 },
-      steps: ['에스프레소 잔', '에스프레소 샷'] },
+      seq: ['espresso'], steps: ['에스프레소 잔', '에스프레소 샷'] },
     americano:  { name: '아메리카노',        price: 3000, lvl: 1, target: { cup: 'hot', espresso: 1, water: 'hot' },
-      steps: ['머그컵', '에스프레소 샷', '온수'] },
+      seq: ['water', 'espresso'], steps: ['머그컵', '온수', '에스프레소 샷 (크레마 유지)'] },
     iceAmericano:{ name: '아이스 아메리카노', price: 3500, lvl: 2, target: { cup: 'ice', ice: 1, espresso: 1, water: 'cold' },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '냉수'] },
+      seq: ['ice', 'water', 'espresso'], steps: ['아이스컵', '얼음', '냉수', '에스프레소 샷 (크레마 유지)'] },
     latte:      { name: '카페라떼',          price: 4000, lvl: 2, target: { cup: 'hot', espresso: 1, milk: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크'] },
+      seq: ['espresso', 'milk'], steps: ['머그컵', '에스프레소 샷', '스팀밀크'] },
     iceLatte:   { name: '아이스 라떼',       price: 4500, lvl: 3, target: { cup: 'ice', ice: 1, espresso: 1, milk: 1 },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크'] },
+      seq: ['ice', 'espresso', 'milk'], steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크'] },
     vanillaLatte:{ name: '바닐라 라떼',      price: 4800, lvl: 3, target: { cup: 'hot', espresso: 1, milk: 1, syrup: 'vanilla' },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '바닐라 시럽'] },
+      seq: ['espresso', 'milk', 'syrup'], steps: ['머그컵', '에스프레소 샷', '스팀밀크', '바닐라 시럽'] },
     cappuccino: { name: '카푸치노',          price: 4500, lvl: 4, target: { cup: 'hot', espresso: 1, milk: 1, foam: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '우유 거품(스티머 1회 더)'] },
+      seq: ['espresso', 'milk', 'foam'], steps: ['머그컵', '에스프레소 샷', '스팀밀크', '우유 거품(스티머 1회 더)'] },
     mocha:      { name: '카페모카',          price: 5000, lvl: 4, target: { cup: 'hot', espresso: 1, milk: 1, syrup: 'choco', whip: 1 },
-      steps: ['머그컵', '에스프레소 샷', '스팀밀크', '초코 시럽', '휘핑크림'] },
+      seq: ['espresso', 'milk', 'syrup', 'whip'], steps: ['머그컵', '에스프레소 샷', '스팀밀크', '초코 시럽', '휘핑크림'] },
     caramelMac: { name: '카라멜 마끼아또',   price: 5300, lvl: 5, target: { cup: 'ice', ice: 1, espresso: 1, milk: 1, syrup: 'caramel' },
-      steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크', '카라멜 시럽'] },
+      seq: ['ice', 'espresso', 'milk', 'syrup'], steps: ['아이스컵', '얼음', '에스프레소 샷', '스팀밀크', '카라멜 시럽'] },
   };
   const DESSERTS = {
     croissant: { name: '크루아상',   price: 3500, lvl: 3 },

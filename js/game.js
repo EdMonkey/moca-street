@@ -26,6 +26,7 @@ const Game = (() => {
   let placedItems = [];           // 표면에 내려놓은 아이템들 {item, mesh, hb}
   let indPulse = 0;
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
+  let steamGame = null;           // 스팀 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
 
   function freshState() {
@@ -65,6 +66,19 @@ const Game = (() => {
     return canonical(drink) === canonical(RECIPES[recipeId].target);
   }
 
+  /* ===== 제조 순서 ===== */
+  // 컵에 재료를 넣은 순서를 기록 (크레마 표시 + 순서 보너스 판정에 사용)
+  function addStep(drink, key) {
+    (drink.order || (drink.order = [])).push(key);
+  }
+  // 레시피의 정답 순서(seq)와 정확히 일치하게 만들었는지
+  function correctOrder(drink, recipeId) {
+    const seq = RECIPES[recipeId].seq;
+    if (!seq) return false;
+    const order = (drink.order || []).filter(k => seq.includes(k));
+    return order.length === seq.length && order.every((k, i) => k === seq[i]);
+  }
+
   /* ===== 손에 든 것 ===== */
   function setHeld(h) {
     held = h;
@@ -79,6 +93,14 @@ const Game = (() => {
       Player.setHeld(m);
     } else if (h.type === 'portafilter') {
       const m = WORLD.makePortafilterMesh(h.state || 'empty');
+      m.scale.setScalar(1.3);
+      Player.setHeld(m);
+    } else if (h.type === 'shotglass') {
+      const m = WORLD.makeDrinkMesh({ cup: 'shot', espresso: h.filled ? 1 : 0, perfect: h.perfect });
+      m.scale.setScalar(1.5);
+      Player.setHeld(m);
+    } else if (h.type === 'pitcher') {
+      const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
       Player.setHeld(m);
     }
@@ -108,6 +130,8 @@ const Game = (() => {
         : h.state === 'used' ? '포터필터 (사용한 가루)'
         : '포터필터 (비어 있음)';
     }
+    if (h.type === 'shotglass') return h.filled ? '샷잔 (에스프레소 ☕)' : '샷잔 (비어 있음)';
+    if (h.type === 'pitcher') return h.foam ? '스팀 피처 (우유+거품)' : h.milk ? '스팀 피처 (데운 우유)' : '스팀 피처 (비어 있음)';
     return DESSERTS[h.kind].name;
   }
 
@@ -120,6 +144,8 @@ const Game = (() => {
     let mesh, yOff = 0.004;
     if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
     else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
+    else if (item.type === 'shotglass') mesh = WORLD.makeDrinkMesh({ cup: 'shot', espresso: item.filled ? 1 : 0, perfect: item.perfect });
+    else if (item.type === 'pitcher') mesh = WORLD.makePitcherMesh(item.milk ? 1 : 0, item.foam ? 1 : 0);
     else { mesh = WORLD.makePortafilterMesh(item.state || 'empty'); yOff = 0.03; }
     mesh.position.set(point.x, point.y + yOff, point.z);
     // 손잡이/컵이 플레이어 쪽을 향하도록
@@ -137,7 +163,7 @@ const Game = (() => {
     env.interactables.push(hb);
     placedItems.push(rec);
     setHeld(null);
-    if (item.type === 'drink') AudioFX.cupClink(0.4); else AudioFX.put();
+    if (item.type === 'drink' || item.type === 'shotglass' || item.type === 'pitcher') AudioFX.cupClink(0.4); else AudioFX.put();
   }
 
   function removePlaced(rec) {
@@ -151,6 +177,22 @@ const Game = (() => {
 
   function clearPlacedItems() {
     while (placedItems.length) removePlaced(placedItems[0]);
+  }
+
+  // 슬롯/표면에서 손으로 되돌릴 때: 샷잔(cup:'shot')은 도구 타입으로, 일반 컵은 음료로 환원
+  function vesselToHand(drink) {
+    return drink.cup === 'shot'
+      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect }
+      : { type: 'drink', drink };
+  }
+  // 내려놓은 음료 컵의 메시를 현재 내용물로 다시 그림 (샷을 부은 뒤 색/크레마 갱신)
+  function refreshPlacedDrink(rec) {
+    const pos = rec.mesh.position.clone(), roty = rec.mesh.rotation.y;
+    scene.remove(rec.mesh);
+    const m = WORLD.makeDrinkMesh(rec.item.drink);
+    m.position.copy(pos); m.rotation.y = roty;
+    scene.add(m);
+    rec.mesh = m;
   }
 
   /* ===== 주문 ===== */
@@ -219,13 +261,42 @@ const Game = (() => {
     /* --- 서빙 --- */
     if (id === 'pickup') { tryServe(); return; }
 
-    /* --- 내려놓은 아이템 집기 --- */
+    /* --- 내려놓은 아이템: 가득 찬 샷잔으로 샷 붓기 / 집기 --- */
     if (id === 'placedItem') {
-      if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
       const rec = it.rec;
+      // 가득 찬 샷잔을 들고 놓인 컵을 조준 → 샷 붓기
+      if (held && held.type === 'shotglass') {
+        if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
+        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('샷은 컵에만 따를 수 있어요', 'bad'); AudioFX.err(); return; }
+        if (rec.item.drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
+        rec.item.drink.espresso = 1;
+        addStep(rec.item.drink, 'espresso');
+        rec.item.drink.perfect = !!held.perfect;
+        refreshPlacedDrink(rec);
+        setHeld({ type: 'shotglass', filled: false, perfect: false });   // 샷잔 비움(재사용)
+        AudioFX.pourWater(0.5);
+        toast('샷을 부었어요 ☕');
+        return;
+      }
+      // 우유가 담긴 스팀 피처를 들고 놓인 컵을 조준 → 우유(+거품) 붓기
+      if (held && held.type === 'pitcher') {
+        if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
+        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('우유는 컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
+        if (rec.item.drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
+        rec.item.drink.milk = 1;
+        addStep(rec.item.drink, 'milk');
+        if (held.foam) { rec.item.drink.foam = 1; addStep(rec.item.drink, 'foam'); }
+        if (held.perfectFoam) rec.item.drink.foamPerfect = 1;   // 퍼펙트 마이크로폼 보너스 인계
+        refreshPlacedDrink(rec);
+        setHeld({ type: 'pitcher', milk: 0, foam: 0 });   // 피처 비움(재사용)
+        AudioFX.pourWater(0.5);
+        toast(held.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
+        return;
+      }
+      if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
       removePlaced(rec);
       setHeld(rec.item);
-      if (rec.item.type === 'drink') AudioFX.cupClink(0.4); else AudioFX.pick();
+      if (rec.item.type === 'drink' || rec.item.type === 'shotglass') AudioFX.cupClink(0.4); else AudioFX.pick();
       return;
     }
 
@@ -234,9 +305,38 @@ const Game = (() => {
       if (held) { toast('손이 비어있어야 컵을 잡을 수 있어요'); return; }
       if (S.stocks.cups <= 0) { toast('컵이 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
       S.stocks.cups--;
-      setHeld({ type: 'drink', drink: { cup: id === 'cupHot' ? 'hot' : id === 'cupIce' ? 'ice' : 'espresso' } });
+      const cupType = id === 'cupHot' ? 'hot' : id === 'cupIce' ? 'ice' : 'espresso';
+      setHeld({ type: 'drink', drink: { cup: cupType, order: [] } });
       AudioFX.cupClink(0.55);
       UI.hud();
+      return;
+    }
+
+    /* --- 샷잔 거치대: 빈 샷잔 집기 / 반납 (재사용 무료 도구) --- */
+    if (id === 'shotrack') {
+      if (held && held.type === 'shotglass') {
+        if (held.filled) { toast('샷이 들어있어요 — 컵에 따른 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
+        setHeld(null);
+        AudioFX.cupClink(0.4);
+        return;
+      }
+      if (held) { toast('손이 비어있어야 샷잔을 집을 수 있어요'); return; }
+      setHeld({ type: 'shotglass', filled: false, perfect: false });
+      AudioFX.cupClink(0.45);
+      return;
+    }
+
+    /* --- 스팀 피처 거치대: 빈 피처 집기 / 반납 (재사용 무료 도구) --- */
+    if (id === 'pitcherrack') {
+      if (held && held.type === 'pitcher') {
+        if (held.milk || held.foam) { toast('우유가 들어있어요 — 컵에 부은 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
+        setHeld(null);
+        AudioFX.cupClink(0.4);
+        return;
+      }
+      if (held) { toast('손이 비어있어야 피처를 집을 수 있어요'); return; }
+      setHeld({ type: 'pitcher', milk: 0, foam: 0 });
+      AudioFX.cupClink(0.45);
       return;
     }
 
@@ -246,6 +346,7 @@ const Game = (() => {
       if (held.drink.cup !== 'ice') { toast('아이스컵에만 얼음을 담을 수 있어요'); AudioFX.err(); return; }
       if (held.drink.ice) { toast('이미 얼음이 들어있어요'); return; }
       held.drink.ice = 1;
+      addStep(held.drink, 'ice');
       setHeld(held);
       AudioFX.ice();
       return;
@@ -294,7 +395,7 @@ const Game = (() => {
         const drink = slot.drink;
         slot.cupMesh = null; slot.drink = null;
         slot.progress.hide();
-        setHeld({ type: 'drink', drink });
+        setHeld(vesselToHand(drink));
         AudioFX.cupClink(0.5);
         return;
       }
@@ -322,6 +423,20 @@ const Game = (() => {
         AudioFX.cupClink(0.4);
         return;
       }
+      // 샷잔(재사용 도구) 올리기 — 내부적으로 cup:'shot' 음료로 다룬다
+      if (held && held.type === 'shotglass') {
+        if (held.filled) { toast('이미 샷이 들어있는 샷잔이에요 — 컵에 따르세요', 'bad'); AudioFX.err(); return; }
+        if (slot.cupMesh) { toast('이미 컵이 올라가 있어요'); return; }
+        setHeld(null);
+        const drink = { cup: 'shot' };
+        const cm = WORLD.makeDrinkMesh(drink);
+        cm.position.copy(slot.localPos);
+        slot.st.root.add(cm);
+        slot.cupMesh = cm;
+        slot.drink = drink;
+        AudioFX.cupClink(0.4);
+        return;
+      }
       // 빈손 + 컵이 올라가 있음 → 추출 버튼(탬핑 완료 시) 또는 컵 회수
       if (slot.cupMesh) {
         if (slot.pfState === 'tamped') {
@@ -338,7 +453,7 @@ const Game = (() => {
         slot.st.root.remove(slot.cupMesh);
         const drink = slot.drink;
         slot.cupMesh = null; slot.drink = null;
-        setHeld({ type: 'drink', drink });
+        setHeld(vesselToHand(drink));
         AudioFX.cupClink(0.4);
         toast(slot.pfState === 'none' ? '먼저 탬핑한 포터필터를 장착하세요'
           : slot.pfState === 'used' ? '사용한 가루 — 포터필터를 분리해 넉박스에 비우세요'
@@ -357,35 +472,22 @@ const Game = (() => {
       return;
     }
 
-    /* --- 밀크 스티머: 컵 올려두기 → (자유 행동) → 완료되면 꺼내기 --- */
+    /* --- 밀크 스티머: 피처를 들고 [E]를 꾹 눌러 스팀 미니게임 (퍼펙트=마이크로폼 보너스) --- */
     if (id === 'steamer') {
       const job = it.job;
-      if (job.busy) {
-        if (!job.done) { toast('스팀 중입니다…'); return; }
-        if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
-        const drink = job.drink;
-        resetJob(job);
-        setHeld({ type: 'drink', drink });
-        AudioFX.cupClink(0.5);
+      if (!held) {
+        // 빈손으로 노브 조작 → 스팀봉 끝에서 스팀 분사 (퍼지)
+        job.steamT = Math.max(job.steamT || 0, 1.2);
+        AudioFX.steam(1.2);
+        AudioFX.metalClack();
         return;
       }
-      if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
-      if (held.drink.foam) { toast('이미 거품까지 올렸어요'); return; }
+      if (held.type === 'drink') { toast('컵에 직접 스팀할 수 없어요 — 스팀 피처에 우유를 데우세요', 'bad'); AudioFX.err(); return; }
+      if (held.type !== 'pitcher') { toast('스팀 피처를 들고 오세요', 'bad'); AudioFX.err(); return; }
+      if (held.foam) { toast('이미 거품까지 만든 피처예요 — 컵에 부으세요'); return; }
       if (S.stocks.milk <= 0) { toast('우유가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      S.stocks.milk--;
-      const drink = held.drink;
-      setHeld(null);
-      job.busy = true; job.done = false; job.t = 0;
-      job.dur = S.upgrades.fastSteam ? 1.2 : 2.4;
-      job.makingFoam = !!drink.milk;
-      job.drink = drink;
-      const cm = WORLD.makeDrinkMesh(drink);
-      cm.position.copy(job.localPos);
-      job.st.root.add(cm);
-      job.cupMesh = cm;
-      job.sound = AudioFX.steam(job.dur);
-      AudioFX.cupClink(0.35);
-      UI.hud();
+      // [E]를 꾹 눌러 진행하는 스팀 미니게임 시작
+      if (!steamGame) startSteamGame(job);
       return;
     }
 
@@ -421,6 +523,7 @@ const Game = (() => {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.syrup) { toast('이미 시럽이 들어있어요'); return; }
       held.drink.syrup = it.kind;
+      addStep(held.drink, 'syrup');
       setHeld(held);
       AudioFX.syrupPump();
       return;
@@ -431,6 +534,7 @@ const Game = (() => {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.whip) { toast('이미 휘핑크림을 올렸어요'); return; }
       held.drink.whip = 1;
+      addStep(held.drink, 'whip');
       setHeld(held);
       AudioFX.whipSpray();
       return;
@@ -488,6 +592,16 @@ const Game = (() => {
         }
         return;
       }
+      if (held.type === 'shotglass') {
+        toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad');
+        AudioFX.err();
+        return;
+      }
+      if (held.type === 'pitcher') {
+        toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad');
+        AudioFX.err();
+        return;
+      }
       setHeld(null);
       toast('버렸습니다');
       AudioFX.trashThud();
@@ -523,6 +637,7 @@ const Game = (() => {
         if (held.type === 'dessert' && item.type === 'dessert') match = held.kind === item.kind;
         if (!match) continue;
         // 서빙 성공
+        if (held.type === 'drink') held.drink.orderOk = correctOrder(held.drink, item.recipeId);
         item.done = true;
         const servedDrink = held.type === 'drink' ? held.drink : null;
         // 픽업대에 컵/디저트를 내려놓는 연출용 메시
@@ -545,6 +660,10 @@ const Game = (() => {
       toast(match ? `${RECIPES[match].name}을(를) 기다리는 손님이 없어요` : '레시피와 일치하지 않는 음료예요. 쓰레기통에 버리세요', 'bad');
     } else if (held.type === 'portafilter') {
       toast('포터필터는 에스프레소 머신에 장착하세요 ☕', 'bad');
+    } else if (held.type === 'shotglass') {
+      toast('샷잔은 서빙할 수 없어요 — 컵에 샷을 따르세요', 'bad');
+    } else if (held.type === 'pitcher') {
+      toast('스팀 피처는 서빙할 수 없어요 — 컵에 우유를 부으세요', 'bad');
     } else {
       toast('이 디저트를 기다리는 손님이 없어요', 'bad');
     }
@@ -559,17 +678,25 @@ const Game = (() => {
     // 퍼펙트 탬핑 보너스 — 음료에 크레마가 살아 팁 +15%
     const perfect = !!(servedDrink && servedDrink.perfect);
     if (perfect) tip += Math.round(o.total * 0.15 / 100) * 100;
+    // 정확한 제조 순서 보너스 — 팁 +15% + 평판 +1
+    const orderOk = !!(servedDrink && servedDrink.orderOk);
+    if (orderOk) tip += Math.round(o.total * 0.15 / 100) * 100;
+    // 퍼펙트 마이크로폼(스팀 미니게임) 보너스 — 팁 +15%
+    const foamPerfect = !!(servedDrink && servedDrink.foamPerfect);
+    if (foamPerfect) tip += Math.round(o.total * 0.15 / 100) * 100;
     S.money += o.total + tip;
     dayStats.revenue += o.total;
     dayStats.tips += tip;
     dayStats.served++;
-    S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1));
+    S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0));
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
     Customers.serve(c, null);
-    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
+    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect || foamPerfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
+    if (orderOk) toast('✨ 정확한 제조 순서! 팁 +15% · 평판 +1', 'gold', 2200);
+    if (foamPerfect) toast('🥛 퍼펙트 마이크로폼! 팁 +15%', 'gold', 2200);
     AudioFX.cash();
     UI.hud();
     Tutorial.event('served');
@@ -597,7 +724,9 @@ const Game = (() => {
   }
   function swapJobCup(job) {
     job.st.root.remove(job.cupMesh);
-    const cm = WORLD.makeDrinkMesh(job.drink);
+    const cm = job.kind === 'steamer'
+      ? WORLD.makePitcherMesh(job.pitcher.milk ? 1 : 0, job.pitcher.foam ? 1 : 0)
+      : WORLD.makeDrinkMesh(job.drink);
     cm.position.copy(job.localPos);
     job.st.root.add(cm);
     job.cupMesh = cm;
@@ -611,10 +740,12 @@ const Game = (() => {
           job.done = true;
           if (job.sound) { job.sound.stop(); job.sound = null; }
           if (job.kind === 'steamer') {
-            if (job.makingFoam) job.drink.foam = 1; else job.drink.milk = 1;
+            // 피처에 데운 우유/거품을 채움 (순서 기록은 컵에 부을 때)
+            if (job.makingFoam) job.pitcher.foam = 1; else job.pitcher.milk = 1;
             swapJobCup(job);
           } else if (job.kind === 'water') {
             job.drink.water = job.waterType;
+            addStep(job.drink, 'water');
             swapJobCup(job);
           } else if (job.kind === 'grinder') {
             WORLD.setPortafilterState(job.pfMesh, 'filled');
@@ -631,6 +762,7 @@ const Game = (() => {
     if (job.pfMesh) { WORLD.setPortafilterState(job.pfMesh, 'none'); job.hasPf = false; }
     job.busy = job.done = false;
     job.drink = null;
+    job.pitcher = null;
     job.progress.hide();
   }
 
@@ -647,6 +779,7 @@ const Game = (() => {
         slot.progress.draw(1, true);
         slot.stream.visible = false;
         slot.drink.espresso = 1;
+        addStep(slot.drink, 'espresso');
         slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
         // 추출 완료 — 포터필터는 사용한 가루(used) 상태가 됨
         slot.pfState = 'used';
@@ -671,14 +804,22 @@ const Game = (() => {
   /* ===== 탬핑 미니게임 (타이밍) =====
    * 탬핑 스테이션을 보며 분쇄된(filled) 포터필터를 들고 [E]로 시작 → 바늘이 좌우로 움직임 →
    * 다시 [E]로 멈춰 퍼펙트/성공 존에 맞추면 다져짐. 빗나가면 계속 움직이며 재시도. */
+  // 게이지(#tampGame) 제목/힌트 텍스트 — 탬핑·스팀이 같은 UI를 공유하므로 시작 시 갱신
+  function setGaugeText(title, hint) {
+    const t = document.querySelector('#tampGame .tgTitle');
+    const h = document.querySelector('#tampGame .tgHint');
+    if (t) t.innerHTML = title;
+    if (h) h.textContent = hint;
+  }
   function startTampGame() {
     // 퍼펙트 존 시작 위치를 매번 살짝 랜덤화 (외워지지 않도록)
     const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
-    // phase: armed(클릭으로 진입 — 그 클릭을 떼야 함) → ready(다시 누르면 시작) → holding(게이지 상승)
-    tampGame = { phase: 'armed', fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: null };
+    // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
+    tampGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: AudioFX.tampHold(TAMP_DUR) };
     const band = document.querySelector('#tampGame .tgPerfect');
     if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
     $('tgFill').style.height = '0%';
+    setGaugeText('🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기', '퍼펙트 존(초록)에서 손을 떼면 크레마(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
   }
@@ -737,22 +878,90 @@ const Game = (() => {
       }
       return true;
     }
-    // 진입 클릭을 떼야 홀드를 받음 (클릭 후 → 다시 눌러서 시작)
-    if (tampGame.phase === 'armed') {
-      if (!useDown) tampGame.phase = 'ready';
-      return true;
-    }
-    if (tampGame.phase === 'ready') {
-      if (useDown) { tampGame.phase = 'holding'; tampGame.sound = AudioFX.tampHold(TAMP_DUR); }
-      return true;
-    }
-    // holding: 누르고 있는 동안 게이지 상승, 손을 떼면 그 지점으로 판정
+    // 누르는 동안 게이지 상승, 손을 떼면 그 지점으로 판정
     if (useDown) {
       tampGame.fill = Math.min(1, tampGame.fill + dt / TAMP_DUR);
       $('tgFill').style.height = (tampGame.fill * 100) + '%';
       if (tampGame.fill >= 1) lockTampGame(1);     // 끝까지 누르면 자동 성공(일반)
     } else {
       lockTampGame(tampGame.fill);
+    }
+    return true;
+  }
+
+  /* ===== 스팀(스티밍) 미니게임 — 탬핑과 동일 메커니즘, 스팀 피처를 든 채 진행 =====
+   * 스티머를 보며 피처를 들고 [E]로 시작 → [E]를 꾹 눌러 폼 게이지 상승 →
+   * 퍼펙트 존에서 떼면 마이크로폼(팁 보너스), 일반 성공도 우유/거품 완성. */
+  function startSteamGame(job) {
+    const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
+    const makingFoam = !!held.milk;   // 이미 우유가 있으면 이번엔 거품(마이크로폼)
+    const dur = S.upgrades.fastSteam ? 1.4 : 2.4;
+    // 누르는 즉시 채워지는 press-and-hold (탬핑식 armed/ready 2단계 없음)
+    steamGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], job, makingFoam, dur, sound: AudioFX.steam(dur) };
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+    setGaugeText('🥛 스티밍 — <b>[E]</b>를 누르고 있어 ' + (makingFoam ? '우유 거품 만들기' : '우유 데우기'),
+      '퍼펙트 존(초록)에서 손을 떼면 마이크로폼(팁) 보너스 · 끝까지 눌러도 성공');
+    clearHitFx();
+    $('tampGame').classList.remove('hidden');
+  }
+  function stopSteamSound() { if (steamGame && steamGame.sound) { steamGame.sound.stop(); steamGame.sound = null; } }
+  function endSteamGame() {
+    stopSteamSound();
+    if (steamGame && steamGame.job) steamGame.job.steamT = 0;
+    steamGame = null;
+    clearHitFx();
+    $('tampGame').classList.add('hidden');
+  }
+  function lockSteamGame(fill) {
+    if (steamGame.locked) return;
+    stopSteamSound();
+    const pz = steamGame.perfect;
+    const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
+      : (fill >= TAMP_MIN) ? 'good' : 'weak';
+    steamGame.locked = { result, t: 0 };
+    if (result === 'weak') {
+      AudioFX.err();
+      $('tampGame').classList.add('hitMiss');
+    } else {
+      AudioFX.tampDone();
+      if (result === 'perfect') AudioFX.tampPerfectSfx();
+      $('tampGame').classList.add(result === 'perfect' ? 'hitPerfect' : 'hitGood');
+    }
+  }
+  function finishSteam(perfect, msg, cls) {
+    S.stocks.milk--;                          // 성공 시 우유 1 소모
+    if (steamGame.makingFoam) held.foam = 1; else held.milk = 1;
+    held.perfectFoam = perfect;               // 마이크로폼 — 컵에 부을 때 보너스 인계
+    setHeld(held);
+    toast(msg, cls);
+    UI.hud();
+    endSteamGame();
+  }
+  function updateSteamGame(dt, aimData) {
+    if (!steamGame) return false;
+    const ok = aimData && aimData.id === 'steamer' && held && held.type === 'pitcher' && !held.foam;
+    if (!ok) { endSteamGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
+    if (steamGame.locked) {
+      steamGame.locked.t += dt;
+      const r = steamGame.locked.result;
+      if (steamGame.locked.t >= (r === 'weak' ? 0.16 : 0.24)) {
+        if (r === 'weak') { toast('스팀이 약해요 — 다시 꾹 눌러 데우세요', 'bad', 1500); endSteamGame(); }
+        else finishSteam(r === 'perfect',
+          r === 'perfect' ? '✨ 퍼펙트 마이크로폼! (팁 보너스)' : (steamGame.makingFoam ? '우유 거품 완성!' : '우유 스팀 완성!'),
+          r === 'perfect' ? 'gold' : 'good');
+      }
+      return true;
+    }
+    // 누르는 동안 폼 게이지 상승 + 스팀봉 증기, 손 떼면 그 지점으로 판정
+    if (useDown) {
+      steamGame.fill = Math.min(1, steamGame.fill + dt / steamGame.dur);
+      $('tgFill').style.height = (steamGame.fill * 100) + '%';
+      if (steamGame.job) steamGame.job.steamT = 0.25;   // 스팀봉 증기 분출 유지
+      if (steamGame.fill >= 1) lockSteamGame(1);
+    } else {
+      lockSteamGame(steamGame.fill);
     }
     return true;
   }
@@ -779,9 +988,10 @@ const Game = (() => {
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
-    // 탬핑 초기화
+    // 탬핑/스팀 미니게임 초기화
     useDown = false;
     endTampGame();
+    endSteamGame();
     if (env.machines.tamp && env.machines.tamp.tamper) env.machines.tamp.tamper.position.y = 0.04;
   }
 
@@ -1051,17 +1261,9 @@ const Game = (() => {
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
     const tamping = updateTampGame(dt, aimData);
+    const steaming = updateSteamGame(dt, aimData);
     let p = UI.prompt(aimData);
-    if (tamping) {
-      if (tampGame && tampGame.locked) p = '🔧 탬핑!';
-      else if (tampGame && tampGame.phase === 'holding') {
-        const f = tampGame.fill, pz = tampGame.perfect;
-        const inPerf = f >= pz[0] && f <= pz[1];
-        p = inPerf ? '✨ 지금 손을 떼세요!' : '🔧 누르고 있기… ' + Math.round(f * 100) + '%';
-      } else {
-        p = '🔧 <b>[E]</b>를 누르고 있어 게이지를 채우세요';
-      }
-    }
+    if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
     if (!aimData && held) {
       const pt = Player.aimSurface();
@@ -1135,6 +1337,8 @@ const Game = (() => {
       if (ev.code === 'KeyE') { useDown = true; onUse(); }
       if (ev.code === 'KeyQ' && held) {
         if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
+        else if (held.type === 'shotglass') { toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad'); }
+        else if (held.type === 'pitcher') { toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad'); }
         else { setHeld(null); toast('버렸습니다'); }
       }
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');

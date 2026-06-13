@@ -89,6 +89,8 @@
       s.scale.setScalar(strong ? 0.16 : 0.1);
     }
     function update(dt) {
+      // 스팀봉 분사 타이머 감소 (노브 조작 퍼지)
+      env.machines.steamerJobs.forEach(j => { if (j.steamT > 0) j.steamT = Math.max(0, j.steamT - dt); });
       emitT -= dt;
       if (emitT <= 0) {
         emitT = 0.22;
@@ -98,6 +100,11 @@
             if (sl.busy && !sl.done)
               emit(sl.st.root.localToWorld(sl.localPos.clone()).add(new THREE.Vector3(0, 0.25, 0)), true);
           });
+        // 스팀봉 끝 증기 — 노브 조작(퍼지) 또는 우유 스팀 중일 때만
+        env.machines.steamerJobs.forEach(j => {
+          if (j.wandLocal && ((j.busy && !j.done) || j.steamT > 0))
+            emit(j.st.root.localToWorld(j.wandLocal.clone()), true);
+        });
       }
       pool.forEach(s => {
         if (!s.visible) return;

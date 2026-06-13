@@ -57,15 +57,29 @@ const WORLD = (() => {
     return c.getHex();
   }
 
+  // 크레마 표시 여부 — 에스프레소가 있고 우유가 없으며, "마지막 샷 이후에 물을 붓지 않았을" 때만.
+  // 샷 위에 물을 부으면(드립) 크레마가 깨져 사라진다 → 제조 순서의 시각 신호.
+  function cremaOnTop(d) {
+    if (!d.espresso || d.milk) return false;
+    const order = d.order;
+    if (!order || !order.length) return true;          // 순서 정보 없으면 기존처럼 표시
+    const lastEsp = order.lastIndexOf('espresso');
+    if (lastEsp === -1) return true;
+    for (let i = lastEsp + 1; i < order.length; i++)
+      if (order[i] === 'water') return false;          // 샷 위에 물 → 크레마 깨짐
+    return true;
+  }
+
   // drink: {cup:'hot'|'ice'|'espresso', ice, espresso, water, milk, foam, syrup, whip}
   function makeDrinkMesh(drink) {
     const g = new THREE.Group();
     const isIce = drink.cup === 'ice';
     const isEsp = drink.cup === 'espresso';
-    const H = isIce ? 0.16 : isEsp ? 0.06 : 0.12;
-    const R = isIce ? 0.05 : isEsp ? 0.032 : 0.052;
+    const isShot = drink.cup === 'shot';        // 샷잔(재사용 도구) — 작고 손잡이 없는 유리잔
+    const H = isIce ? 0.16 : isEsp ? 0.06 : isShot ? 0.05 : 0.12;
+    const R = isIce ? 0.05 : isEsp ? 0.032 : isShot ? 0.025 : 0.052;
     const base = isEsp ? 0.01 : 0;              // 데미타세는 받침접시 위에 올라감
-    const cupMat = isIce ? M().cupClear : M().cupWhite;
+    const cupMat = (isIce || isShot) ? M().cupClear : M().cupWhite;
     if (isEsp) { // 받침접시
       const saucer = cyl(0.052, 0.04, 0.009, M().cupWhite, 0, 0.0045, 0, 18);
       saucer.castShadow = false;
@@ -74,7 +88,7 @@ const WORLD = (() => {
     const cup = cyl(R, R * 0.78, H, cupMat, 0, base + H / 2, 0, 20);
     cup.castShadow = false;
     g.add(cup);
-    if (!isIce) { // 손잡이 (머그/데미타세)
+    if (!isIce && !isShot) { // 손잡이 (머그/데미타세) — 샷잔은 손잡이 없음
       const handle = new THREE.Mesh(
         new THREE.TorusGeometry(isEsp ? 0.016 : 0.03, isEsp ? 0.005 : 0.008, 8, 16), M().cupWhite);
       handle.position.set(R + (isEsp ? 0.007 : 0.012), base + H / 2, 0);
@@ -82,34 +96,37 @@ const WORLD = (() => {
     }
     const filled = drink.espresso || drink.water || drink.milk;
     if (filled) {
-      const fillH = H * 0.74;
-      const liq = cyl(R * 0.86, R * 0.7, fillH, new THREE.MeshStandardMaterial({
+      const fillH = H * 0.9;                          // 거의 가득 — 불투명 머그도 위에서 내용물 색이 보이게
+      const liq = cyl(R * 0.9, R * 0.74, fillH, new THREE.MeshStandardMaterial({
         color: drinkColor(drink), roughness: 0.15
-      }), 0, base + fillH / 2 + 0.008, 0, 16);
+      }), 0, base + fillH / 2 + 0.004, 0, 18);
       liq.castShadow = false;
       g.add(liq);
-      // 크레마 (순수 에스프레소 샷일 때) — 두껍고 또렷한 황금빛으로 샷이 담긴 게 잘 보이도록
-      if (drink.espresso && !drink.milk && !drink.water) {
-        const crema = cyl(R * 0.86, R * 0.86, 0.012, new THREE.MeshStandardMaterial({
-          color: 0xcfa055, roughness: 0.45
-        }), 0, base + fillH + 0.012, 0, 16);
+      // 에스프레소(우유 없는) 음료엔 컵 림 위로 봉긋 솟은 황금빛 크레마 —
+      // 불투명한 머그컵도 옆에서 황금빛이 보여 샷이 든 걸 한눈에 알 수 있게.
+      // 단, 샷 위에 물을 부으면(잘못된 순서) 크레마가 깨져 표시하지 않는다.
+      if (cremaOnTop(drink)) {
+        const cremaH = 0.024;
+        const crema = cyl(R * 0.5, R * 0.92, cremaH, new THREE.MeshStandardMaterial({
+          color: 0xc99f56, roughness: 0.5
+        }), 0, base + H + 0.012 - cremaH / 2, 0, 20);   // 윗면이 림보다 ~0.012 위로 솟음
         crema.castShadow = false;
         g.add(crema);
       }
     }
     if (drink.ice) {
       for (let i = 0; i < 3; i++) {
-        const ic = box(0.022, 0.022, 0.022, M().ice, (i - 1) * 0.02, H * 0.78, (i % 2 - 0.5) * 0.03);
+        const ic = box(0.022, 0.022, 0.022, M().ice, (i - 1) * 0.02, base + H * 0.82, (i % 2 - 0.5) * 0.03);
         ic.rotation.set(i, i * 2, 0); ic.castShadow = false;
         g.add(ic);
       }
     }
-    if (drink.foam) {
-      const fo = cyl(R * 0.84, R * 0.84, 0.018, M().milkLiquid, 0, base + H * 0.8, 0, 16);
+    if (drink.foam) {     // 우유 거품도 림 위로 봉긋 (카푸치노)
+      const fo = cyl(R * 0.6, R * 0.9, 0.024, M().milkLiquid, 0, base + H + 0.012 - 0.012, 0, 20);
       fo.castShadow = false; g.add(fo);
     }
     if (drink.whip) {
-      const wh = cyl(0.012, R * 0.7, 0.05, M().milkLiquid, 0, base + H * 0.86 + 0.025, 0, 12);
+      const wh = cyl(0.012, R * 0.7, 0.05, M().milkLiquid, 0, base + H + 0.03, 0, 12);
       wh.castShadow = false; g.add(wh);
     }
     return g;
@@ -184,6 +201,7 @@ const WORLD = (() => {
     ice:       { R: 0.05,  H: 0.16, base: 0 },
     espresso:  { R: 0.032, H: 0.06, base: 0.01 },
     hot:       { R: 0.052, H: 0.12, base: 0 },
+    shot:      { R: 0.025, H: 0.05, base: 0 },
   };
   function makeBrewLiquid(cup) {
     const d = CUP_DIM[cup] || CUP_DIM.hot;
@@ -199,6 +217,32 @@ const WORLD = (() => {
     const { base, fullH } = m.userData;
     m.scale.y = Math.max(0.001, frac);                 // 지오메트리 높이=fullH → scale.y가 곧 채움 비율
     m.position.y = base + 0.008 + fullH * frac / 2;    // 바닥은 고정한 채 위로 차오름
+  }
+
+  // 스팀 피처(밀크 저그) — 재사용 도구. milk/foam이면 내용물(데운 우유/거품) 표시
+  function makePitcherMesh(milk, foam) {
+    const g = new THREE.Group();
+    const R = 0.046, H = 0.13;
+    const body = cyl(R, R * 0.8, H, M().steel, 0, H / 2, 0, 20);
+    body.castShadow = false;
+    g.add(body);
+    // 주둥이(스파웃) — 앞쪽 위로 비스듬히
+    const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8);
+    spout.rotation.x = 0.6; spout.castShadow = false;
+    g.add(spout);
+    // 손잡이 — 옆면 고리
+    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel);
+    handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false;
+    g.add(handle);
+    if (milk || foam) {
+      const liq = cyl(R * 0.86, R * 0.72, H * 0.72, M().milkLiquid, 0, H * 0.72 / 2 + 0.006, 0, 18);
+      liq.castShadow = false; g.add(liq);
+      if (foam) {   // 거품 — 윗면 봉긋
+        const fo = cyl(R * 0.5, R * 0.84, 0.02, M().milkLiquid, 0, H * 0.72 + 0.012, 0, 18);
+        fo.castShadow = false; g.add(fo);
+      }
+    }
+    return g;
   }
 
   function makeBoxMesh(kind) {
@@ -587,17 +631,39 @@ const WORLD = (() => {
         new THREE.MeshStandardMaterial({ color: 0xff9a3e, emissive: 0xff7a1e, emissiveIntensity: 2 }));
       led.position.set(-0.48, 0.42, 0.34);
       g.add(gauge, gring, led);
-      // 스팀 분출구(장식)
-      const pipe = cyl(0.018, 0.018, 0.3, M().steel, 0.68, 0.3, 0.1, 8);
-      pipe.rotation.z = 0.5;
-      g.add(pipe);
+      // 스팀봉 + 스팀 밸브 노브 (오른쪽) — 밀크 스티머를 머신에 통합. 별도 [E]로 상호작용한다.
+      const steamCupPos = new THREE.Vector3(0.6, 0.03, 0.3);   // 스팀할 컵이 놓이는 우측 자리
+      // 스팀봉: 볼 조인트 → 크롬 파이프 → 어두운 노즐 팁 (앞쪽 아래로 내려옴)
+      const steamBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 14), M().steel);
+      steamBall.position.set(0.57, 0.4, 0.3);
+      const steamWand = cyl(0.013, 0.013, 0.3, M().steel, 0.565, 0.255, 0.325, 12);
+      steamWand.rotation.x = -0.22;                             // 앞쪽 아래로 기울인 스팀봉
+      const steamNozzle = cyl(0.019, 0.009, 0.055, M().steelDark, 0.562, 0.085, 0.36, 12);
+      steamNozzle.rotation.x = -0.22;
+      // 스팀 밸브 노브: 크롬 베이스 + 검은 그립 + 흰 인디케이터 (앞면에서 돌리는 손잡이)
+      const knobBase = cyl(0.026, 0.026, 0.03, M().steel, 0.46, 0.44, 0.31, 16);
+      knobBase.rotation.x = Math.PI / 2;
+      const knobGrip = cyl(0.036, 0.033, 0.045, M().blackMatte, 0.46, 0.44, 0.345, 18);
+      knobGrip.rotation.x = Math.PI / 2;
+      const knobMark = box(0.005, 0.022, 0.006, M().cupWhite, 0.46, 0.44, 0.37, { cast: false });
+      g.add(steamBall, steamWand, steamNozzle, knobBase, knobGrip, knobMark);
       env.machines.espressoGroup = g;
-      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
+      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });            // 상단 장식 증기
+      // 통합 밀크 스티머 잡 (별도 히트박스 id 'steamer'). 스팀봉 증기는 노브 조작/스팀 중에만 분사.
+      const steamJob = {
+        kind: 'steamer', st, localPos: steamCupPos,
+        wandLocal: new THREE.Vector3(0.562, 0.045, 0.37),   // 스팀봉 노즐 끝(증기 분출 지점)
+        steamT: 0,                                          // >0이면 스팀 분사 중
+        progress: makeProgress(g, 0.6, 0.27, 0.3),   // 스팀 중인 컵 바로 위
+        busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
+      };
+      env.machines.steamerJobs.push(steamJob);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.85, 0.25);
       g.add(lbl);
       childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 0 });
       childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 1 });
+      childHitbox(st, 0.4, 0.62, 0.55, 0.6, 0.28, 0.28, { id: 'steamer', job: steamJob });   // 우측 통합 스티머
       return st;
     }
     buildEspresso('espresso', -3.1, -4.25, true);   // 원래 머신: 2번 슬롯은 듀얼헤드 잠금
@@ -617,10 +683,10 @@ const WORLD = (() => {
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.14), textLabel('밀크 스티머', 256, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.62, 0.2);
       g.add(lbl);
-      env.steamEmitters.push({ st, local: new THREE.Vector3(0.2, 0.2, 0.15) });
       const job = {
         kind: 'steamer',
         st, localPos: new THREE.Vector3(0.2, 0, 0.22),
+        wandLocal: new THREE.Vector3(0.2, 0.18, 0.18), steamT: 0,   // 스팀봉 끝(증기 분출). 노브 조작/스팀 중에만.
         progress: makeProgress(g, 0.2, 0.24, 0.22),   // 스팀 중인 컵 바로 위
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
@@ -628,7 +694,21 @@ const WORLD = (() => {
       env.machines.steamerJobs.push(job);
       return st;
     }
-    buildSteamer('steamer', -1.7, -4.3);
+    // 기본 밀크 스티머는 에스프레소 머신에 통합됨(위 buildEspresso의 스팀 완드).
+    // buildSteamer는 영업 준비 단계에서 '추가 스티머'를 구매·배치할 때 재사용된다.
+
+    /* ---------- 스팀 피처 거치대 (재사용 무료 도구 — 우유를 데워 컵에 붓는다) ---------- */
+    (function pitcherStand() {
+      const x = -1.5, z = -4.3;            // 머신/스티머 우측 근처
+      const r = new THREE.Group();
+      r.position.set(x, 0.97, z);
+      scene.add(r);
+      r.add(makePitcherMesh(0, 0));        // 데모용 빈 피처
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.11), textLabel('스팀 피처', 200, 52, '700 28px "Malgun Gothic"'));
+      lbl.position.set(0, 0.36, 0.05);
+      r.add(lbl);
+      addI(hitbox(0.34, 0.5, 0.42, x, 1.13, z, { id: 'pitcherrack' }));
+    })();
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
     env.machines.waterJobs = {};
@@ -703,6 +783,22 @@ const WORLD = (() => {
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
       childHitbox(st, 0.4, 0.5, 0.55, 0, 0.22, 0.05, { id: 'knockbox' });
+    })();
+
+    /* ---------- 에스프레소 샷잔 (유리) — 에스프레소 머신 옆, 재사용 무료 도구 ---------- */
+    (function shotGlass() {
+      const x = -2.2, z = -4.3;            // 에스프레소 머신(-3.1)과 스티머(-1.7) 사이 빈 공간
+      const r = new THREE.Group();
+      r.position.set(x, 0.97, z);
+      scene.add(r);
+      // 투명 유리 샷잔 1개 (위가 살짝 넓은 텀블러 형태)
+      const glass = cyl(0.03, 0.023, 0.075, M().cupClear, 0, 0.0415, 0, 18, { cast: false });
+      r.add(glass);
+      r.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.1), textLabel('샷잔', 144, 48, '700 28px "Malgun Gothic"'));
+      lbl.position.set(0, 0.34, 0.04);
+      r.add(lbl);
+      addI(hitbox(0.24, 0.45, 0.34, x, 1.12, z, { id: 'shotrack' }));
     })();
 
     /* ---------- 탬핑 스테이션 (분쇄된 원두를 평평하게 다짐) ---------- */
@@ -971,5 +1067,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePortafilterMesh, setPortafilterState, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
 })();
