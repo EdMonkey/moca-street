@@ -196,9 +196,18 @@
   #prepPanelInner{width:min(760px,92vw);max-height:88vh;overflow-y:auto;padding:34px 42px;text-align:center}
   #prepPanelInner h2{font-size:30px;color:var(--accent2);margin-bottom:2px}
   #prepPanelInner .desub{opacity:.65;font-size:14px;margin-bottom:20px}
-  #ppMoney{font-size:15px;margin-bottom:18px;opacity:.9}
+  #ppMoney{font-size:15px;margin-bottom:4px;opacity:.9}
   #ppMoney b{color:var(--accent2);font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+  #ppInfo{font-size:13px;opacity:.7;margin-bottom:16px}
+  #ppInfo b{color:var(--cream);opacity:1}
   #prepBtns{display:flex;gap:12px;justify-content:center}
+  /* 폐업 */
+  #gameOver{position:fixed;inset:0;z-index:47;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 40%,#3a1812 0%,#0c0604 80%)}
+  #gameOverInner{width:min(520px,90vw);padding:40px 44px;text-align:center}
+  #gameOverInner h2{font-size:40px;color:#ff9a94;margin-bottom:10px}
+  #gameOverInner .desub{font-size:15px;line-height:1.7;opacity:.85;margin-bottom:26px}
+  #gameOverInner .desub b{color:var(--accent2)}
 
   /* ---------- 일시정지 ---------- */
   #pauseScreen{position:fixed;inset:0;z-index:46;display:flex;flex-direction:column;gap:16px;
@@ -292,6 +301,7 @@
     <h2 id="ppTitle">DAY 1 영업 준비</h2>
     <div class="desub">재고를 채우고 기구를 배치한 뒤 영업을 시작하세요</div>
     <div id="ppMoney">보유 금액 <b>₩ 0</b></div>
+    <div id="ppInfo"></div>
     <h3 class="ppSec">─ 장비 구매 (구매 후 [B]로 배치) ─</h3>
     <div id="equipList"></div>
     <h3 class="ppSec">─ 매장 업그레이드 ─</h3>
@@ -300,6 +310,15 @@
       <button class="btn" id="btnStartService">🔓 영업 시작 →</button>
       <button class="btn ghost" id="btnClosePrep">계속 준비하기</button>
     </div>
+  </div>
+</div>
+
+<!-- 폐업 (게임 오버) -->
+<div id="gameOver" class="hidden">
+  <div id="gameOverInner" class="panel">
+    <h2>🏚️ 폐업</h2>
+    <div class="desub">자금이 바닥나 가게 문을 닫게 되었어요.<br><b id="goDays">0</b>일간 운영했습니다. 다시 도전해보세요!</div>
+    <button class="btn" id="btnRestart">처음부터 다시 시작 →</button>
   </div>
 </div>
 
