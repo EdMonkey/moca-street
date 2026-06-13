@@ -13,6 +13,7 @@ const Player = (() => {
   let heldMesh = null;
   let bobT = 0;
   let enabled = false;
+  let kick = 0;              // 손맛용 반동(탬핑 등) — 0으로 감쇠
 
   function init(cam, e) {
     camera = cam; env = e;
@@ -75,12 +76,16 @@ const Player = (() => {
     // 헤드 밥 + 손 흔들림
     const bobY = moving ? Math.abs(Math.sin(bobT)) * 0.035 : Math.sin(bobT) * 0.006;
     pos.y = EYE + bobY;
-    applyCam();
+    // 탬핑 등 손맛용 반동(kick): 카메라가 살짝 아래로 꺾였다 복귀
+    if (kick > 0.0001) kick += (0 - kick) * Math.min(1, dt * 13); else kick = 0;
+    camera.position.copy(pos);
+    camera.rotation.set(pitch - kick * 0.06, yaw, 0);
     if (handGroup) {
-      handGroup.position.y = -0.36 + (moving ? Math.sin(bobT * 2) * 0.012 : Math.sin(bobT) * 0.004);
+      handGroup.position.y = -0.36 - kick * 0.05 + (moving ? Math.sin(bobT * 2) * 0.012 : Math.sin(bobT) * 0.004);
       handGroup.position.x = 0.34 + (moving ? Math.sin(bobT) * 0.008 : 0);
     }
   }
+  function punch(a) { kick = Math.max(kick, a); }
 
   /* 조준 중인 상호작용 대상 */
   function aim() {
@@ -111,7 +116,7 @@ const Player = (() => {
   }
 
   return {
-    init, update, aim, aimSurface, setHeld, reset,
+    init, update, aim, aimSurface, setHeld, reset, punch,
     get position() { return pos; },
     set enabled(v) { enabled = v; },
     get enabled() { return enabled; },

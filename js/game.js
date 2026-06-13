@@ -248,10 +248,35 @@ const AudioFX = (() => {
     tone(1760, 0.32, 'sine', 0.07, 0.18);              // 반짝 꼬리
   }
 
+  /* ----- 탬핑: 누르는 동안 차오르는 험(음 상승) + 완료 '쿵' + 퍼펙트 차임 ----- */
+  function tampHold(dur = 1.3) {
+    const a = ensure(), t0 = a.currentTime;
+    const o = a.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(70, t0);
+    o.frequency.linearRampToValueAtTime(150, t0 + dur);   // 게이지가 차오르며 음이 높아짐
+    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(0.06, t0 + 0.1);
+    o.connect(lp); lp.connect(g); g.connect(master); o.start(t0);
+    return sustainedHandle(() => { const t = a.currentTime; g.gain.setTargetAtTime(0, t, 0.05); o.stop(t + 0.2); }, dur + 0.3);
+  }
+  function tampDone() {
+    const t0 = ensure().currentTime;
+    tone(120, 0.14, 'sine', 0.18, 0, 58);          // 단단한 압착 임팩트
+    burst(t0, 200, 0.07, 0.12, 1, 'lowpass');
+    burst(t0, 1600, 0.03, 0.08, 2, 'bandpass');    // 가루 다져지는 사각거림
+    tone(880, 0.05, 'sine', 0.05, 0.04);           // 마무리 클릭
+  }
+  // 퍼펙트 탬핑 보너스 차임
+  function tampPerfectSfx() {
+    [1047, 1319, 1568].forEach((f, i) => tone(f, 0.16, 'sine', 0.1, 0.04 + i * 0.05));
+    tone(2093, 0.25, 'sine', 0.06, 0.17);
+  }
+
   return {
     ensure,
     // 신규 사운드
-    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock, serveSuccess,
+    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock, serveSuccess, tampHold, tampDone, tampPerfectSfx,
     // 기존 UI/이벤트 음
     ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
     cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
@@ -330,6 +355,12 @@ const Game = (() => {
   let barTimer = 0;
   let placedItems = [];           // 표면에 내려놓은 아이템들 {item, mesh, hb}
   let indPulse = 0;
+  let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
+  let useDown = false;            // [E]/좌클릭을 누르고 있는 중
+  const TAMP_DUR = 2.2;           // 게이지가 끝까지 차는 시간(초)
+  const TAMP_MIN = 0.45;          // 이보다 일찍 떼면 약하게 눌림(재시도)
+  const TAMP_PERF_W = 0.10;       // 퍼펙트 존 폭
+  const TAMP_PERF_MIN = 0.55, TAMP_PERF_MAX = 0.80; // 퍼펙트 존 시작 위치 랜덤 범위
 
   function freshState() {
     return {
@@ -536,10 +567,12 @@ const Game = (() => {
     { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
       check: () => (held && held.type === 'portafilter') || env.machines.grinderJobs.some(j => j.busy) },
     { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 원두를 분쇄하세요 — 완료 후 <b>[E]</b>로 꺼내기',
-      check: () => env.machines.grinderJobs.some(j => j.busy) || (held && held.type === 'portafilter' && held.state === 'filled') },
-    { text: '분쇄된 포터필터를 들고 <b>에스프레소 머신</b>에 가서 <b>[E]</b>로 장착하세요',
-      check: () => env.machines.espressoSlots.some(s => s.pfState === 'filled' || s.busy) },
-    { text: '컵 디스펜서에서 <b>머그컵</b>을 집어 머신에 올려놓고 <b>[E]</b>로 추출을 시작하세요',
+      check: () => env.machines.grinderJobs.some(j => j.busy) || (held && held.type === 'portafilter' && (held.state === 'filled' || held.state === 'tamped')) },
+    { text: '<b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 원두를 다지세요 (퍼펙트 존에서 떼면 보너스)',
+      check: () => (held && held.type === 'portafilter' && held.state === 'tamped') || env.machines.espressoSlots.some(s => s.pfState === 'tamped' || s.busy) },
+    { text: '탬핑된 포터필터를 들고 <b>에스프레소 머신</b>에 가서 <b>[E]</b>로 장착하세요',
+      check: () => env.machines.espressoSlots.some(s => s.pfState === 'tamped' || s.busy) },
+    { text: '컵 디스펜서에서 <b>머그컵</b>을 집어 머신에 올린 뒤, 빈손으로 <b>[E]</b>를 눌러 추출을 시작하세요',
       check: () => env.machines.espressoSlots.some(s => s.busy) || (held && held.type === 'drink' && !!held.drink.espresso) },
     { text: '추출 완료! <b>[E]</b>로 컵을 꺼낸 뒤 주문표의 나머지 재료를 채우세요 — 모르면 <b>[R]</b> 레시피북',
       check: () => held && held.type === 'drink' && orders.some(o => o.items.some(it => !it.done && it.type === 'drink' && matchesRecipe(held.drink, it.recipeId))) },
@@ -669,6 +702,7 @@ const Game = (() => {
       if (held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
       if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
       if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
+      if (held.state === 'tamped') { toast('이미 탬핑된 포터필터예요 — 머신에 장착하세요'); return; }
       if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
       // 빈 포터필터 삽입 + 분쇄 시작
       S.stocks.beans--;
@@ -703,37 +737,57 @@ const Game = (() => {
       if (held && held.type === 'portafilter') {
         if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
         slot.pfState = held.state || 'empty';
+        slot.tampPerfect = !!held.tampPerfect;   // 퍼펙트 탬핑 보너스 인계
         WORLD.setPortafilterState(slot.pf, slot.pfState);
         setHeld(null);
         AudioFX.metalClack();
         return;
       }
-      // 컵 올려 추출 시작 (filled 포터필터가 장착되어 있어야 함)
+      // 샷잔(컵) 올리기 — 추출은 빈손 [E]로 시작
       if (held && held.type === 'drink') {
         if (held.drink.espresso) { toast('이미 샷이 추출된 컵이에요'); return; }
-        if (slot.pfState === 'none') { toast('포터필터를 장착하세요', 'bad'); AudioFX.err(); return; }
-        if (slot.pfState === 'used') { toast('사용한 가루가 있어요 — 분리해 넉박스에 비운 뒤 다시 분쇄하세요', 'bad'); AudioFX.err(); return; }
-        if (slot.pfState === 'empty') { toast('빈 포터필터예요 — 분리해 그라인더에서 원두를 분쇄하세요', 'bad'); AudioFX.err(); return; }
+        if (slot.cupMesh) { toast('이미 컵이 올라가 있어요'); return; }
         const drink = held.drink;
         setHeld(null);
-        slot.busy = true; slot.done = false; slot.t = 0;
-        slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
-        slot.drink = drink;
         const cm = WORLD.makeDrinkMesh(drink);
         cm.position.copy(slot.localPos);
         slot.st.root.add(cm);
         slot.cupMesh = cm;
-        slot.stream.visible = true;
-        AudioFX.cupClink(0.35);
-        slot.sound = AudioFX.brewing(slot.dur);
+        slot.drink = drink;
+        AudioFX.cupClink(0.4);
         return;
       }
-      // 빈손 — 추출 중이 아니면 포터필터 분리
+      // 빈손 + 컵이 올라가 있음 → 추출 버튼(탬핑 완료 시) 또는 컵 회수
+      if (slot.cupMesh) {
+        if (slot.pfState === 'tamped') {
+          slot.busy = true; slot.done = false; slot.t = 0;
+          slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
+          slot.stream.visible = true;
+          slot.brewLiquid = WORLD.makeBrewLiquid(slot.drink.cup);
+          slot.cupMesh.add(slot.brewLiquid);
+          AudioFX.metalClack();
+          slot.sound = AudioFX.brewing(slot.dur);
+          return;
+        }
+        // 추출 불가 — 컵을 다시 손에 돌려주고 안내
+        slot.st.root.remove(slot.cupMesh);
+        const drink = slot.drink;
+        slot.cupMesh = null; slot.drink = null;
+        setHeld({ type: 'drink', drink });
+        AudioFX.cupClink(0.4);
+        toast(slot.pfState === 'none' ? '먼저 탬핑한 포터필터를 장착하세요'
+          : slot.pfState === 'used' ? '사용한 가루 — 포터필터를 분리해 넉박스에 비우세요'
+          : slot.pfState === 'empty' ? '빈 포터필터 — 분리해 그라인더에서 분쇄하세요'
+          : '탬핑이 안 됐어요 — 포터필터를 분리해 탬핑하세요', 'bad');
+        return;
+      }
+      // 빈손 + 컵 없음 → 포터필터 분리
       if (slot.pfState === 'none') { toast('포터필터가 없어요'); return; }
       const state = slot.pfState;
       slot.pfState = 'none';
       WORLD.setPortafilterState(slot.pf, 'none');
-      setHeld({ type: 'portafilter', state });
+      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect });
+      slot.tampPerfect = false;
       AudioFX.metalClack();
       return;
     }
@@ -832,13 +886,24 @@ const Game = (() => {
     if (id === 'knockbox') {
       if (!held || held.type !== 'portafilter') { toast('사용한 포터필터를 들고 오세요'); return; }
       if (held.state !== 'used') {
-        toast(held.state === 'filled' ? '분쇄된 원두는 그냥 두세요 — 머신에 장착하면 돼요' : '비울 가루가 없어요');
+        toast((held.state === 'filled' || held.state === 'tamped') ? '아직 추출 전이에요 — 머신에 장착해 사용하세요' : '비울 가루가 없어요');
         return;
       }
       held.state = 'empty';
       setHeld(held);
       toast('가루를 털어냈어요 — 다시 분쇄할 수 있어요');
       AudioFX.knock();
+      return;
+    }
+
+    /* --- 탬핑 스테이션: 분쇄된 포터필터를 [E] 타이밍 미니게임으로 다짐 --- */
+    if (id === 'tamp') {
+      if (!held || held.type !== 'portafilter') { toast('분쇄된 포터필터를 들고 오세요'); return; }
+      if (held.state === 'empty') { toast('먼저 그라인더에서 원두를 분쇄하세요', 'bad'); AudioFX.err(); return; }
+      if (held.state === 'used') { toast('사용한 가루예요 — 넉박스에 비우세요', 'bad'); AudioFX.err(); return; }
+      if (held.state === 'tamped') { toast('이미 탬핑이 끝났어요 — 머신에 장착하세요'); return; }
+      // filled: [E]를 누르고 있으면 게이지가 차오르고, 떼면 그 지점으로 판정
+      if (!tampGame) startTampGame();
       return;
     }
 
@@ -1057,7 +1122,10 @@ const Game = (() => {
   function completeOrder(o, servedDrink) {
     const c = o.customer;
     const frac = Math.max(0, c.patience / c.patienceMax);
-    const tip = Math.floor(o.total * 0.3 * frac * (0.7 + S.rep / 250) / 100) * 100;
+    let tip = Math.floor(o.total * 0.3 * frac * (0.7 + S.rep / 250) / 100) * 100;
+    // 퍼펙트 탬핑 보너스 — 음료에 크레마가 살아 팁 +15%
+    const perfect = !!(servedDrink && servedDrink.perfect);
+    if (perfect) tip += Math.round(o.total * 0.15 / 100) * 100;
     S.money += o.total + tip;
     dayStats.revenue += o.total;
     dayStats.tips += tip;
@@ -1068,7 +1136,7 @@ const Game = (() => {
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
     Customers.serve(c, null);
-    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}`, 'good');
+    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
     AudioFX.cash();
     updateHUD();
     tutEvent('served');
@@ -1139,28 +1207,121 @@ const Game = (() => {
       if (!slot.busy || slot.done) return;
       slot.t += dt;
       slot.progress.draw(slot.t / slot.dur, false);
+      if (slot.brewLiquid) WORLD.setBrewFill(slot.brewLiquid, slot.t / slot.dur);   // 컵에 에스프레소가 차오름
       if (slot.t >= slot.dur) {
         slot.done = true;
         if (slot.sound) { slot.sound.stop(); slot.sound = null; }
         slot.progress.draw(1, true);
         slot.stream.visible = false;
         slot.drink.espresso = 1;
+        slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
         // 추출 완료 — 포터필터는 사용한 가루(used) 상태가 됨
         slot.pfState = 'used';
         WORLD.setPortafilterState(slot.pf, 'used');
-        // 컵 메시를 채워진 버전으로 교체
+        // 컵 메시를 채워진 버전으로 교체 (차오르던 액체는 컵과 함께 제거됨)
         slot.st.root.remove(slot.cupMesh);
+        slot.brewLiquid = null;
         const cm = WORLD.makeDrinkMesh(slot.drink);
         cm.position.copy(slot.localPos);
         slot.st.root.add(cm);
         slot.cupMesh = cm;
         AudioFX.bell();
       } else {
-        // 커피 줄기 애니메이션
+        // 커피 줄기 애니메이션 (위치 떨림 + 압력 느낌의 길이 흔들림)
         const s = slot.stream;
         s.position.y = 0.1 + Math.sin(slot.t * 30) * 0.005;
+        s.scale.y = 1 + Math.sin(slot.t * 22) * 0.08;
       }
     });
+  }
+
+  /* ===== 탬핑 미니게임 (타이밍) =====
+   * 탬핑 스테이션을 보며 분쇄된(filled) 포터필터를 들고 [E]로 시작 → 바늘이 좌우로 움직임 →
+   * 다시 [E]로 멈춰 퍼펙트/성공 존에 맞추면 다져짐. 빗나가면 계속 움직이며 재시도. */
+  function startTampGame() {
+    // 퍼펙트 존 시작 위치를 매번 살짝 랜덤화 (외워지지 않도록)
+    const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
+    // phase: armed(클릭으로 진입 — 그 클릭을 떼야 함) → ready(다시 누르면 시작) → holding(게이지 상승)
+    tampGame = { phase: 'armed', fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: null };
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+    clearHitFx();
+    $('tampGame').classList.remove('hidden');
+  }
+  function clearHitFx() {
+    $('tampGame').classList.remove('hitPerfect', 'hitGood', 'hitMiss');
+  }
+  function stopTampSound() { if (tampGame && tampGame.sound) { tampGame.sound.stop(); tampGame.sound = null; } }
+  function endTampGame() {
+    stopTampSound();
+    tampGame = null;
+    clearHitFx();
+    $('tampGame').classList.add('hidden');
+  }
+  // 탬퍼가 쿵 눌리는 연출
+  function pressTamper() {
+    const t = env.machines.tamp && env.machines.tamp.tamper;
+    if (t) { t.position.y = 0.012; setTimeout(() => { t.position.y = 0.04; }, 180); }
+  }
+  // 손을 뗀(또는 가득 찬) 순간 판정 — 짧은 히트스톱 후 확정
+  function lockTampGame(fill) {
+    if (tampGame.locked) return;
+    stopTampSound();
+    const pz = tampGame.perfect;
+    const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
+      : (fill >= TAMP_MIN) ? 'good' : 'weak';
+    tampGame.locked = { result, t: 0 };
+    if (result === 'weak') {
+      AudioFX.err(); Player.punch(0.3);
+      $('tampGame').classList.add('hitMiss');
+    } else {
+      pressTamper();
+      AudioFX.tampDone();
+      Player.punch(result === 'perfect' ? 1.0 : 0.6);
+      if (result === 'perfect') AudioFX.tampPerfectSfx();
+      $('tampGame').classList.add(result === 'perfect' ? 'hitPerfect' : 'hitGood');
+    }
+  }
+  function finishTamp(perfect, msg, cls) {
+    held.tampPerfect = perfect;
+    held.state = 'tamped';
+    setHeld(held);
+    toast(msg, cls);
+    endTampGame();
+  }
+  function updateTampGame(dt, aimData) {
+    if (!tampGame) return false;
+    const ok = aimData && aimData.id === 'tamp' && held && held.type === 'portafilter' && held.state === 'filled';
+    if (!ok) { endTampGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
+    // 판정 후 히트스톱: 게이지를 멈춘 채 결과 연출을 보여주고 확정
+    if (tampGame.locked) {
+      tampGame.locked.t += dt;
+      const r = tampGame.locked.result;
+      if (tampGame.locked.t >= (r === 'weak' ? 0.16 : 0.24)) {
+        if (r === 'weak') { toast('약하게 눌렀어요 — 다시 꾹 눌러 다지세요', 'bad', 1500); endTampGame(); }
+        else finishTamp(r === 'perfect', r === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', r === 'perfect' ? 'gold' : 'good');
+      }
+      return true;
+    }
+    // 진입 클릭을 떼야 홀드를 받음 (클릭 후 → 다시 눌러서 시작)
+    if (tampGame.phase === 'armed') {
+      if (!useDown) tampGame.phase = 'ready';
+      return true;
+    }
+    if (tampGame.phase === 'ready') {
+      if (useDown) { tampGame.phase = 'holding'; tampGame.sound = AudioFX.tampHold(TAMP_DUR); }
+      return true;
+    }
+    // holding: 누르고 있는 동안 게이지 상승, 손을 떼면 그 지점으로 판정
+    if (useDown) {
+      tampGame.fill = Math.min(1, tampGame.fill + dt / TAMP_DUR);
+      $('tgFill').style.height = (tampGame.fill * 100) + '%';
+      if (tampGame.fill >= 1) lockTampGame(1);     // 끝까지 누르면 자동 성공(일반)
+    } else {
+      lockTampGame(tampGame.fill);
+    }
+    return true;
   }
 
   /* ===== 조준 프롬프트 ===== */
@@ -1185,6 +1346,7 @@ const Game = (() => {
         if (held.type !== 'portafilter') return '포터필터를 들고 오세요';
         if (held.state === 'used') return '넉박스에 가루를 먼저 비우세요';
         if (held.state === 'filled') return '이미 분쇄된 포터필터예요';
+        if (held.state === 'tamped') return '이미 탬핑된 포터필터예요';
         if (S.stocks.beans <= 0) return '원두 없음 — 창고에서 보충하세요';
         return E + '원두 분쇄 시작';
       }
@@ -1192,15 +1354,23 @@ const Game = (() => {
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
+        // 컵을 들고 있으면 샷잔 올리기
+        if (held && held.type === 'drink' && !held.drink.espresso)
+          return slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '샷잔 올리기';
+        if (held && held.type === 'drink') return '이미 샷이 추출된 컵이에요';
         if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
-        if (held && held.type === 'drink' && !held.drink.espresso) {
-          if (slot.pfState === 'filled') return E + '에스프레소 추출';
-          if (slot.pfState === 'used') return '사용한 가루 — 분리 후 넉박스에 비우세요';
-          if (slot.pfState === 'empty') return '빈 포터필터 — 분리 후 그라인더에서 분쇄하세요';
-          return '포터필터를 먼저 장착하세요';
+        // 빈손 + 컵이 올라가 있음 → 추출 버튼
+        if (slot.cupMesh) {
+          if (slot.pfState === 'tamped') return E + '에스프레소 추출 ▶';
+          if (slot.pfState === 'filled') return E + '샷잔 내리기 (탬핑 필요)';
+          if (slot.pfState === 'used') return E + '샷잔 내리기 (사용한 가루 비우기)';
+          if (slot.pfState === 'empty') return E + '샷잔 내리기 (포터필터 분쇄 필요)';
+          return E + '샷잔 내리기 (포터필터 장착·탬핑 필요)';
         }
+        // 빈손 + 컵 없음 → 포터필터 분리
         if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
-        if (slot.pfState === 'filled') return E + '포터필터 분리 (장착 완료 ✓ — 컵을 들고 오세요)';
+        if (slot.pfState === 'tamped') return E + '포터필터 분리 (탬핑 완료 ✓ — 샷잔을 올리세요)';
+        if (slot.pfState === 'filled') return E + '포터필터 분리 (탬핑 필요 — 탬핑 스테이션으로)';
         return E + `포터필터 분리 (${slot.pfState === 'used' ? '사용한 가루 — 넉박스에 비우세요' : '비어 있음 — 분쇄하세요'})`;
       }
       case 'steamer': {
@@ -1229,9 +1399,16 @@ const Game = (() => {
       case 'knockbox': {
         if (held && held.type === 'portafilter') {
           if (held.state === 'used') return E + '사용한 가루 털어내기';
-          return held.state === 'filled' ? '분쇄된 원두는 머신에 장착하세요' : '비울 가루가 없어요';
+          return (held.state === 'filled' || held.state === 'tamped') ? '추출 전이에요 — 머신에 장착하세요' : '비울 가루가 없어요';
         }
         return '사용한 포터필터를 들고 오세요';
+      }
+      case 'tamp': {
+        if (!held || held.type !== 'portafilter') return '분쇄된 포터필터를 들고 오세요';
+        if (held.state === 'empty') return '먼저 그라인더에서 원두를 분쇄하세요';
+        if (held.state === 'used') return '사용한 가루예요 — 넉박스에 비우세요';
+        if (held.state === 'tamped') return '이미 탬핑이 끝났어요 — 머신에 장착하세요';
+        return '<b>[E]</b> 탬핑 시작 (이후 다시 누르고 있어 게이지 채우기)';
       }
       case 'trash': {
         if (held && held.type === 'portafilter')
@@ -1297,7 +1474,8 @@ const Game = (() => {
       `<div class="rname"><span>⚙️ 에스프레소 샷 내리는 법</span></div>` +
       `<ol class="rsteps"><li><b>에스프레소 머신</b>에서 <b>[E]</b>로 포터필터를 분리하세요</li>` +
       `<li><b>그라인더</b>에 가져가 <b>[E]</b>로 원두를 분쇄하고 꺼내세요</li>` +
-      `<li>분쇄된 포터필터를 머신에 <b>장착</b>하고, 컵을 들고 와 <b>[E]</b>로 추출을 시작하세요</li>` +
+      `<li><b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 다지세요 (퍼펙트 존에서 떼면 팁 보너스)</li>` +
+      `<li>탬핑된 포터필터를 머신에 <b>장착</b>하고, 샷잔을 올린 뒤 <b>빈손으로 [E]</b>를 눌러 추출하세요</li>` +
       `<li>추출이 끝나면 <b>[E]</b>로 컵을 꺼내세요 — 포터필터는 머신에 남아요</li>` +
       `<li>포터필터를 분리해 <b>넉박스</b>에서 <b>[E]</b>로 가루를 털어내면 다음 샷 준비 완료!</li></ol>`;
     grid.appendChild(guide);
@@ -1337,11 +1515,15 @@ const Game = (() => {
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
-      s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.stream.visible = false;
-      s.pfState = 'empty'; WORLD.setPortafilterState(s.pf, 'empty');
+      s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.brewLiquid = null; s.stream.visible = false;
+      s.pfState = 'empty'; s.tampPerfect = false; WORLD.setPortafilterState(s.pf, 'empty');
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
+    // 탬핑 초기화
+    useDown = false;
+    endTampGame();
+    if (env.machines.tamp && env.machines.tamp.tamper) env.machines.tamp.tamper.position.y = 0.04;
   }
 
   /* --- 영업 준비 단계: 손님 없음 · 시간 정지 · 배치/구매/보충 --- */
@@ -1581,7 +1763,18 @@ const Game = (() => {
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
+    const tamping = updateTampGame(dt, aimData);
     let p = promptFor(aimData);
+    if (tamping) {
+      if (tampGame && tampGame.locked) p = '🔧 탬핑!';
+      else if (tampGame && tampGame.phase === 'holding') {
+        const f = tampGame.fill, pz = tampGame.perfect;
+        const inPerf = f >= pz[0] && f <= pz[1];
+        p = inPerf ? '✨ 지금 손을 떼세요!' : '🔧 누르고 있기… ' + Math.round(f * 100) + '%';
+      } else {
+        p = '🔧 <b>[E]</b>를 누르고 있어 게이지를 채우세요';
+      }
+    }
     let placePoint = null;
     if (!aimData && held) {
       const pt = Player.aimSurface();
@@ -1632,6 +1825,7 @@ const Game = (() => {
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing' && mode !== 'prep') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
+      if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
       // 준비 단계 전용 조작
       if (mode === 'prep') {
         if (prepPanelOpen) return;                       // 패널은 버튼으로 조작
@@ -1642,7 +1836,7 @@ const Game = (() => {
         return;
       }
       // 영업 중 조작
-      if (ev.code === 'KeyE') onUse();
+      if (ev.code === 'KeyE') { useDown = true; onUse(); }
       if (ev.code === 'KeyQ' && held) {
         if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
         else { setHeld(null); toast('버렸습니다'); }
@@ -1655,9 +1849,13 @@ const Game = (() => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
     document.addEventListener('mousedown', ev => {
-      if (mode === 'playing' && document.pointerLockElement && ev.button === 0 && !editing())
-        onUse();
+      if (mode === 'playing' && document.pointerLockElement && ev.button === 0 && !editing()) {
+        useDown = true; onUse();
+      }
     });
+    // 탬핑 홀드 해제: [E]/좌클릭에서 손을 떼면 게이지 판정
+    document.addEventListener('keyup', ev => { if (ev.code === 'KeyE') useDown = false; });
+    document.addEventListener('mouseup', ev => { if (ev.button === 0) useDown = false; });
   }
 
   function newGame() {

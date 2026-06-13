@@ -52,7 +52,7 @@ const WORLD = (() => {
 
   function drinkColor(d) {
     if (!d.espresso) return d.milk ? 0xf2ead8 : 0xbfd8e2; // 물/우유만
-    let c = new THREE.Color(d.milk ? 0xc89a6b : (d.water ? 0x3a2410 : 0x2b1708));
+    let c = new THREE.Color(d.milk ? 0xc89a6b : (d.water ? 0x4a2c16 : 0x4a2a12)); // 순수 샷도 검게 묻히지 않도록 살짝 밝게
     if (d.syrup) c.lerp(new THREE.Color(SYRUP_TINT[d.syrup]), 0.45);
     return c.getHex();
   }
@@ -88,11 +88,11 @@ const WORLD = (() => {
       }), 0, base + fillH / 2 + 0.008, 0, 16);
       liq.castShadow = false;
       g.add(liq);
-      // 크레마 (순수 에스프레소 샷일 때)
+      // 크레마 (순수 에스프레소 샷일 때) — 두껍고 또렷한 황금빛으로 샷이 담긴 게 잘 보이도록
       if (drink.espresso && !drink.milk && !drink.water) {
-        const crema = cyl(R * 0.84, R * 0.84, 0.005, new THREE.MeshStandardMaterial({
-          color: 0xc4924e, roughness: 0.5
-        }), 0, base + fillH + 0.01, 0, 14);
+        const crema = cyl(R * 0.86, R * 0.86, 0.012, new THREE.MeshStandardMaterial({
+          color: 0xcfa055, roughness: 0.45
+        }), 0, base + fillH + 0.012, 0, 16);
         crema.castShadow = false;
         g.add(crema);
       }
@@ -143,10 +143,11 @@ const WORLD = (() => {
   // 포터필터 원두가루 머티리얼 (filled: 신선 / used: 추출 후 젖은 가루)
   const GROUNDS_MAT = {
     filled: new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.95 }),
+    tamped: new THREE.MeshStandardMaterial({ color: 0x3a2412, roughness: 0.6 }),
     used: new THREE.MeshStandardMaterial({ color: 0x241307, roughness: 0.95 }),
   };
 
-  // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | used
+  // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | tamped | used
   function makePortafilterMesh(state = 'filled') {
     const g = new THREE.Group();
     const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
@@ -163,15 +164,41 @@ const WORLD = (() => {
   // 포터필터 메시의 상태별 표시 갱신
   //   none  → 그룹 자체를 숨김(장착 안 됨)
   //   empty → 보이되 원두가루 숨김
-  //   filled/used → 보이고 가루 색을 상태에 맞게 교체
+  //   filled/tamped/used → 보이고 가루 색을 상태에 맞게 교체 (tamped는 눌려 납작함)
   function setPortafilterState(group, state) {
     const grounds = group.userData.grounds;
     if (state === 'none') { group.visible = false; return; }
     group.visible = true;
     if (grounds) {
       grounds.visible = (state !== 'empty');
-      grounds.material = GROUNDS_MAT[state === 'used' ? 'used' : 'filled'];
+      grounds.material = GROUNDS_MAT[state === 'used' ? 'used' : state === 'tamped' ? 'tamped' : 'filled'];
+      // 탬핑된 원두는 눌려 납작하고 윗면이 매끈해짐
+      const tamped = state === 'tamped';
+      grounds.scale.y = tamped ? 0.55 : 1;
+      grounds.position.y = tamped ? 0.024 : 0.028;
     }
+  }
+
+  // 추출 중 컵에 차오르는 에스프레소 — 컵 메시의 자식으로 넣고 setBrewFill로 높이를 키운다
+  const CUP_DIM = {
+    ice:       { R: 0.05,  H: 0.16, base: 0 },
+    espresso:  { R: 0.032, H: 0.06, base: 0.01 },
+    hot:       { R: 0.052, H: 0.12, base: 0 },
+  };
+  function makeBrewLiquid(cup) {
+    const d = CUP_DIM[cup] || CUP_DIM.hot;
+    const fullH = d.H * 0.74;
+    const m = cyl(d.R * 0.86, d.R * 0.7, fullH, M().coffeeLiquid, 0, 0, 0, 16);
+    m.castShadow = false;
+    m.userData = { base: d.base, fullH };
+    setBrewFill(m, 0);
+    return m;
+  }
+  function setBrewFill(m, frac) {
+    frac = Math.max(0, Math.min(1, frac));
+    const { base, fullH } = m.userData;
+    m.scale.y = Math.max(0.001, frac);                 // 지오메트리 높이=fullH → scale.y가 곧 채움 비율
+    m.position.y = base + 0.008 + fullH * frac / 2;    // 바닥은 고정한 채 위로 차오름
   }
 
   function makeBoxMesh(kind) {
@@ -529,7 +556,7 @@ const WORLD = (() => {
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
           progress: makeProgress(g, ox, 0.27, 0.3),   // 추출 중인 컵 바로 위
-          stream, pf, pfState: 'empty',
+          stream, pf, pfState: 'empty', tampPerfect: false, brewLiquid: null,
           locked: (i === 1 ? !!lockSecond : false),    // 원래 머신의 2번 슬롯만 듀얼헤드 업그레이드 필요
           busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
@@ -676,6 +703,27 @@ const WORLD = (() => {
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
       childHitbox(st, 0.4, 0.5, 0.55, 0, 0.22, 0.05, { id: 'knockbox' });
+    })();
+
+    /* ---------- 탬핑 스테이션 (분쇄된 원두를 평평하게 다짐) ---------- */
+    (function tampStation() {
+      const st = station('tamp', '탬핑 스테이션', -4.2, -4.3, 0.4, 0.4);
+      const r = st.root;
+      // 탬핑 매트(고무 패드)
+      r.add(box(0.34, 0.02, 0.3, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.95 }), 0, 0.01, 0, { cast: false }));
+      // 탬퍼: 스틸 베이스 + 넥 + 원목 손잡이 (매트 한쪽에 세워둠)
+      const tamper = new THREE.Group();
+      tamper.add(cyl(0.03, 0.03, 0.02, M().steel, 0, 0.01, 0, 16));       // 베이스(평평한 디스크)
+      tamper.add(cyl(0.014, 0.014, 0.05, M().steelDark, 0, 0.045, 0, 12)); // 넥
+      tamper.add(cyl(0.024, 0.028, 0.07, M().woodDark, 0, 0.105, 0, 14));  // 손잡이
+      tamper.position.set(0.09, 0.04, -0.02);
+      r.add(tamper);
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.12), textLabel('탬핑', 160, 56, '700 32px "Malgun Gothic"'));
+      lbl.position.set(0, 0.4, 0.12);
+      r.add(lbl);
+      const tamp = { tamper };   // 타이밍 미니게임 UI는 HUD에서 처리
+      childHitbox(st, 0.42, 0.6, 0.55, 0, 0.2, 0.05, { id: 'tamp', tamp });
+      env.machines.tamp = tamp;
     })();
 
     /* ---------- 쓰레기통 (바닥 기구) ---------- */
@@ -923,5 +971,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePortafilterMesh, setPortafilterState, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePortafilterMesh, setPortafilterState, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
 })();

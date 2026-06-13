@@ -106,6 +106,25 @@
     box-shadow:0 0 24px rgba(77,166,255,.25)}
   #editBanner b{color:#8fd0ff}
 
+  /* 탬핑 게이지 (세로 — 아래에서 위로 차오름) */
+  #tampGame{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    padding:16px 22px;text-align:center;
+    border-color:rgba(217,154,78,.6);box-shadow:0 0 26px rgba(217,154,78,.3)}
+  #tampGame .tgTitle{font-size:14px;margin-bottom:12px}
+  #tampGame .tgTitle b{color:var(--accent2)}
+  .tgTrack{position:relative;width:30px;height:210px;margin:0 auto;border-radius:15px;overflow:hidden;
+    background:rgba(255,255,255,.1);border:1px solid rgba(232,184,109,.25)}
+  .tgFill{position:absolute;left:0;right:0;bottom:0;height:0%;
+    background:linear-gradient(0deg,var(--accent),var(--accent2))}
+  .tgPerfect{position:absolute;left:0;right:0;bottom:78%;height:17%;
+    background:rgba(127,176,105,.28);border-top:2px solid var(--green);border-bottom:2px solid var(--green)}
+  #tampGame .tgHint{font-size:11px;opacity:.7;margin-top:12px;max-width:240px}
+  #tampGame .tgHint b{color:var(--accent2)}
+  #tampGame .tgTrack{transition:box-shadow .05s ease, transform .08s ease}
+  #tampGame.hitPerfect .tgTrack{box-shadow:0 0 0 2px var(--accent2),0 0 22px var(--accent2);transform:scale(1.06)}
+  #tampGame.hitGood .tgTrack{box-shadow:0 0 0 2px var(--green),0 0 14px rgba(127,176,105,.55)}
+  #tampGame.hitMiss .tgTrack{box-shadow:0 0 0 2px var(--red)}
+
   /* 레시피 버튼 */
   #recipeBtn{position:absolute;right:16px;bottom:152px;padding:10px 18px;font-size:13px;
     font-weight:700;pointer-events:auto;cursor:pointer;transition:transform .12s,filter .12s}
@@ -230,6 +249,14 @@
   <div id="stocks" class="panel"></div>
   <div id="recipeBtn" class="panel">📖 레시피북 <b>[R]</b></div>
   <div id="editBanner" class="panel hidden">🔧 <b>편집 모드</b> — 기구를 바라보고 <b>[E]</b> 들기 · <b>[R]</b> 회전 · <b>[Q]</b> 원위치 · <b>[B]</b> 종료</div>
+  <div id="tampGame" class="panel hidden">
+    <div class="tgTitle">🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기</div>
+    <div class="tgTrack">
+      <div class="tgFill" id="tgFill"></div>
+      <div class="tgPerfect"></div>
+    </div>
+    <div class="tgHint">퍼펙트 존(초록)에서 손을 떼면 크레마(팁) 보너스 · 끝까지 눌러도 성공</div>
+  </div>
   <div id="tutorial" class="panel hidden">
     <div id="tutStep">튜토리얼 1/6</div>
     <div id="tutText"></div>
