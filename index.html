@@ -123,6 +123,31 @@
   @keyframes toastIn{from{transform:translateY(-16px) scale(.9);opacity:0}to{transform:none;opacity:1}}
   .toast.out{transition:opacity .5s,transform .5s;opacity:0;transform:translateY(-10px)}
 
+  /* 서빙 완료 연출 — 화면 펀치 + 중앙 배지 */
+  #serveFlash{position:fixed;inset:0;pointer-events:none;z-index:8;opacity:0;
+    background:radial-gradient(ellipse at 50% 56%,rgba(127,176,105,.4) 0%,rgba(127,176,105,0) 55%)}
+  #serveFlash.show{animation:serveFlash .45s ease-out}
+  @keyframes serveFlash{0%{opacity:.9}100%{opacity:0}}
+  #serveBadge{position:absolute;top:46%;left:50%;transform:translate(-50%,-50%) scale(.3);
+    z-index:12;opacity:0;pointer-events:none;display:flex;align-items:center;gap:12px;
+    padding:14px 34px;border-radius:46px;white-space:nowrap;
+    font-size:30px;font-weight:800;letter-spacing:1px;color:#eafbe2;
+    background:linear-gradient(180deg,rgba(127,176,105,.96),rgba(95,142,77,.96));
+    border:2px solid rgba(255,255,255,.55);
+    box-shadow:0 10px 40px rgba(60,110,40,.5),0 0 0 6px rgba(127,176,105,.18)}
+  #serveBadge .chk{display:flex;align-items:center;justify-content:center;
+    width:40px;height:40px;border-radius:50%;background:#fff;color:#5f8e4d;
+    font-size:26px;font-weight:900;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+  #serveBadge.show{animation:serveBadgePop 1s cubic-bezier(.2,.9,.25,1) forwards}
+  @keyframes serveBadgePop{
+    0%{transform:translate(-50%,-50%) scale(.3);opacity:0}
+    14%{transform:translate(-50%,-50%) scale(1.22);opacity:1}
+    26%{transform:translate(-50%,-50%) scale(.94)}
+    38%{transform:translate(-50%,-50%) scale(1.04)}
+    50%{transform:translate(-50%,-50%) scale(1)}
+    80%{transform:translate(-50%,-50%) scale(1) translateY(0);opacity:1}
+    100%{transform:translate(-50%,-52%) scale(1) translateY(-14px);opacity:0}}
+
   #hint{position:absolute;bottom:16px;left:16px;font-size:12px;opacity:.55;line-height:1.7}
 
   /* ---------- 레시피북 ---------- */
@@ -172,6 +197,7 @@
 <body>
 <canvas id="c"></canvas>
 <div id="vignette"></div>
+<div id="serveFlash"></div>
 
 <!-- HUD -->
 <div id="hud" class="hidden">
@@ -199,6 +225,7 @@
   <div id="prompt" class="hidden"></div>
   <div id="held" class="panel hidden"></div>
   <div id="toasts"></div>
+  <div id="serveBadge"><span class="chk">✓</span><span>서빙 완료!</span></div>
   <div id="hint">[WASD] 이동 · [E] 상호작용 / 내려놓기 · [Q] 버리기 · [R] 레시피북 · [B] 기구 편집 · [Esc] 일시정지</div>
 </div>
 

@@ -239,11 +239,19 @@ const AudioFX = (() => {
       burst(t0 + d, 220, 0.09, 0.1, 1, 'lowpass');
     });
   }
+  // 서빙 완료: 저음 펀치(타격감) + 밝은 상승 3음 + 반짝
+  function serveSuccess() {
+    const t0 = ensure().currentTime;
+    tone(165, 0.16, 'sine', 0.2, 0, 58);              // 저음 임팩트 슬라이드다운
+    burst(t0, 240, 0.09, 0.12, 1, 'lowpass');          // 펀치 노이즈
+    [784, 1047, 1319].forEach((f, i) => tone(f, 0.2, 'sine', 0.13, 0.05 + i * 0.05));  // 띠링 상승
+    tone(1760, 0.32, 'sine', 0.07, 0.18);              // 반짝 꼬리
+  }
 
   return {
     ensure,
     // 신규 사운드
-    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock,
+    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock, serveSuccess,
     // 기존 UI/이벤트 음
     ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
     cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
@@ -859,6 +867,140 @@ const Game = (() => {
   }
 
   /* ===== 서빙 ===== */
+  /* ===== 서빙 완료 연출 (컵 내려놓기 → 체크 팝 → 사라짐) ===== */
+  let serveFxList = [];
+  let sparkPool = [];
+  let checkTex = null;
+
+  function buildCheckTex() {
+    const [c, x] = TEX.canvas(128, 128);
+    x.fillStyle = '#7fb069';
+    x.beginPath(); x.arc(64, 64, 44, 0, 7); x.fill();
+    x.strokeStyle = 'rgba(255,255,255,.45)'; x.lineWidth = 5;
+    x.beginPath(); x.arc(64, 64, 44, 0, 7); x.stroke();
+    x.strokeStyle = '#ffffff'; x.lineWidth = 12; x.lineCap = 'round'; x.lineJoin = 'round';
+    x.beginPath(); x.moveTo(44, 66); x.lineTo(58, 82); x.lineTo(86, 46); x.stroke();
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  function buildSparkTex() {
+    const [c, x] = TEX.canvas(64, 64);
+    const g = x.createRadialGradient(32, 32, 1, 32, 32, 30);
+    g.addColorStop(0, 'rgba(255,244,210,1)');
+    g.addColorStop(0.4, 'rgba(255,205,120,.85)');
+    g.addColorStop(1, 'rgba(255,180,90,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+  function initServeFx() {
+    checkTex = buildCheckTex();
+    const sparkTex = buildSparkTex();
+    for (let i = 0; i < 28; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: sparkTex, transparent: true, depthWrite: false, depthTest: false,
+        blending: THREE.AdditiveBlending, opacity: 0
+      }));
+      s.visible = false; s.renderOrder = 7;
+      s.userData = { life: 0, max: 1, vx: 0, vy: 0, vz: 0 };
+      scene.add(s);
+      sparkPool.push(s);
+    }
+  }
+  function emitSparks(pos, n) {
+    let spawned = 0;
+    for (const s of sparkPool) {
+      if (s.visible) continue;
+      const a = Math.random() * Math.PI * 2, sp = 0.6 + Math.random() * 1.3;
+      s.position.copy(pos);
+      s.userData.vx = Math.cos(a) * sp;
+      s.userData.vz = Math.sin(a) * sp;
+      s.userData.vy = 0.9 + Math.random() * 1.5;
+      s.userData.life = 0;
+      s.userData.max = 0.4 + Math.random() * 0.3;
+      s.scale.setScalar(0.06 + Math.random() * 0.05);
+      s.material.opacity = 1;
+      s.visible = true;
+      if (++spawned >= n) break;
+    }
+  }
+  function updateSparks(dt) {
+    for (const s of sparkPool) {
+      if (!s.visible) continue;
+      const u = s.userData;
+      u.life += dt;
+      if (u.life >= u.max) { s.visible = false; s.material.opacity = 0; continue; }
+      u.vy -= 4 * dt;
+      s.position.x += u.vx * dt;
+      s.position.y += u.vy * dt;
+      s.position.z += u.vz * dt;
+      s.material.opacity = 1 - u.life / u.max;
+    }
+  }
+  function flashServeBadge() {
+    const b = $('serveBadge'); b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+    const f = $('serveFlash'); f.classList.remove('show'); void f.offsetWidth; f.classList.add('show');
+  }
+  function spawnServeFx(worldPos, mesh) {
+    mesh.position.copy(worldPos);
+    mesh.position.y += 0.12;     // 살짝 위에서 드롭인
+    scene.add(mesh);
+    const check = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: checkTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0
+    }));
+    check.renderOrder = 8;
+    check.scale.setScalar(0.001);
+    check.position.set(worldPos.x, worldPos.y + 0.34, worldPos.z);
+    scene.add(check);
+    serveFxList.push({ t: 0, cup: mesh, check, pos: worldPos.clone(), sparked: false, cupGone: false });
+  }
+  function updateServeFx(dt) {
+    updateSparks(dt);
+    for (let i = serveFxList.length - 1; i >= 0; i--) {
+      const fx = serveFxList[i];
+      fx.t += dt;
+      const T = fx.t;
+      // 1) 드롭인: 컵이 트레이에 내려앉음
+      fx.cup.position.y = T < 0.18 ? fx.pos.y + 0.12 * (1 - T / 0.18) : fx.pos.y;
+      // 2) 임팩트: 체크 팝 + 파티클 + 사운드 + 화면 펀치 (1회)
+      if (!fx.sparked && T >= 0.2) {
+        fx.sparked = true;
+        emitSparks(new THREE.Vector3(fx.pos.x, fx.pos.y + 0.06, fx.pos.z), 16);
+        AudioFX.serveSuccess();
+        flashServeBadge();
+      }
+      // 3) 체크 오버슛 스케일 + 상승 + 페이드아웃
+      if (T >= 0.2) {
+        const ct = T - 0.2;
+        let s;
+        if (ct < 0.16) s = 1.35 * (1 - Math.pow(1 - ct / 0.16, 3));   // 0→1.35 오버슛
+        else if (ct < 0.26) s = 1.35 - 0.35 * ((ct - 0.16) / 0.1);    // 1.35→1.0 정착
+        else s = 1;
+        const op = ct > 0.62 ? Math.max(0, 1 - (ct - 0.62) / 0.28) : 1;
+        fx.check.scale.set(0.3 * s, 0.3 * s, 1);
+        fx.check.material.opacity = op;
+        fx.check.position.y = fx.pos.y + 0.34 + Math.min(0.08, ct * 0.25);
+      }
+      // 4) 컵 사라짐: 살짝 떠오르며 줄어듦
+      if (!fx.cupGone && T >= 0.28) {
+        const vt = (T - 0.28) / 0.32;
+        if (vt >= 1) { scene.remove(fx.cup); fx.cupGone = true; }
+        else { fx.cup.scale.setScalar(1 - vt); fx.cup.position.y = fx.pos.y + vt * 0.16; }
+      }
+      // 정리
+      if (T >= 1.05) {
+        if (!fx.cupGone) scene.remove(fx.cup);
+        scene.remove(fx.check);
+        serveFxList.splice(i, 1);
+      }
+    }
+  }
+  function clearServeFx() {
+    serveFxList.forEach(fx => { if (!fx.cupGone) scene.remove(fx.cup); scene.remove(fx.check); });
+    serveFxList = [];
+    sparkPool.forEach(s => { s.visible = false; s.material.opacity = 0; });
+  }
+
   function tryServe() {
     if (!held) { toast('서빙할 음료나 디저트를 들고 오세요'); return; }
     for (const o of orders) {
@@ -872,10 +1014,18 @@ const Game = (() => {
         // 서빙 성공
         item.done = true;
         const servedDrink = held.type === 'drink' ? held.drink : null;
+        // 픽업대에 컵/디저트를 내려놓는 연출용 메시
+        let fxMesh = null;
+        if (held.type === 'drink') fxMesh = WORLD.makeDrinkMesh(held.drink);
+        else if (held.type === 'dessert') fxMesh = WORLD.makeDessertMesh(held.kind);
         setHeld(null);
+        if (fxMesh) {
+          const px = env.pickupPos.x + (Math.random() - 0.5) * 0.5;
+          spawnServeFx(new THREE.Vector3(px, env.machines.pickupTrayY || 1.07, env.pickupPos.z), fxMesh);
+        }
         renderTicketItems(o);
         if (o.items.every(i => i.done)) completeOrder(o, servedDrink);
-        else { toast(`${itemName(item)} 전달! 나머지 항목도 준비하세요`, 'good'); AudioFX.ding(); }
+        else toast(`${itemName(item)} 전달! 나머지 항목도 준비하세요`, 'good');
         return;
       }
     }
@@ -902,7 +1052,8 @@ const Game = (() => {
     gainXP(Math.round(o.total / 100));
     removeTicketEl(o);
     orders.splice(orders.indexOf(o), 1);
-    Customers.serve(c, servedDrink ? WORLD.makeDrinkMesh(servedDrink) : null);
+    // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
+    Customers.serve(c, null);
     toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}`, 'good');
     AudioFX.cash();
     updateHUD();
@@ -1176,6 +1327,7 @@ const Game = (() => {
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
+    clearServeFx();
     mode = 'playing';
     Player.enabled = true;
     updateHUD(); updateClock();
@@ -1281,6 +1433,7 @@ const Game = (() => {
     Customers.update(dt);
     updateSlots(dt);
     updateJobs(dt);
+    updateServeFx(dt);
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
@@ -1317,6 +1470,7 @@ const Game = (() => {
   function init(s, e) {
     scene = s; env = e;
     S = freshState();
+    initServeFx();
     if (hasSave()) $('btnContinue').classList.remove('hidden');
     renderRecipeBook();
 
