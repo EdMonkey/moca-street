@@ -140,16 +140,38 @@ const WORLD = (() => {
     return g;
   }
 
-  // 분쇄된 원두가 담긴 포터필터 (손에 들기 / 머신 장착 공용)
-  function makePortafilterMesh() {
+  // 포터필터 원두가루 머티리얼 (filled: 신선 / used: 추출 후 젖은 가루)
+  const GROUNDS_MAT = {
+    filled: new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.95 }),
+    used: new THREE.MeshStandardMaterial({ color: 0x241307, roughness: 0.95 }),
+  };
+
+  // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | used
+  function makePortafilterMesh(state = 'filled') {
     const g = new THREE.Group();
     const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
-    const grounds = cyl(0.045, 0.045, 0.014, new THREE.MeshStandardMaterial({ color: 0x4a2e18, roughness: 0.95 }), 0, 0.028, 0, 12);
+    const grounds = cyl(0.045, 0.045, 0.014, GROUNDS_MAT.filled, 0, 0.028, 0, 12);
     const handle = cyl(0.017, 0.02, 0.17, M().woodDark, 0, 0, 0.135, 10);
     handle.rotation.x = Math.PI / 2;
     const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
     g.add(basket, grounds, handle, spout);
+    g.userData.grounds = grounds;
+    setPortafilterState(g, state);
     return g;
+  }
+
+  // 포터필터 메시의 상태별 표시 갱신
+  //   none  → 그룹 자체를 숨김(장착 안 됨)
+  //   empty → 보이되 원두가루 숨김
+  //   filled/used → 보이고 가루 색을 상태에 맞게 교체
+  function setPortafilterState(group, state) {
+    const grounds = group.userData.grounds;
+    if (state === 'none') { group.visible = false; return; }
+    group.visible = true;
+    if (grounds) {
+      grounds.visible = (state !== 'empty');
+      grounds.material = GROUNDS_MAT[state === 'used' ? 'used' : 'filled'];
+    }
   }
 
   function makeBoxMesh(kind) {
@@ -491,10 +513,9 @@ const WORLD = (() => {
       env.machines.espressoSlots = [];
       [-0.3, 0.3].forEach((ox, i) => {
         g.add(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14));            // 그룹헤드
-        // 포터필터(그라인더에서 분쇄해 와서 장착하면 보임)
-        const pf = makePortafilterMesh();
+        // 포터필터(기본 '빈' 상태로 장착되어 있음)
+        const pf = makePortafilterMesh('empty');
         pf.position.set(ox, 0.235, 0.26);
-        pf.visible = false;
         g.add(pf);
         // 추출 중 커피 줄기(애니메이션용)
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
@@ -503,7 +524,7 @@ const WORLD = (() => {
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
           progress: makeProgress(g, ox, 0.52, 0.42),
-          stream, pf, loaded: false, busy: false, cupMesh: null, done: false, drink: null, t: 0
+          stream, pf, pfState: 'empty', busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
       const drip = box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3);
@@ -629,6 +650,22 @@ const WORLD = (() => {
       childHitbox(st, 0.4, 0.55, 0.55, 0, 0.22, 0.05, { id: 'whip' });
     })();
 
+    /* ---------- 넉박스 (사용한 포터필터 가루 비우기) ---------- */
+    (function knockbox() {
+      const st = station('knockbox', '넉박스', 3.2, -4.3, 0.35, 0.4);
+      const r = st.root;
+      // 어두운 무광 통 + 위를 가로지르는 고무 바
+      r.add(box(0.26, 0.22, 0.3, M().blackMatte, 0, 0.11, 0));
+      r.add(cyl(0.13, 0.13, 0.03, M().steelDark, 0, 0.225, 0, 16));        // 상단 림
+      const bar = cyl(0.014, 0.014, 0.26, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }), 0, 0.255, 0, 10);
+      bar.rotation.z = Math.PI / 2;
+      r.add(bar);
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.11), textLabel('넉박스', 160, 52, '700 28px "Malgun Gothic"'));
+      lbl.position.set(0, 0.42, 0.12);
+      r.add(lbl);
+      childHitbox(st, 0.4, 0.5, 0.55, 0, 0.22, 0.05, { id: 'knockbox' });
+    })();
+
     /* ---------- 쓰레기통 (바닥 기구) ---------- */
     (function trash() {
       const st = station('trash', '쓰레기통', 3.6, -4.1, 0.55, 0.55, { floor: true });
@@ -686,14 +723,13 @@ const WORLD = (() => {
       glbl.position.set(0, 0.78, 0.18);
       g.add(glbl);
       childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder' });
-      // 분쇄 결과물(포터필터)이 받침 위에 표시됨
-      const pfOut = makePortafilterMesh();
+      // 삽입된 포터필터가 받침 위에 표시됨 (초기엔 숨김)
+      const pfOut = makePortafilterMesh('none');
       pfOut.position.set(0, 0.145, 0.13);
-      pfOut.visible = false;
       g.add(pfOut);
       env.machines.grinderJob = {
         kind: 'grinder',
-        st, pfMesh: pfOut,
+        st, pfMesh: pfOut, hasPf: false,
         progress: makeProgress(g, 0, 0.68, 0.22),
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
@@ -847,5 +883,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePortafilterMesh, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePortafilterMesh, setPortafilterState, drinkColor, ROOM };
 })();

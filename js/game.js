@@ -231,11 +231,19 @@ const AudioFX = (() => {
     tone(760, 0.07, 'sine', 0.07);
     tone(1130, 0.05, 'sine', 0.05, 0.005);
   }
+  // 넉박스: 통을 두드려 가루를 털어내는 낮은 소리 2회
+  function knock() {
+    const t0 = ensure().currentTime;
+    [0, 0.13].forEach(d => {
+      tone(95, 0.12, 'sine', 0.16, d, 40);
+      burst(t0 + d, 220, 0.09, 0.1, 1, 'lowpass');
+    });
+  }
 
   return {
     ensure,
     // 신규 사운드
-    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack,
+    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock,
     // 기존 UI/이벤트 음
     ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
     cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
@@ -358,7 +366,7 @@ const Game = (() => {
       m.scale.setScalar(1.3);
       Player.setHeld(m);
     } else if (h.type === 'portafilter') {
-      const m = WORLD.makePortafilterMesh();
+      const m = WORLD.makePortafilterMesh(h.state || 'empty');
       m.scale.setScalar(1.3);
       Player.setHeld(m);
     }
@@ -385,7 +393,10 @@ const Game = (() => {
       const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}</b>` : '제조 중인 음료';
       el.innerHTML = `${name}<div class="ing">${drinkIngredients(held.drink).join(' + ')}</div>`;
     } else if (held.type === 'portafilter') {
-      el.innerHTML = `<b style="color:var(--accent2)">포터필터</b><div class="ing">분쇄된 원두 — 에스프레소 머신에 장착하세요</div>`;
+      const info = held.state === 'filled' ? '원두 채움 — 머신에 장착하세요'
+        : held.state === 'used' ? '사용한 가루 — 넉박스에 비우세요'
+        : '비어 있음 — 그라인더에서 분쇄하세요';
+      el.innerHTML = `<b style="color:var(--accent2)">포터필터</b><div class="ing">${info}</div>`;
     } else {
       el.innerHTML = `<b style="color:var(--accent2)">${DESSERTS[held.kind].name}</b>`;
     }
@@ -397,7 +408,11 @@ const Game = (() => {
       const m = Object.keys(RECIPES).find(k => matchesRecipe(h.drink, k));
       return m ? RECIPES[m].name : '제조 중인 음료';
     }
-    if (h.type === 'portafilter') return '포터필터';
+    if (h.type === 'portafilter') {
+      return h.state === 'filled' ? '포터필터 (원두 채움)'
+        : h.state === 'used' ? '포터필터 (사용한 가루)'
+        : '포터필터 (비어 있음)';
+    }
     return DESSERTS[h.kind].name;
   }
 
@@ -410,7 +425,7 @@ const Game = (() => {
     let mesh, yOff = 0.004;
     if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
     else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
-    else { mesh = WORLD.makePortafilterMesh(); yOff = 0.03; }
+    else { mesh = WORLD.makePortafilterMesh(item.state || 'empty'); yOff = 0.03; }
     mesh.position.set(point.x, point.y + yOff, point.z);
     // 손잡이/컵이 플레이어 쪽을 향하도록
     mesh.rotation.y = Math.atan2(Player.position.x - point.x, Player.position.z - point.z);
@@ -499,19 +514,21 @@ const Game = (() => {
 
   /* ===== 튜토리얼 ===== */
   const TUT_STEPS = [
-    { text: '<b>W A S D</b> 키로 움직이고, 마우스로 주변을 둘러보세요',
+    { text: '<b>W A S D</b>로 이동하고, 마우스로 주변을 둘러보세요',
       check: () => tut.startPos && Player.position.distanceTo(tut.startPos) > 2 },
-    { text: '손님이 줄을 서면 <b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>로 주문을 받으세요',
+    { text: '<b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>를 눌러 손님의 주문을 받으세요',
       check: () => orders.length > 0 },
-    { text: '<b>그라인더</b>에 <b>[E]</b>로 분쇄를 시작하고, 끝나면 다시 <b>[E]</b>로 포터필터를 꺼내세요',
-      check: () => (held && held.type === 'portafilter') || env.machines.grinderJob.busy || env.machines.espressoSlots.some(s => s.loaded || s.busy) },
-    { text: '<b>에스프레소 머신</b>에 포터필터를 장착하세요 <b>[E]</b>',
-      check: () => env.machines.espressoSlots.some(s => s.loaded || s.busy) },
-    { text: '컵 디스펜서에서 <b>머그컵</b>을 잡아 머신에 올리고 추출을 시작하세요 <b>[E]</b>',
+    { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
+      check: () => (held && held.type === 'portafilter') || env.machines.grinderJob.busy },
+    { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 원두를 분쇄하세요 — 완료 후 <b>[E]</b>로 꺼내기',
+      check: () => env.machines.grinderJob.busy || (held && held.type === 'portafilter' && held.state === 'filled') },
+    { text: '분쇄된 포터필터를 들고 <b>에스프레소 머신</b>에 가서 <b>[E]</b>로 장착하세요',
+      check: () => env.machines.espressoSlots.some(s => s.pfState === 'filled' || s.busy) },
+    { text: '컵 디스펜서에서 <b>머그컵</b>을 집어 머신에 올려놓고 <b>[E]</b>로 추출을 시작하세요',
       check: () => env.machines.espressoSlots.some(s => s.busy) || (held && held.type === 'drink' && !!held.drink.espresso) },
-    { text: '추출이 끝나면 컵을 꺼내고 <b>[E]</b>, 주문표의 나머지 재료를 채우세요 — 막히면 <b>[R]</b> 레시피북!',
+    { text: '추출 완료! <b>[E]</b>로 컵을 꺼낸 뒤 주문표의 나머지 재료를 채우세요 — 모르면 <b>[R]</b> 레시피북',
       check: () => held && held.type === 'drink' && orders.some(o => o.items.some(it => !it.done && it.type === 'drink' && matchesRecipe(held.drink, it.recipeId))) },
-    { text: '완성! <b>PICK UP</b> 팻말 아래 픽업대에서 <b>[E]</b>로 서빙하세요', event: 'served' },
+    { text: '음료 완성! <b>PICK UP</b> 팻말 아래 픽업대에서 <b>[E]</b>로 손님에게 서빙하세요', event: 'served' },
   ];
   let tut = null;   // { step, startPos }
 
@@ -616,43 +633,45 @@ const Game = (() => {
       return;
     }
 
-    /* --- 그라인더: 분쇄 시작 → (자유 행동) → 완료되면 포터필터 꺼내기 --- */
+    /* --- 그라인더: 빈 포터필터 삽입 → 분쇄 → 완료되면 채워진 포터필터 꺼내기 --- */
     if (id === 'grinder') {
       const job = env.machines.grinderJob;
       if (job.busy) {
         if (!job.done) { toast('분쇄 중입니다…'); return; }
         if (held) { toast('손이 비어있어야 포터필터를 꺼낼 수 있어요'); return; }
         resetJob(job);
-        setHeld({ type: 'portafilter' });
+        setHeld({ type: 'portafilter', state: 'filled' });
         AudioFX.metalClack();
         return;
       }
-      if (held) {
-        toast(held.type === 'portafilter' ? '이미 포터필터를 들고 있어요' : '손이 비어있어야 분쇄를 시작할 수 있어요');
-        return;
-      }
+      // 빈손으로 유휴 그라인더 — 더 이상 무에서 포터필터 생성 금지
+      if (!held) { toast('머신에서 포터필터를 분리해 가져오세요', 'bad'); AudioFX.err(); return; }
+      if (held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
+      if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
+      if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
       if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+      // 빈 포터필터 삽입 + 분쇄 시작
       S.stocks.beans--;
-      job.busy = true; job.done = false; job.t = 0; job.dur = 1.6;
-      job.pfMesh.visible = true;
+      setHeld(null);
+      job.busy = true; job.done = false; job.t = 0; job.dur = 1.6; job.hasPf = true;
+      WORLD.setPortafilterState(job.pfMesh, 'empty');
       job.sound = AudioFX.grind(job.dur);
+      AudioFX.metalClack();
       updateHUD();
       return;
     }
 
-    /* --- 에스프레소 머신: 포터필터 장착 → 컵 올려 추출 → 꺼내기 --- */
+    /* --- 에스프레소 머신: 포터필터 분리/장착 → 컵 올려 추출 → 꺼내기 --- */
     if (id === 'espresso') {
       const slot = env.machines.espressoSlots[it.slot];
       if (it.slot === 1 && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
       if (slot.busy) {
         if (!slot.done) { toast('추출 중입니다…'); return; }
-        // 완료된 샷 꺼내기 (사용한 원두 퍽은 자동 제거)
+        // 완료된 샷 꺼내기 — 포터필터(used)는 머신에 남는다
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
         slot.st.root.remove(slot.cupMesh);
         slot.busy = slot.done = false;
         slot.stream.visible = false;
-        slot.loaded = false;
-        slot.pf.visible = false;
         const drink = slot.drink;
         slot.cupMesh = null; slot.drink = null;
         slot.progress.hide();
@@ -660,19 +679,21 @@ const Game = (() => {
         AudioFX.cupClink(0.5);
         return;
       }
-      // 포터필터 장착
+      // 포터필터를 들고 빈 슬롯에 장착 (상태 유지)
       if (held && held.type === 'portafilter') {
-        if (slot.loaded) { toast('이미 포터필터가 장착되어 있어요'); return; }
-        slot.loaded = true;
-        slot.pf.visible = true;
+        if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
+        slot.pfState = held.state || 'empty';
+        WORLD.setPortafilterState(slot.pf, slot.pfState);
         setHeld(null);
         AudioFX.metalClack();
         return;
       }
-      // 컵 올려 추출 시작
+      // 컵 올려 추출 시작 (filled 포터필터가 장착되어 있어야 함)
       if (held && held.type === 'drink') {
         if (held.drink.espresso) { toast('이미 샷이 추출된 컵이에요'); return; }
-        if (!slot.loaded) { toast('먼저 그라인더에서 분쇄한 포터필터를 장착하세요', 'bad'); AudioFX.err(); return; }
+        if (slot.pfState === 'none') { toast('포터필터를 장착하세요', 'bad'); AudioFX.err(); return; }
+        if (slot.pfState === 'used') { toast('사용한 가루가 있어요 — 분리해 넉박스에 비운 뒤 다시 분쇄하세요', 'bad'); AudioFX.err(); return; }
+        if (slot.pfState === 'empty') { toast('빈 포터필터예요 — 분리해 그라인더에서 원두를 분쇄하세요', 'bad'); AudioFX.err(); return; }
         const drink = held.drink;
         setHeld(null);
         slot.busy = true; slot.done = false; slot.t = 0;
@@ -687,7 +708,13 @@ const Game = (() => {
         slot.sound = AudioFX.brewing(slot.dur);
         return;
       }
-      toast(slot.loaded ? '컵을 들고 와 추출을 시작하세요' : '그라인더에서 원두를 분쇄해 포터필터를 장착하세요');
+      // 빈손 — 추출 중이 아니면 포터필터 분리
+      if (slot.pfState === 'none') { toast('포터필터가 없어요'); return; }
+      const state = slot.pfState;
+      slot.pfState = 'none';
+      WORLD.setPortafilterState(slot.pf, 'none');
+      setHeld({ type: 'portafilter', state });
+      AudioFX.metalClack();
       return;
     }
 
@@ -781,9 +808,36 @@ const Game = (() => {
       return;
     }
 
+    /* --- 넉박스: 사용한 포터필터 가루 비우기 --- */
+    if (id === 'knockbox') {
+      if (!held || held.type !== 'portafilter') { toast('사용한 포터필터를 들고 오세요'); return; }
+      if (held.state !== 'used') {
+        toast(held.state === 'filled' ? '분쇄된 원두는 그냥 두세요 — 머신에 장착하면 돼요' : '비울 가루가 없어요');
+        return;
+      }
+      held.state = 'empty';
+      setHeld(held);
+      toast('가루를 털어냈어요 — 다시 분쇄할 수 있어요');
+      AudioFX.knock();
+      return;
+    }
+
     /* --- 쓰레기통 --- */
     if (id === 'trash') {
       if (!held) { toast('버릴 것이 없어요'); return; }
+      // 포터필터는 영구 도구 — 버릴 수 없음 (used면 가루만 비움)
+      if (held.type === 'portafilter') {
+        if (held.state === 'used') {
+          held.state = 'empty';
+          setHeld(held);
+          toast('가루를 털어냈어요 — 다시 분쇄할 수 있어요');
+          AudioFX.trashThud();
+        } else {
+          toast('⛔ 포터필터는 버릴 수 없어요 — 넉박스에 가루만 비우세요', 'bad');
+          AudioFX.err();
+        }
+        return;
+      }
       setHeld(null);
       toast('버렸습니다');
       AudioFX.trashThud();
@@ -896,6 +950,8 @@ const Game = (() => {
           } else if (job.kind === 'water') {
             job.drink.water = job.waterType;
             swapJobCup(job);
+          } else if (job.kind === 'grinder') {
+            WORLD.setPortafilterState(job.pfMesh, 'filled');
           }
           AudioFX.ding();
         }
@@ -906,7 +962,7 @@ const Game = (() => {
   function resetJob(job) {
     if (job.sound) { job.sound.stop(); job.sound = null; }
     if (job.cupMesh) { job.st.root.remove(job.cupMesh); job.cupMesh = null; }
-    if (job.pfMesh) job.pfMesh.visible = false;
+    if (job.pfMesh) { WORLD.setPortafilterState(job.pfMesh, 'none'); job.hasPf = false; }
     job.busy = job.done = false;
     job.drink = null;
     job.progress.hide();
@@ -924,6 +980,9 @@ const Game = (() => {
         slot.progress.draw(1, true);
         slot.stream.visible = false;
         slot.drink.espresso = 1;
+        // 추출 완료 — 포터필터는 사용한 가루(used) 상태가 됨
+        slot.pfState = 'used';
+        WORLD.setPortafilterState(slot.pf, 'used');
         // 컵 메시를 채워진 버전으로 교체
         slot.st.root.remove(slot.cupMesh);
         const cm = WORLD.makeDrinkMesh(slot.drink);
@@ -955,9 +1014,12 @@ const Game = (() => {
         const job = env.machines.grinderJob;
         if (job.busy) {
           if (!job.done) return `분쇄 중… ${Math.ceil(job.dur - job.t)}s`;
-          return held ? '손을 비우면 포터필터를 꺼낼 수 있어요' : E + '포터필터 꺼내기';
+          return held ? '손을 비우면 포터필터를 꺼낼 수 있어요' : E + '분쇄 완료 — 포터필터 꺼내기';
         }
-        if (held) return held.type === 'portafilter' ? '이미 포터필터를 들고 있어요' : '손을 비우고 분쇄하세요';
+        if (!held) return '머신에서 포터필터를 분리해 오세요';
+        if (held.type !== 'portafilter') return '포터필터를 들고 오세요';
+        if (held.state === 'used') return '넉박스에 가루를 먼저 비우세요';
+        if (held.state === 'filled') return '이미 분쇄된 포터필터예요';
         if (S.stocks.beans <= 0) return '원두 없음 — 창고에서 보충하세요';
         return E + '원두 분쇄 시작';
       }
@@ -965,10 +1027,16 @@ const Game = (() => {
         if (it.slot === 1 && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
-        if (held && held.type === 'portafilter') return slot.loaded ? '이미 장착되어 있어요' : E + '포터필터 장착';
-        if (!slot.loaded) return '포터필터 없음 — 그라인더에서 분쇄해 오세요';
-        if (held && held.type === 'drink' && !held.drink.espresso) return E + '에스프레소 추출';
-        return '장착 완료 ✓ — 컵을 들고 오세요';
+        if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
+        if (held && held.type === 'drink' && !held.drink.espresso) {
+          if (slot.pfState === 'filled') return E + '에스프레소 추출';
+          if (slot.pfState === 'used') return '사용한 가루 — 분리 후 넉박스에 비우세요';
+          if (slot.pfState === 'empty') return '빈 포터필터 — 분리 후 그라인더에서 분쇄하세요';
+          return '포터필터를 먼저 장착하세요';
+        }
+        if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
+        if (slot.pfState === 'filled') return E + '포터필터 분리 (장착 완료 ✓ — 컵을 들고 오세요)';
+        return E + `포터필터 분리 (${slot.pfState === 'used' ? '사용한 가루 — 넉박스에 비우세요' : '비어 있음 — 분쇄하세요'})`;
       }
       case 'steamer': {
         const job = env.machines.steamerJob;
@@ -993,7 +1061,18 @@ const Game = (() => {
       case 'syrup': return E + { vanilla: '바닐라', caramel: '카라멜', choco: '초코' }[it.kind] + ' 시럽 넣기';
       case 'whip': return E + '휘핑크림 올리기';
       case 'dessert': return E + DESSERTS[it.kind].name + ' 꺼내기 (' + fmt(DESSERTS[it.kind].price) + ')';
-      case 'trash': return E + '버리기';
+      case 'knockbox': {
+        if (held && held.type === 'portafilter') {
+          if (held.state === 'used') return E + '사용한 가루 털어내기';
+          return held.state === 'filled' ? '분쇄된 원두는 머신에 장착하세요' : '비울 가루가 없어요';
+        }
+        return '사용한 포터필터를 들고 오세요';
+      }
+      case 'trash': {
+        if (held && held.type === 'portafilter')
+          return held.state === 'used' ? E + '사용한 가루 털어내기 (포터필터는 유지됩니다)' : '⛔ 포터필터는 버릴 수 없어요';
+        return E + '버리기';
+      }
       case 'restock': {
         const r = RESTOCK[it.kind];
         return E + `${r.name} 보충 +${r.amount} (${fmt(r.price)})`;
@@ -1045,10 +1124,12 @@ const Game = (() => {
     guide.className = 'recipe';
     guide.style.gridColumn = '1 / -1';
     guide.innerHTML =
-      `<div class="rname"><span>⚙️ "에스프레소 샷" 내리는 법</span></div>` +
-      `<ol class="rsteps"><li><b>그라인더</b>에서 원두 분쇄 → 포터필터 채우기</li>` +
-      `<li><b>에스프레소 머신</b>에 포터필터 장착</li>` +
-      `<li>컵을 머신에 올려 추출 → 완료되면 꺼내기 (샷 1회마다 새로 분쇄)</li></ol>`;
+      `<div class="rname"><span>⚙️ 에스프레소 샷 내리는 법</span></div>` +
+      `<ol class="rsteps"><li><b>에스프레소 머신</b>에서 <b>[E]</b>로 포터필터를 분리하세요</li>` +
+      `<li><b>그라인더</b>에 가져가 <b>[E]</b>로 원두를 분쇄하고 꺼내세요</li>` +
+      `<li>분쇄된 포터필터를 머신에 <b>장착</b>하고, 컵을 들고 와 <b>[E]</b>로 추출을 시작하세요</li>` +
+      `<li>추출이 끝나면 <b>[E]</b>로 컵을 꺼내세요 — 포터필터는 머신에 남아요</li>` +
+      `<li>포터필터를 분리해 <b>넉박스</b>에서 <b>[E]</b>로 가루를 털어내면 다음 샷 준비 완료!</li></ol>`;
     grid.appendChild(guide);
     Object.keys(RECIPES).forEach(k => {
       const r = RECIPES[k];
@@ -1086,12 +1167,12 @@ const Game = (() => {
     setHeld(null);
     clearPlacedItems();
     env.placeIndicator.visible = false;
-    // 남아있는 에스프레소 슬롯 정리
+    // 에스프레소 슬롯 정리 — 두 슬롯 모두 '빈' 포터필터 장착 상태로 리셋
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
       s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.stream.visible = false;
-      s.loaded = false; s.pf.visible = false;
+      s.pfState = 'empty'; WORLD.setPortafilterState(s.pf, 'empty');
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
@@ -1254,7 +1335,10 @@ const Game = (() => {
       if (mode !== 'playing') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
       if (ev.code === 'KeyE') onUse();
-      if (ev.code === 'KeyQ' && held) { setHeld(null); toast('버렸습니다'); }
+      if (ev.code === 'KeyQ' && held) {
+        if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
+        else { setHeld(null); toast('버렸습니다'); }
+      }
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT' && tut) endTutorial(false);
     });
