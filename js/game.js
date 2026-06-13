@@ -1381,6 +1381,7 @@ const Game = (() => {
     if (mode !== 'prep') return;
     prepPanelOpen = true;
     $('ppTitle').textContent = `DAY ${S.day} 영업 준비`;
+    $('ppMoney').innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
     renderUpgrades();
     $('prepPanel').classList.remove('hidden');
     Player.enabled = false;
@@ -1445,6 +1446,7 @@ const Game = (() => {
         AudioFX.cash();
         save();
         renderUpgrades();
+        const pm = $('ppMoney'); if (pm) pm.innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
         updateHUD();
       };
     });
