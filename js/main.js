@@ -150,6 +150,7 @@
   };
   $('btnResume').onclick = () => lockPointer();
   $('btnQuitToMenu').onclick = () => location.reload();
+  $('btnRestart').onclick = () => location.reload();   // 폐업 → 새로 시작(저장은 이미 초기화됨)
 
   canvas.addEventListener('click', () => {
     if ((Game.mode === 'playing' || Game.mode === 'prep') && !document.pointerLockElement

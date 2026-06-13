@@ -342,6 +342,11 @@ const Game = (() => {
   };
   const DAY_LEN = 300;            // 실제 5분 = 게임 9시간 (09:00~18:00)
   const SAVE_KEY = 'mochaStreetSave_v1';
+  // 경영(Stage 3): 임대료 = 고정 지출, 일일 목표 = 동기, 폐업 = 소프트 실패
+  const RENT_BASE = 8000, RENT_PER_DAY = 2000;
+  const BANKRUPT_LIMIT = -50000;
+  const rentFor = day => RENT_BASE + (day - 1) * RENT_PER_DAY;
+  const dailyGoalFor = day => 5000 + day * 2500;   // 임대료 차감 후 목표 순이익
 
   /* ===== 상태 ===== */
   let env = null, scene = null;
@@ -1122,7 +1127,8 @@ const Game = (() => {
   function completeOrder(o, servedDrink) {
     const c = o.customer;
     const frac = Math.max(0, c.patience / c.patienceMax);
-    let tip = Math.floor(o.total * 0.3 * frac * (0.7 + S.rep / 250) / 100) * 100;
+    const masterBonus = S.level >= MAX_LVL ? 1.12 : 1;   // 마스터 바리스타 팁 +12%
+    let tip = Math.floor(o.total * 0.3 * frac * (0.7 + S.rep / 250) * masterBonus / 100) * 100;
     // 퍼펙트 탬핑 보너스 — 음료에 크레마가 살아 팁 +15%
     const perfect = !!(servedDrink && servedDrink.perfect);
     if (perfect) tip += Math.round(o.total * 0.15 / 100) * 100;
@@ -1434,7 +1440,7 @@ const Game = (() => {
     const prev = LEVEL_XP[S.level - 1], next = LEVEL_XP[S.level];
     if (S.level >= MAX_LVL) {
       $('xpBar').style.width = '100%';
-      $('xpTxt').textContent = 'MAX';
+      $('xpTxt').textContent = 'MAX · 마스터(팁+12%)';
     } else {
       $('xpBar').style.width = ((S.xp - prev) / (next - prev) * 100) + '%';
       $('xpTxt').textContent = `${S.xp}/${next} XP`;
@@ -1561,7 +1567,7 @@ const Game = (() => {
     mode = 'playing';
     Player.enabled = true;
     updateHUD(); updateClock();
-    toast(`DAY ${S.day} — 영업 시작! ☕`, 'gold', 3000);
+    toast(`DAY ${S.day} — 영업 시작! 오늘 목표 순이익 ${fmt(dailyGoalFor(S.day))} 이상 ☕`, 'gold', 4000);
     AudioFX.bell();
     if (pendingTutorial) { pendingTutorial = false; startTutorial(); }
   }
@@ -1571,6 +1577,7 @@ const Game = (() => {
     prepPanelOpen = true;
     $('ppTitle').textContent = `DAY ${S.day} 영업 준비`;
     $('ppMoney').innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
+    $('ppInfo').innerHTML = `오늘 임대료 <b>${fmt(rentFor(S.day))}</b> · 목표 순이익 <b>${fmt(dailyGoalFor(S.day))}</b> 이상`;
     renderEquipment();
     renderUpgrades();
     $('prepPanel').classList.remove('hidden');
@@ -1595,20 +1602,47 @@ const Game = (() => {
     Player.enabled = false;
     env.placeIndicator.visible = false;
     document.exitPointerLock && document.exitPointerLock();
-    const net = dayStats.revenue + dayStats.tips - dayStats.spent;
+    // 임대료 차감 → 순이익/목표 산정
+    const rent = rentFor(S.day);
+    S.money -= rent;
+    const grossNet = dayStats.revenue + dayStats.tips - dayStats.spent;
+    const net = grossNet - rent;
+    const goal = dailyGoalFor(S.day);
+    const goalMet = net >= goal;
+    if (goalMet) S.rep = Math.min(100, S.rep + 3);
+
+    $('prepBar').classList.add('hidden');
+    $('hud').classList.add('hidden');
+
+    // 폐업 (소프트 실패)
+    if (S.money < BANKRUPT_LIMIT) {
+      localStorage.removeItem(SAVE_KEY);
+      localStorage.removeItem('mochaLayout_v1');
+      mode = 'gameover';
+      $('goDays').textContent = S.day;
+      $('gameOver').classList.remove('hidden');
+      AudioFX.err();
+      return;
+    }
+
+    const crisis = S.money < 0;
     $('deTitle').textContent = `DAY ${S.day} 마감`;
-    $('deSub').textContent = dayStats.angry === 0 ? '완벽한 하루였어요! 화난 손님이 한 명도 없었습니다 👏' : '내일은 더 잘할 수 있어요!';
+    $('deSub').innerHTML =
+      (crisis ? `<span style="color:var(--red)">⚠ 경영 위기 — 잔액이 마이너스예요! 내일 반드시 흑자를 내세요</span><br>` : '') +
+      (goalMet
+        ? `🎉 일일 목표 달성! (목표 순이익 ${fmt(goal)} 이상) <span style="color:var(--green)">평판 +3</span>`
+        : `오늘 목표 미달 (목표 ${fmt(goal)}) — 장비를 늘려 처리량을 키워보세요`) +
+      `<br><span style="opacity:.7;font-size:13px">서빙 ${dayStats.served}명 · 화난 손님 ${dayStats.angry}명</span>`;
     $('statGrid').innerHTML = [
       [fmt(dayStats.revenue), '매출'],
       [fmt(dayStats.tips), '팁'],
-      [fmt(dayStats.spent), '지출(재고)'],
+      ['−' + fmt(dayStats.spent), '지출(재고·장비)'],
+      ['−' + fmt(rent), '임대료'],
       [(net >= 0 ? '+' : '−') + fmt(Math.abs(net)), '순이익'],
-      [dayStats.served + '명', '서빙한 손님'],
-      [dayStats.angry + '명', '화난 손님'],
+      [fmt(S.money), '보유 금액'],
     ].map(([v, l]) => `<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div></div>`).join('');
-    $('prepBar').classList.add('hidden');
     $('dayEnd').classList.remove('hidden');
-    $('hud').classList.add('hidden');
+    if (crisis) AudioFX.err();
     S.day++;
     save();
   }
