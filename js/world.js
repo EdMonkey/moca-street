@@ -237,7 +237,7 @@ const WORLD = (() => {
       const tex = new THREE.CanvasTexture(c);
       tex.colorSpace = THREE.SRGBColorSpace;
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-      s.scale.set(0.4, 0.1, 1);
+      s.scale.set(0.34, 0.085, 1);
       s.position.set(lx, ly, lz);
       s.renderOrder = 5;
       s.visible = false;
@@ -523,7 +523,7 @@ const WORLD = (() => {
         g.add(stream);
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
-          progress: makeProgress(g, ox, 0.52, 0.42),
+          progress: makeProgress(g, ox, 0.27, 0.3),   // 추출 중인 컵 바로 위
           stream, pf, pfState: 'empty', busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
@@ -586,7 +586,7 @@ const WORLD = (() => {
       env.machines.steamerJob = {
         kind: 'steamer',
         st, localPos: new THREE.Vector3(0.2, 0, 0.22),
-        progress: makeProgress(g, 0, 0.72, 0.18),
+        progress: makeProgress(g, 0.2, 0.24, 0.22),   // 스팀 중인 컵 바로 위
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
     })();
@@ -612,7 +612,7 @@ const WORLD = (() => {
         env.machines.waterJobs[id] = {
           kind: 'water', waterType: id === 'waterHot' ? 'hot' : 'cold',
           st, localPos: new THREE.Vector3(0, 0, 0.22),
-          progress: makeProgress(r, 0, 0.68, 0.18),
+          progress: makeProgress(r, 0, 0.24, 0.22),   // 물 받는 컵 바로 위
           busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, sound: null
         };
       });
@@ -730,7 +730,7 @@ const WORLD = (() => {
       env.machines.grinderJob = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
-        progress: makeProgress(g, 0, 0.68, 0.22),
+        progress: makeProgress(g, 0, 0.34, 0.13),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
     })();
