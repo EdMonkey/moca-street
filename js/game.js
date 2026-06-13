@@ -1025,7 +1025,7 @@ const Game = (() => {
     open = true; timeSec = 0;
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
-    spawnTimer = 2.5;
+    spawnTimer = S.day === 1 ? 7 : 2.5;   // 첫날은 첫 손님 입장까지 여유를 둠
     resetStations();
     mode = 'playing';
     Player.enabled = true;
@@ -1054,6 +1054,7 @@ const Game = (() => {
 
   function spawnInterval() {
     let base = 15 - S.day * 0.6;
+    if (S.day === 1) base *= 1.6;   // 첫날은 한산하게 — 조작에 적응할 시간을 줌
     if (S.upgrades.ads) base *= 0.72;
     base *= S.rep >= 70 ? 0.85 : S.rep <= 30 ? 1.3 : 1;
     base = Math.max(5.5, base);
