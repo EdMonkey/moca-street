@@ -3,14 +3,30 @@
  * ============================================================ */
 const $ = id => document.getElementById(id);
 
-/* ---------------- 사운드 (WebAudio 신스) ---------------- */
+/* ---------------- 사운드 (WebAudio 물리 모델링 신스) ---------------- */
 const AudioFX = (() => {
-  let ctx = null;
+  let ctx = null, master = null, noiseBuf = null;
+
   function ensure() {
-    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.ratio.value = 5;
+      comp.connect(ctx.destination);
+      master = ctx.createGain();
+      master.gain.value = 0.9;
+      master.connect(comp);
+      // 공용 화이트노이즈 버퍼 (2초, 루프 재생용)
+      const len = ctx.sampleRate * 2;
+      noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    }
     if (ctx.state === 'suspended') ctx.resume();
     return ctx;
   }
+
+  /* ----- 빌딩 블록 ----- */
   function tone(f, dur, type = 'sine', vol = 0.15, when = 0, slideTo = null) {
     const a = ensure();
     const o = a.createOscillator(), g = a.createGain();
@@ -19,31 +35,213 @@ const AudioFX = (() => {
     if (slideTo) o.frequency.linearRampToValueAtTime(slideTo, t0 + dur);
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-    o.connect(g); g.connect(a.destination);
+    o.connect(g); g.connect(master);
     o.start(t0); o.stop(t0 + dur + 0.05);
   }
-  function noise(dur = 0.3, vol = 0.06, freq = 800) {
-    const a = ensure();
-    const len = a.sampleRate * dur;
-    const buf = a.createBuffer(1, len, a.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = a.createBufferSource(); src.buffer = buf;
-    const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq;
-    const g = a.createGain(); g.gain.value = vol;
-    src.connect(f); f.connect(g); g.connect(a.destination);
-    src.start();
+  // 루프 노이즈 소스 (랜덤 오프셋에서 시작)
+  function noiseSrc(a) {
+    const s = a.createBufferSource();
+    s.buffer = noiseBuf; s.loop = true;
+    return s;
   }
+  // 짧은 노이즈 버스트 (충돌·튐 소리)
+  function burst(when, freq, dur = 0.03, vol = 0.1, q = 1.5, type = 'bandpass') {
+    const a = ensure();
+    const src = noiseSrc(a);
+    const f = a.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = a.createGain();
+    g.gain.setValueAtTime(vol, when);
+    g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(when, Math.random() * 1.5);
+    src.stop(when + dur + 0.05);
+  }
+  // 지속음 핸들: stop()으로 조기 중단 가능, dur 후 자동 종료
+  function sustainedHandle(stopFn, dur) {
+    const h = { stopped: false, stop() { if (h.stopped) return; h.stopped = true; stopFn(); } };
+    setTimeout(() => h.stop(), dur * 1000);
+    return h;
+  }
+
+  /* ----- 도자기 컵 클링크 (배음 모달 합성) ----- */
+  function cupClink(vol = 0.5) {
+    const a = ensure(), t0 = a.currentTime;
+    [1900, 2750, 3620, 5150].forEach((f, i) => {
+      const o = a.createOscillator();
+      o.frequency.value = f * (0.99 + Math.random() * 0.02);
+      const g = a.createGain();
+      const t = t0 + i * 0.0045;
+      g.gain.setValueAtTime(vol * 0.09 / (i + 1), t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.1 + Math.random() * 0.07);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t + 0.25);
+    });
+    burst(t0, 6200, 0.012, vol * 0.1, 0.7, 'highpass'); // 접촉 트랜지언트
+  }
+
+  /* ----- 그라인더: 모터 험 + 분쇄 크래클 + 스핀다운 ----- */
+  function grind(dur = 1.6) {
+    const a = ensure(), t0 = a.currentTime;
+    const osc = a.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 88;
+    const osc2 = a.createOscillator(); osc2.type = 'sawtooth'; osc2.frequency.value = 179;
+    const lfo = a.createOscillator(); lfo.frequency.value = 9;
+    const lfoG = a.createGain(); lfoG.gain.value = 4;
+    lfo.connect(lfoG); lfoG.connect(osc.frequency);
+    const mLP = a.createBiquadFilter(); mLP.type = 'lowpass'; mLP.frequency.value = 340;
+    const mG = a.createGain();
+    mG.gain.setValueAtTime(0, t0);
+    mG.gain.linearRampToValueAtTime(0.085, t0 + 0.07);
+    osc.connect(mLP); osc2.connect(mLP); mLP.connect(mG); mG.connect(master);
+    // 원두 갈리는 노이즈 (대역 통과 + 크래클 LFO)
+    const n = noiseSrc(a);
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 950; bp.Q.value = 0.9;
+    const nG = a.createGain();
+    nG.gain.setValueAtTime(0, t0);
+    nG.gain.linearRampToValueAtTime(0.11, t0 + 0.1);
+    const crk = a.createOscillator(); crk.type = 'square'; crk.frequency.value = 27;
+    const crkG = a.createGain(); crkG.gain.value = 0.035;
+    crk.connect(crkG); crkG.connect(nG.gain);
+    n.connect(bp); bp.connect(nG); nG.connect(master);
+    // 원두 알갱이 튀는 소리
+    for (let i = 0; i < 9; i++)
+      burst(t0 + 0.1 + Math.random() * Math.max(0.1, dur - 0.4), 1500 + Math.random() * 2600, 0.02, 0.05, 2);
+    [osc, osc2, lfo, crk, n].forEach(x => x.start(t0));
+    return sustainedHandle(() => {
+      const t = a.currentTime;
+      osc.frequency.setTargetAtTime(50, t, 0.1);          // 스핀다운
+      mG.gain.setTargetAtTime(0, t, 0.09);
+      nG.gain.setTargetAtTime(0, t, 0.04);
+      [osc, osc2, lfo, crk, n].forEach(x => x.stop(t + 0.5));
+    }, dur);
+  }
+
+  /* ----- 물 따르는 소리: 노이즈 스윕 + 버블 ----- */
+  function pourWater(dur = 0.9) {
+    const a = ensure(), t0 = a.currentTime;
+    const n = noiseSrc(a);
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.7;
+    bp.frequency.setValueAtTime(620, t0);
+    bp.frequency.linearRampToValueAtTime(1080, t0 + dur);   // 컵이 차며 음높이 상승
+    const g = a.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.14, t0 + 0.08);
+    g.gain.setValueAtTime(0.14, t0 + dur - 0.12);
+    g.gain.linearRampToValueAtTime(0, t0 + dur);
+    n.connect(bp); bp.connect(g); g.connect(master);
+    // 보글거림
+    const n2 = noiseSrc(a);
+    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300;
+    const g2 = a.createGain(); g2.gain.value = 0.05;
+    const wob = a.createOscillator(); wob.frequency.value = 12;
+    const wobG = a.createGain(); wobG.gain.value = 0.03;
+    wob.connect(wobG); wobG.connect(g2.gain);
+    n2.connect(lp); lp.connect(g2); g2.connect(master);
+    burst(t0 + 0.02, 1300, 0.07, 0.07, 1);                   // 첫 물줄기 스플래시
+    [n, n2, wob].forEach(x => x.start(t0));
+    return sustainedHandle(() => {
+      const t = a.currentTime;
+      g.gain.setTargetAtTime(0, t, 0.04);
+      g2.gain.setTargetAtTime(0, t, 0.04);
+      [n, n2, wob].forEach(x => x.stop(t + 0.25));
+    }, dur);
+  }
+
+  /* ----- 스팀: 강한 히스 + 흔들림 ----- */
+  function steam(dur = 2.4) {
+    const a = ensure(), t0 = a.currentTime;
+    const n = noiseSrc(a);
+    const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.12, t0 + 0.06);
+    const flut = a.createOscillator(); flut.frequency.value = 6;
+    const flutG = a.createGain(); flutG.gain.value = 0.025;
+    flut.connect(flutG); flutG.connect(g.gain);
+    n.connect(hp); hp.connect(g); g.connect(master);
+    const n2 = noiseSrc(a);                                   // 고역 쇳소리
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 5200; bp.Q.value = 2.2;
+    const g2 = a.createGain(); g2.gain.value = 0.04;
+    n2.connect(bp); bp.connect(g2); g2.connect(master);
+    [n, n2, flut].forEach(x => x.start(t0));
+    return sustainedHandle(() => {
+      const t = a.currentTime;
+      g.gain.setTargetAtTime(0, t, 0.07);
+      g2.gain.setTargetAtTime(0, t, 0.07);
+      [n, n2, flut].forEach(x => x.stop(t + 0.4));
+    }, dur);
+  }
+
+  /* ----- 에스프레소 추출: 펌프 험 + 드립 ----- */
+  function brewing(dur = 3.4) {
+    const a = ensure(), t0 = a.currentTime;
+    const osc = a.createOscillator(); osc.type = 'sawtooth'; osc.frequency.value = 51;
+    const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 210;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.09, t0 + 0.12);
+    osc.connect(lp); lp.connect(g); g.connect(master);
+    const n = noiseSrc(a);                                    // 추출 히스
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2300; bp.Q.value = 1.4;
+    const g2 = a.createGain(); g2.gain.value = 0.022;
+    n.connect(bp); bp.connect(g2); g2.connect(master);
+    for (let t = 0.7; t < dur - 0.1; t += 0.22 + Math.random() * 0.15)   // 커피 방울
+      burst(t0 + t, 480 + Math.random() * 220, 0.04, 0.035, 2.5);
+    [osc, n].forEach(x => x.start(t0));
+    return sustainedHandle(() => {
+      const t = a.currentTime;
+      osc.frequency.setTargetAtTime(34, t, 0.1);
+      g.gain.setTargetAtTime(0, t, 0.08);
+      g2.gain.setTargetAtTime(0, t, 0.05);
+      [osc, n].forEach(x => x.stop(t + 0.5));
+    }, dur);
+  }
+
+  /* ----- 단발 효과음 ----- */
+  function ice() {
+    const a = ensure(), t0 = a.currentTime;
+    for (let i = 0; i < 4; i++)
+      burst(t0 + i * 0.07 + Math.random() * 0.04, 2500 + Math.random() * 1800, 0.04, 0.09, 3);
+    tone(190, 0.12, 'sine', 0.1, 0.02, 95);                  // 낮은 덜그럭
+  }
+  function syrupPump() {
+    tone(290, 0.16, 'sine', 0.09, 0, 140);
+    burst(ensure().currentTime + 0.02, 420, 0.13, 0.07, 1, 'lowpass');
+  }
+  function whipSpray() {
+    const a = ensure(), t0 = a.currentTime;
+    const n = noiseSrc(a);
+    const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2600;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.1, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.38);
+    const wob = a.createOscillator(); wob.frequency.value = 33;
+    const wobG = a.createGain(); wobG.gain.value = 0.04;
+    wob.connect(wobG); wobG.connect(g.gain);
+    n.connect(hp); hp.connect(g); g.connect(master);
+    n.start(t0); wob.start(t0);
+    n.stop(t0 + 0.45); wob.stop(t0 + 0.45);
+  }
+  function trashThud() {
+    tone(105, 0.22, 'sine', 0.2, 0, 42);
+    burst(ensure().currentTime, 190, 0.1, 0.1, 1, 'lowpass');
+  }
+  function metalClack() {
+    const t0 = ensure().currentTime;
+    burst(t0, 3300, 0.035, 0.12, 3);
+    tone(760, 0.07, 'sine', 0.07);
+    tone(1130, 0.05, 'sine', 0.05, 0.005);
+  }
+
   return {
     ensure,
+    // 신규 사운드
+    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack,
+    // 기존 UI/이벤트 음
     ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
     cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
     err: () => tone(150, 0.3, 'sawtooth', 0.1),
     pick: () => tone(540, 0.08, 'triangle', 0.1),
     put: () => tone(380, 0.08, 'triangle', 0.1),
-    pour: () => noise(0.45, 0.08, 600),
-    steamHiss: () => noise(0.8, 0.07, 2400),
-    brew: () => noise(0.6, 0.05, 350),
     levelup: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'sine', 0.13, i * 0.1)),
     bell: () => { tone(1760, 0.4, 'sine', 0.1); tone(2217, 0.5, 'sine', 0.06, 0.02); },
   };
@@ -230,7 +428,7 @@ const Game = (() => {
     env.interactables.push(hb);
     placedItems.push(rec);
     setHeld(null);
-    AudioFX.put();
+    if (item.type === 'drink') AudioFX.cupClink(0.4); else AudioFX.put();
   }
 
   function removePlaced(rec) {
@@ -393,7 +591,7 @@ const Game = (() => {
       const rec = it.rec;
       removePlaced(rec);
       setHeld(rec.item);
-      AudioFX.pick();
+      if (rec.item.type === 'drink') AudioFX.cupClink(0.4); else AudioFX.pick();
       return;
     }
 
@@ -403,7 +601,7 @@ const Game = (() => {
       if (S.stocks.cups <= 0) { toast('컵이 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
       S.stocks.cups--;
       setHeld({ type: 'drink', drink: { cup: id === 'cupHot' ? 'hot' : id === 'cupIce' ? 'ice' : 'espresso' } });
-      AudioFX.pick();
+      AudioFX.cupClink(0.55);
       updateHUD();
       return;
     }
@@ -415,7 +613,7 @@ const Game = (() => {
       if (held.drink.ice) { toast('이미 얼음이 들어있어요'); return; }
       held.drink.ice = 1;
       setHeld(held);
-      AudioFX.put();
+      AudioFX.ice();
       return;
     }
 
@@ -426,17 +624,19 @@ const Game = (() => {
         return;
       }
       if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+      const grindDur = 1.6;
       startChannel({
-        dur: 1.6,
+        dur: grindDur,
         key: 'grinder',
         label: '원두 분쇄 중…',
         onDone: () => {
           S.stocks.beans--;
           setHeld({ type: 'portafilter' });
+          AudioFX.metalClack();
           updateHUD();
         }
       });
-      AudioFX.brew();
+      channel.sound = AudioFX.grind(grindDur);
       return;
     }
 
@@ -456,7 +656,7 @@ const Game = (() => {
         const drink = slot.drink;
         slot.cupMesh = null; slot.drink = null;
         setHeld({ type: 'drink', drink });
-        AudioFX.pick();
+        AudioFX.cupClink(0.5);
         return;
       }
       // 포터필터 장착
@@ -465,7 +665,7 @@ const Game = (() => {
         slot.loaded = true;
         slot.pf.visible = true;
         setHeld(null);
-        AudioFX.put();
+        AudioFX.metalClack();
         return;
       }
       // 컵 올려 추출 시작
@@ -482,7 +682,8 @@ const Game = (() => {
         slot.st.root.add(cm);
         slot.cupMesh = cm;
         slot.stream.visible = true;
-        AudioFX.brew();
+        AudioFX.cupClink(0.35);
+        slot.sound = AudioFX.brewing(slot.dur);
         return;
       }
       toast(slot.loaded ? '컵을 들고 와 추출을 시작하세요' : '그라인더에서 원두를 분쇄해 포터필터를 장착하세요');
@@ -495,8 +696,9 @@ const Game = (() => {
       if (held.drink.foam) { toast('이미 거품까지 올렸어요'); return; }
       if (S.stocks.milk <= 0) { toast('우유가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
       const makingFoam = !!held.drink.milk;
+      const steamDur = S.upgrades.fastSteam ? 1.2 : 2.4;
       startChannel({
-        dur: (S.upgrades.fastSteam ? 1.2 : 2.4),
+        dur: steamDur,
         key: 'steamer',
         label: makingFoam ? '우유 거품 올리는 중…' : '우유 스팀 중…',
         onDone: () => {
@@ -506,7 +708,7 @@ const Game = (() => {
           updateHUD();
         }
       });
-      AudioFX.steamHiss();
+      channel.sound = AudioFX.steam(steamDur);
       return;
     }
 
@@ -516,7 +718,7 @@ const Game = (() => {
       if (held.drink.water) { toast('이미 물이 들어있어요'); return; }
       held.drink.water = id === 'waterHot' ? 'hot' : 'cold';
       setHeld(held);
-      AudioFX.pour();
+      AudioFX.pourWater(0.9);
       return;
     }
 
@@ -526,7 +728,7 @@ const Game = (() => {
       if (held.drink.syrup) { toast('이미 시럽이 들어있어요'); return; }
       held.drink.syrup = it.kind;
       setHeld(held);
-      AudioFX.put();
+      AudioFX.syrupPump();
       return;
     }
 
@@ -536,7 +738,7 @@ const Game = (() => {
       if (held.drink.whip) { toast('이미 휘핑크림을 올렸어요'); return; }
       held.drink.whip = 1;
       setHeld(held);
-      AudioFX.put();
+      AudioFX.whipSpray();
       return;
     }
 
@@ -556,7 +758,7 @@ const Game = (() => {
       if (!held) { toast('버릴 것이 없어요'); return; }
       setHeld(null);
       toast('버렸습니다');
-      AudioFX.put();
+      AudioFX.trashThud();
       return;
     }
 
@@ -647,6 +849,7 @@ const Game = (() => {
   function updateChannel(dt, aimData) {
     if (!channel) return;
     if (!aimData || aimData.id !== channel.key) {   // 시선을 떼면 취소
+      if (channel.sound) channel.sound.stop();
       channel = null;
       $('progressWrap').classList.add('hidden');
       toast('중단되었어요 — 기계를 계속 바라보세요');
@@ -670,6 +873,7 @@ const Game = (() => {
       slot.t += dt;
       if (slot.t >= slot.dur) {
         slot.done = true;
+        if (slot.sound) { slot.sound.stop(); slot.sound = null; }
         slot.stream.visible = false;
         slot.drink.espresso = 1;
         // 컵 메시를 채워진 버전으로 교체
@@ -814,6 +1018,7 @@ const Game = (() => {
     // 남아있는 에스프레소 슬롯 정리
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
+      if (s.sound) { s.sound.stop(); s.sound = null; }
       s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.stream.visible = false;
       s.loaded = false; s.pf.visible = false;
     });
