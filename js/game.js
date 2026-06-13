@@ -448,7 +448,7 @@ const Game = (() => {
         if (!slot.done) { toast('추출 중입니다…'); return; }
         // 완료된 샷 꺼내기 (사용한 원두 퍽은 자동 제거)
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
-        scene.remove(slot.cupMesh);
+        slot.st.root.remove(slot.cupMesh);
         slot.busy = slot.done = false;
         slot.stream.visible = false;
         slot.loaded = false;
@@ -478,8 +478,8 @@ const Game = (() => {
         slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
         slot.drink = drink;
         const cm = WORLD.makeDrinkMesh(drink);
-        cm.position.copy(slot.worldPos);
-        scene.add(cm);
+        cm.position.copy(slot.localPos);
+        slot.st.root.add(cm);
         slot.cupMesh = cm;
         slot.stream.visible = true;
         AudioFX.brew();
@@ -673,10 +673,10 @@ const Game = (() => {
         slot.stream.visible = false;
         slot.drink.espresso = 1;
         // 컵 메시를 채워진 버전으로 교체
-        scene.remove(slot.cupMesh);
+        slot.st.root.remove(slot.cupMesh);
         const cm = WORLD.makeDrinkMesh(slot.drink);
-        cm.position.copy(slot.worldPos);
-        scene.add(cm);
+        cm.position.copy(slot.localPos);
+        slot.st.root.add(cm);
         slot.cupMesh = cm;
         AudioFX.bell();
       } else {
@@ -813,7 +813,7 @@ const Game = (() => {
     env.placeIndicator.visible = false;
     // 남아있는 에스프레소 슬롯 정리
     env.machines.espressoSlots.forEach(s => {
-      if (s.cupMesh) scene.remove(s.cupMesh);
+      if (s.cupMesh) s.st.root.remove(s.cupMesh);
       s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.stream.visible = false;
       s.loaded = false; s.pf.visible = false;
     });
@@ -973,6 +973,7 @@ const Game = (() => {
     }
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing') return;
+      if (window.Editor && Editor.active) return;   // 편집 모드 중엔 에디터가 입력 처리
       if (ev.code === 'KeyE') onUse();
       if (ev.code === 'KeyQ' && held) { setHeld(null); toast('버렸습니다'); }
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
@@ -983,7 +984,8 @@ const Game = (() => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
     document.addEventListener('mousedown', ev => {
-      if (mode === 'playing' && document.pointerLockElement && ev.button === 0)
+      if (mode === 'playing' && document.pointerLockElement && ev.button === 0
+        && !(window.Editor && Editor.active))
         onUse();
     });
   }
@@ -1009,6 +1011,18 @@ const Game = (() => {
     init, update, newGame, continueGame, nextDay, hasSave, onAngryLeave,
     get mode() { return mode; },
     set mode(v) { mode = v; },
+    get inTutorial() { return !!tut; },
+    notifyEditMode(on) {
+      if (on) {
+        // 진행 중인 채널링 취소 + 내려놓기 표시 숨김
+        if (channel) {
+          channel = null;
+          $('progressWrap').classList.add('hidden');
+        }
+        env.placeIndicator.visible = false;
+        $('prompt').classList.add('hidden');
+      }
+    },
     isBrewing: () => env.machines.espressoSlots.some(s => s.busy && !s.done),
     _debug: { closeNow() { timeSec = DAY_LEN + 1; open = false; Customers.clear(); orders = []; $('tickets').innerHTML = ''; } },
   };

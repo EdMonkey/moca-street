@@ -103,6 +103,12 @@
   @keyframes tutPulse{0%,100%{border-color:rgba(232,184,109,.6)}50%{border-color:rgba(232,184,109,.25)}}
   #tutorial{animation:tutPulse 2s infinite}
 
+  /* 편집 모드 배너 */
+  #editBanner{position:absolute;top:80px;left:50%;transform:translateX(-50%);
+    padding:12px 26px;font-size:14px;border-color:rgba(77,166,255,.55);
+    box-shadow:0 0 24px rgba(77,166,255,.25)}
+  #editBanner b{color:#8fd0ff}
+
   /* 레시피 버튼 */
   #recipeBtn{position:absolute;right:16px;bottom:152px;padding:10px 18px;font-size:13px;
     font-weight:700;pointer-events:auto;cursor:pointer;transition:transform .12s,filter .12s}
@@ -186,6 +192,7 @@
   <div id="tickets"></div>
   <div id="stocks" class="panel"></div>
   <div id="recipeBtn" class="panel">📖 레시피북 <b>[R]</b></div>
+  <div id="editBanner" class="panel hidden">🔧 <b>편집 모드</b> — 기구를 바라보고 <b>[E]</b> 들기 · <b>[R]</b> 회전 · <b>[Q]</b> 원위치 · <b>[B]</b> 종료</div>
   <div id="tutorial" class="panel hidden">
     <div id="tutStep">튜토리얼 1/6</div>
     <div id="tutText"></div>
@@ -196,7 +203,7 @@
   <div id="progressWrap" class="hidden"><div id="progressBar"></div></div>
   <div id="held" class="panel hidden"></div>
   <div id="toasts"></div>
-  <div id="hint">[WASD] 이동 · [E] 상호작용 / 내려놓기(파란 표시) · [Q] 버리기 · [R] 레시피북 · [Esc] 일시정지</div>
+  <div id="hint">[WASD] 이동 · [E] 상호작용 / 내려놓기 · [Q] 버리기 · [R] 레시피북 · [B] 기구 편집 · [Esc] 일시정지</div>
 </div>
 
 <!-- 시작 화면 -->
@@ -245,6 +252,7 @@
 <div id="pauseScreen" class="hidden">
   <h2>일시정지</h2>
   <button class="btn" id="btnResume">계속하기</button>
+  <button class="btn ghost" id="btnResetLayout">기구 기본 배치로 리셋</button>
   <button class="btn ghost" id="btnQuitToMenu">메인 메뉴로</button>
 </div>
 
@@ -254,6 +262,7 @@
 <script src="js/customers.js"></script>
 <script src="js/player.js"></script>
 <script src="js/game.js"></script>
+<script src="js/editor.js"></script>
 <script src="js/main.js"></script>
 </body>
 </html>

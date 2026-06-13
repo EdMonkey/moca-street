@@ -53,6 +53,7 @@
   Customers.init(scene, env, {
     onAngryLeave: c => { if (Game.mode === 'playing') Game.onAngryLeave(c); },
   });
+  Editor.init(scene, env, camera);
 
   /* ---------- 증기 파티클 ---------- */
   const steam = (() => {
@@ -91,10 +92,11 @@
       emitT -= dt;
       if (emitT <= 0) {
         emitT = 0.22;
-        env.steamEmitters.forEach(p => Math.random() < 0.5 && emit(p, false));
+        env.steamEmitters.forEach(e => Math.random() < 0.5 && emit(e.st.root.localToWorld(e.local.clone()), false));
         if (Game.isBrewing())
           env.machines.espressoSlots.forEach(sl => {
-            if (sl.busy && !sl.done) emit(new THREE.Vector3(sl.worldPos.x, sl.worldPos.y + 0.25, sl.worldPos.z), true);
+            if (sl.busy && !sl.done)
+              emit(sl.st.root.localToWorld(sl.localPos.clone()).add(new THREE.Vector3(0, 0.25, 0)), true);
           });
       }
       pool.forEach(s => {
@@ -171,7 +173,8 @@
     const dt = Math.min(0.05, clock.getDelta());
     if (!paused) {
       Player.update(dt);
-      Game.update(dt);
+      if (Editor.active) Editor.update(dt);   // 편집 중엔 게임 시간·손님 정지
+      else Game.update(dt);
       steam.update(dt);
     }
     renderer.render(scene, camera);

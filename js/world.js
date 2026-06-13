@@ -31,6 +31,7 @@ const WORLD = (() => {
     );
     m.position.set(x, y, z);
     m.userData.interact = data;
+    m.userData.isHitbox = true;
     m.castShadow = m.receiveShadow = false;
     return m;
   }
@@ -168,6 +169,8 @@ const WORLD = (() => {
     const env = {
       interactables: [], colliders: [],
       surfaces: [],            // 아이템을 내려놓을 수 있는 표면(카운터·테이블·선반)
+      stations: [],            // 편집 모드로 이동 가능한 기구들
+      staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
       machines: {}, steamEmitters: [],
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
@@ -178,7 +181,31 @@ const WORLD = (() => {
       entryWaypoint: [4.6, 4.5],
     };
     const addI = m => { env.interactables.push(m); scene.add(m); return m; };
-    const addCol = (x0, x1, z0, z1) => env.colliders.push({ x0, x1, z0, z1 });
+    const addCol = (x0, x1, z0, z1) => {
+      const c = { x0, x1, z0, z1 };
+      env.colliders.push(c);
+      return c;
+    };
+
+    /* 편집 가능한 기구(스테이션): 모델·라벨·히트박스를 한 그룹에 묶음 */
+    function station(id, name, x, z, w, d, opt = {}) {
+      const root = new THREE.Group();
+      root.position.set(x, opt.floor ? 0 : 0.97, z);
+      scene.add(root);
+      const st = {
+        id, name, root, w, d, floor: !!opt.floor, rotY: 0,
+        home: { x, z, y: root.position.y, rotY: 0 }, colliderRef: null,
+      };
+      env.stations.push(st);
+      return st;
+    }
+    function childHitbox(st, w, h, d, lx, ly, lz, data) {
+      const m = hitbox(w, h, d, lx, ly, lz, data);
+      m.userData.station = st;
+      st.root.add(m);
+      env.interactables.push(m);
+      return m;
+    }
 
     /* ---------- 바닥 / 천장 / 벽 ---------- */
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(18, 13), M().floor);
@@ -186,6 +213,7 @@ const WORLD = (() => {
     floor.position.set(0, 0, 1.5);
     floor.receiveShadow = true;
     scene.add(floor);
+    env.floorMesh = floor;
 
     const ceil = box(18, 0.2, 13, M().cream, 0, ROOM.h, 1.5, { cast: false });
     scene.add(ceil);
@@ -264,6 +292,7 @@ const WORLD = (() => {
       // 몸체(나무) + 대리석 상판, x -7 ~ 4
       scene.add(box(11, 0.95, 0.8, M().counterWoodMid, -1.5, 0.475, -1.0));
       const fcTop = box(11.3, 0.07, 1.0, M().counterTop, -1.5, topY, -1.0, { cast: false });
+      fcTop.userData.counterTop = true;
       scene.add(fcTop); env.surfaces.push(fcTop);
       // 손님쪽 장식 패널
       for (let px = -6.6; px <= 3.6; px += 0.8)
@@ -273,6 +302,7 @@ const WORLD = (() => {
       // 백 카운터 (z=-4.2), x -7 ~ 4
       scene.add(box(11, 0.9, 0.8, M().counterWoodDark, -1.5, 0.45, -4.2));
       const bcTop = box(11.2, 0.06, 0.95, M().counterTopDark, -1.5, 0.94, -4.2, { cast: false });
+      bcTop.userData.counterTop = true;
       scene.add(bcTop); env.surfaces.push(bcTop);
       addCol(-7.2, 4.2, -4.75, -3.65);
 
@@ -299,6 +329,7 @@ const WORLD = (() => {
       const cord2 = cyl(0.01, 0.01, 0.6, M().blackMatte, 2.7, 2.36, -0.9, 6, { cast: false });
       scene.add(cord1, cord2);
       addI(hitbox(0.9, 0.9, 0.8, 2.5, 1.3, -1.0, { id: 'register' }));
+      env.staticBlockers.push({ x: 2.5, z: -1.0, w: 1.0, d: 0.9 });
     })();
 
     /* ---------- 픽업대 ---------- */
@@ -312,6 +343,7 @@ const WORLD = (() => {
       scene.add(cyl(0.01, 0.01, 0.6, M().blackMatte, -0.1, 2.36, -0.9, 6, { cast: false }));
       addI(hitbox(1.6, 0.8, 0.7, -0.6, 1.35, -1.0, { id: 'pickup' }));
       env.machines.pickupTrayY = 1.07;
+      env.staticBlockers.push({ x: -0.6, z: -1.0, w: 1.8, d: 0.7 });
     })();
 
     /* ---------- 디저트 쇼케이스 ---------- */
@@ -345,6 +377,7 @@ const WORLD = (() => {
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.2), textLabel('DESSERT', 256, 64, '700 38px Georgia', '#e8b86d'));
       sign.position.set(cx, 1.85, -0.85);
       scene.add(sign);
+      env.staticBlockers.push({ x: cx, z: -1.0, w: 1.9, d: 0.85 });
     })();
 
     /* ============================================================
@@ -358,40 +391,41 @@ const WORLD = (() => {
       ['cupIce', -5.9, '아이스컵', M().cupClear, { tubeR: 0.075, tubeH: 0.55, cupR: 0.06, cupH: 0.09, gap: 0.085, hb: 0.4 }],
       ['cupEsp', -5.42, '에스프레소 잔', M().cupWhite, { tubeR: 0.052, tubeH: 0.36, cupR: 0.04, cupH: 0.05, gap: 0.052, hb: 0.34 }],
     ].forEach(([id, x, name, mat, o]) => {
-      const tube = cyl(o.tubeR, o.tubeR, o.tubeH, new THREE.MeshStandardMaterial({
+      const st = station(id, name + ' 디스펜서', x, -4.25, o.tubeR * 2 + 0.12, 0.35);
+      const r = st.root;
+      r.add(cyl(o.tubeR, o.tubeR, o.tubeH, new THREE.MeshStandardMaterial({
         color: 0xc9cdd2, roughness: 0.25, metalness: 0.9, transparent: true, opacity: 0.5
-      }), x, TY + o.tubeH / 2 + 0.03, -4.25, 16, { open: true });
-      scene.add(tube);
+      }), 0, o.tubeH / 2 + 0.03, 0, 16, { open: true }));
       for (let i = 0; i < 5; i++)
-        scene.add(cyl(o.cupR, o.cupR * 0.82, o.cupH, mat, x, TY + 0.06 + o.cupH / 2 + i * o.gap, -4.25, 14, { cast: false }));
-      scene.add(cyl(o.tubeR + 0.015, o.tubeR + 0.015, 0.03, M().steelDark, x, TY + 0.015, -4.25, 16));
+        r.add(cyl(o.cupR, o.cupR * 0.82, o.cupH, mat, 0, 0.06 + o.cupH / 2 + i * o.gap, 0, 14, { cast: false }));
+      r.add(cyl(o.tubeR + 0.015, o.tubeR + 0.015, 0.03, M().steelDark, 0, 0.015, 0, 16));
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(id === 'cupEsp' ? 0.5 : 0.42, 0.13),
         textLabel(name, id === 'cupEsp' ? 256 : 192, 60, '700 30px "Malgun Gothic"'));
-      lbl.position.set(x, TY + 0.68, -4.25);
-      scene.add(lbl);
-      addI(hitbox(o.hb, 0.8, 0.5, x, TY + 0.35, -4.2, { id }));
+      lbl.position.set(0, 0.68, 0);
+      r.add(lbl);
+      childHitbox(st, o.hb, 0.8, 0.5, 0, 0.35, 0.05, { id });
     });
 
     /* ---------- 제빙기 ---------- */
     (function iceMachine() {
-      const x = -4.9;
-      scene.add(box(0.62, 0.5, 0.55, M().steel, x, TY + 0.25, -4.3));
-      scene.add(box(0.56, 0.1, 0.46, M().steelDark, x, TY + 0.52, -4.3));
+      const st = station('ice', '제빙기', -4.9, -4.3, 0.7, 0.65);
+      const r = st.root;
+      r.add(box(0.62, 0.5, 0.55, M().steel, 0, 0.25, 0));
+      r.add(box(0.56, 0.1, 0.46, M().steelDark, 0, 0.52, 0));
       // 얼음 보이는 개구부
-      scene.add(box(0.46, 0.18, 0.06, M().blackMatte, x, TY + 0.18, -4.02, { cast: false }));
+      r.add(box(0.46, 0.18, 0.06, M().blackMatte, 0, 0.18, 0.28, { cast: false }));
       for (let i = 0; i < 6; i++)
-        scene.add(box(0.05, 0.05, 0.05, M().ice, x - 0.15 + (i % 3) * 0.15, TY + 0.16 + Math.floor(i / 3) * 0.05, -4.03 + (i % 2) * 0.02, { cast: false }));
+        r.add(box(0.05, 0.05, 0.05, M().ice, -0.15 + (i % 3) * 0.15, 0.16 + Math.floor(i / 3) * 0.05, 0.27 + (i % 2) * 0.02, { cast: false }));
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.13), textLabel('얼음', 192, 60, '700 32px "Malgun Gothic"'));
-      lbl.position.set(x, TY + 0.68, -4.0);
-      scene.add(lbl);
-      addI(hitbox(0.65, 0.7, 0.6, x, TY + 0.3, -4.2, { id: 'ice' }));
+      lbl.position.set(0, 0.68, 0.3);
+      r.add(lbl);
+      childHitbox(st, 0.65, 0.7, 0.6, 0, 0.3, 0.1, { id: 'ice' });
     })();
 
     /* ---------- 에스프레소 머신 (메인) ---------- */
     (function espresso() {
-      const x = -3.1, z = -4.25;
-      const g = new THREE.Group();
-      g.position.set(x, TY, z);
+      const st = station('espresso', '에스프레소 머신', -3.1, -4.25, 1.45, 0.8);
+      const g = st.root;
       const body = box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0);
       const topTray = box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0);
       const front = box(1.1, 0.26, 0.04, M().blackMatte, 0, 0.4, 0.3);
@@ -425,7 +459,7 @@ const WORLD = (() => {
         stream.visible = false;
         g.add(stream);
         env.machines.espressoSlots.push({
-          worldPos: new THREE.Vector3(x + ox, TY + 0.03, z + 0.3),
+          st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
           stream, pf, loaded: false, busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
@@ -459,21 +493,19 @@ const WORLD = (() => {
       const pipe = cyl(0.018, 0.018, 0.3, M().steel, 0.68, 0.3, 0.1, 8);
       pipe.rotation.z = 0.5;
       g.add(pipe);
-      scene.add(g);
       env.machines.espressoGroup = g;
-      env.steamEmitters.push(new THREE.Vector3(x, TY + 0.66, z));
+      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
-      lbl.position.set(x, TY + 0.85, z + 0.25);
-      scene.add(lbl);
-      addI(hitbox(0.62, 0.75, 0.75, x - 0.3, TY + 0.3, z + 0.1, { id: 'espresso', slot: 0 }));
-      addI(hitbox(0.62, 0.75, 0.75, x + 0.3, TY + 0.3, z + 0.1, { id: 'espresso', slot: 1 }));
+      lbl.position.set(0, 0.85, 0.25);
+      g.add(lbl);
+      childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: 0 });
+      childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: 1 });
     })();
 
     /* ---------- 밀크 스티머 ---------- */
     (function steamer() {
-      const x = -1.7, z = -4.3;
-      const g = new THREE.Group();
-      g.position.set(x, TY, z);
+      const st = station('steamer', '밀크 스티머', -1.7, -4.3, 0.62, 0.55);
+      const g = st.root;
       const body = box(0.3, 0.42, 0.3, M().steel, 0, 0.21, 0);
       const wand = cyl(0.012, 0.012, 0.26, M().steel, 0.16, 0.3, 0.12, 8);
       wand.rotation.z = 0.5; wand.rotation.x = 0.3;
@@ -482,72 +514,73 @@ const WORLD = (() => {
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 10), M().blackMatte);
       knob.position.set(-0.12, 0.38, 0.16);
       g.add(body, wand, pitcher, knob);
-      scene.add(g);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.14), textLabel('밀크 스티머', 256, 60, '700 30px "Malgun Gothic"'));
-      lbl.position.set(x, TY + 0.62, z + 0.2);
-      scene.add(lbl);
-      env.steamEmitters.push(new THREE.Vector3(x + 0.2, TY + 0.2, z + 0.15));
-      addI(hitbox(0.6, 0.7, 0.6, x, TY + 0.3, z + 0.05, { id: 'steamer' }));
+      lbl.position.set(0, 0.62, 0.2);
+      g.add(lbl);
+      env.steamEmitters.push({ st, local: new THREE.Vector3(0.2, 0.2, 0.15) });
+      childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamer' });
     })();
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
     (function water() {
-      const z = -4.3;
       [['waterHot', -0.55, '온수', 0xd9534f], ['waterCold', 0.15, '냉수', 0x5a9adf]].forEach(([id, x, name, dot]) => {
-        const tower = box(0.22, 0.5, 0.24, M().steel, x, TY + 0.25, z);
-        const spout = cyl(0.014, 0.014, 0.14, M().steelDark, x, TY + 0.32, z + 0.16, 8);
+        const st = station(id, name + ' 디스펜서', x, -4.3, 0.32, 0.35);
+        const r = st.root;
+        r.add(box(0.22, 0.5, 0.24, M().steel, 0, 0.25, 0));
+        const spout = cyl(0.014, 0.014, 0.14, M().steelDark, 0, 0.32, 0.16, 8);
         spout.rotation.x = 0.9;
+        r.add(spout);
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8),
           new THREE.MeshStandardMaterial({ color: dot, emissive: dot, emissiveIntensity: 1.2 }));
-        led.position.set(x, TY + 0.42, z + 0.13);
-        scene.add(tower, spout, led);
+        led.position.set(0, 0.42, 0.13);
+        r.add(led);
         const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.12), textLabel(name, 128, 56, '700 30px "Malgun Gothic"'));
-        lbl.position.set(x, TY + 0.6, z + 0.15);
-        scene.add(lbl);
-        addI(hitbox(0.32, 0.7, 0.55, x, TY + 0.3, z + 0.1, { id }));
+        lbl.position.set(0, 0.6, 0.15);
+        r.add(lbl);
+        childHitbox(st, 0.32, 0.7, 0.55, 0, 0.3, 0.1, { id });
       });
     })();
 
-    /* ---------- 시럽 스테이션 ---------- */
+    /* ---------- 시럽 스테이션 (3병 한 묶음) ---------- */
     (function syrup() {
-      const z = -4.3;
+      const st = station('syrup', '시럽 스테이션', 1.47, -4.3, 1.3, 0.45);
+      const r = st.root;
       const names = { vanilla: ['바닐라', 0xe8d8a8], caramel: ['카라멜', 0xc08a3e], choco: ['초코', 0x5a3520] };
       Object.keys(names).forEach((k, i) => {
-        const x = 1.05 + i * 0.42;
+        const lx = -0.42 + i * 0.42;
         const [nm, col] = names[k];
-        const bottle = cyl(0.055, 0.065, 0.3, new THREE.MeshPhysicalMaterial({
+        r.add(cyl(0.055, 0.065, 0.3, new THREE.MeshPhysicalMaterial({
           color: col, transparent: true, opacity: 0.85, roughness: 0.2
-        }), x, TY + 0.15, z, 14);
-        const neck = cyl(0.02, 0.03, 0.08, M().steelDark, x, TY + 0.34, z, 10);
-        const pump = box(0.025, 0.025, 0.1, M().steelDark, x, TY + 0.4, z + 0.04);
-        scene.add(bottle, neck, pump);
+        }), lx, 0.15, 0, 14));
+        r.add(cyl(0.02, 0.03, 0.08, M().steelDark, lx, 0.34, 0, 10));
+        r.add(box(0.025, 0.025, 0.1, M().steelDark, lx, 0.4, 0.04));
         const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.11), textLabel(nm, 128, 52, '700 28px "Malgun Gothic"'));
-        lbl.position.set(x, TY + 0.52, z + 0.12);
-        scene.add(lbl);
-        addI(hitbox(0.4, 0.65, 0.55, x, TY + 0.28, z + 0.05, { id: 'syrup', kind: k }));
+        lbl.position.set(lx, 0.52, 0.12);
+        r.add(lbl);
+        childHitbox(st, 0.4, 0.65, 0.55, lx, 0.28, 0.05, { id: 'syrup', kind: k });
       });
     })();
 
     /* ---------- 휘핑크림 ---------- */
     (function whip() {
-      const x = 2.6, z = -4.3;
-      const can = cyl(0.05, 0.05, 0.24, new THREE.MeshStandardMaterial({ color: 0xd9534f, roughness: 0.3, metalness: 0.5 }), x, TY + 0.12, z, 14);
-      const nozzle = cyl(0.012, 0.025, 0.07, M().cream, x, TY + 0.27, z, 10);
-      scene.add(can, nozzle);
+      const st = station('whip', '휘핑크림', 2.6, -4.3, 0.3, 0.35);
+      const r = st.root;
+      r.add(cyl(0.05, 0.05, 0.24, new THREE.MeshStandardMaterial({ color: 0xd9534f, roughness: 0.3, metalness: 0.5 }), 0, 0.12, 0, 14));
+      r.add(cyl(0.012, 0.025, 0.07, M().cream, 0, 0.27, 0, 10));
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.11), textLabel('휘핑크림', 160, 52, '700 26px "Malgun Gothic"'));
-      lbl.position.set(x, TY + 0.42, z + 0.12);
-      scene.add(lbl);
-      addI(hitbox(0.4, 0.55, 0.55, x, TY + 0.22, z + 0.05, { id: 'whip' }));
+      lbl.position.set(0, 0.42, 0.12);
+      r.add(lbl);
+      childHitbox(st, 0.4, 0.55, 0.55, 0, 0.22, 0.05, { id: 'whip' });
     })();
 
-    /* ---------- 쓰레기통 ---------- */
+    /* ---------- 쓰레기통 (바닥 기구) ---------- */
     (function trash() {
-      const x = 3.6, z = -4.1;
-      const bin = cyl(0.22, 0.18, 0.62, M().steelDark, x, 0.31, z, 16);
-      const lid = cyl(0.23, 0.23, 0.04, M().blackMatte, x, 0.64, z, 16);
-      scene.add(bin, lid);
-      addI(hitbox(0.5, 0.9, 0.5, x, 0.45, z, { id: 'trash' }));
-      addCol(x - 0.3, x + 0.3, z - 0.3, z + 0.3);
+      const st = station('trash', '쓰레기통', 3.6, -4.1, 0.55, 0.55, { floor: true });
+      const r = st.root;
+      r.add(cyl(0.22, 0.18, 0.62, M().steelDark, 0, 0.31, 0, 16));
+      r.add(cyl(0.23, 0.23, 0.04, M().blackMatte, 0, 0.64, 0, 16));
+      childHitbox(st, 0.5, 0.9, 0.5, 0, 0.45, 0, { id: 'trash' });
+      st.colliderRef = addCol(3.6 - 0.3, 3.6 + 0.3, -4.1 - 0.3, -4.1 + 0.3);
     })();
 
     /* ---------- 창고 선반 (재고 보충) ---------- */
@@ -580,9 +613,8 @@ const WORLD = (() => {
 
     /* ---------- 원두 그라인더 (분쇄 → 포터필터) ---------- */
     (function grinder() {
-      const x = -6.95, z = -4.3;
-      const g = new THREE.Group();
-      g.position.set(x, TY, z);
+      const st = station('grinder', '그라인더', -6.95, -4.3, 0.45, 0.5);
+      const g = st.root;
       g.add(cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16));      // 받침
       g.add(box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0));            // 본체
       g.add(box(0.16, 0.05, 0.18, M().steelDark, 0, 0.415, 0));           // 상단
@@ -594,11 +626,10 @@ const WORLD = (() => {
       g.add(cyl(0.11, 0.11, 0.02, M().blackMatte, 0, 0.625, 0, 14));      // 뚜껑
       g.add(box(0.05, 0.06, 0.08, M().steelDark, 0, 0.3, 0.13));          // 배출구
       g.add(box(0.12, 0.02, 0.1, M().steel, 0, 0.12, 0.13));              // 포터필터 받침
-      scene.add(g);
       const glbl = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.13), textLabel('그라인더', 192, 56, '700 30px "Malgun Gothic"'));
-      glbl.position.set(x, TY + 0.78, z + 0.18);
-      scene.add(glbl);
-      addI(hitbox(0.42, 0.85, 0.6, x, TY + 0.35, z + 0.05, { id: 'grinder' }));
+      glbl.position.set(0, 0.78, 0.18);
+      g.add(glbl);
+      childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder' });
     })();
 
     /* ---------- 장식 ---------- */
