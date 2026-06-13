@@ -131,9 +131,20 @@
 
   $('btnNew').onclick = () => enterGame(() => Game.newGame());
   $('btnContinue').onclick = () => enterGame(() => Game.continueGame());
-  $('btnNextDay').onclick = () => {
+  $('btnNextDay').onclick = () => {       // 정산 → 다음 날 준비
     AudioFX.ensure();
     Game.nextDay();
+    paused = false;
+    lockPointer();
+  };
+  $('btnStartService').onclick = () => {  // 준비 패널 → 영업 시작
+    AudioFX.ensure();
+    Game.beginOpen();
+    paused = false;
+    lockPointer();
+  };
+  $('btnClosePrep').onclick = () => {     // 준비 패널 닫고 계속 준비
+    Game.closePrepPanel();
     paused = false;
     lockPointer();
   };
@@ -141,16 +152,19 @@
   $('btnQuitToMenu').onclick = () => location.reload();
 
   canvas.addEventListener('click', () => {
-    if (Game.mode === 'playing' && !document.pointerLockElement) lockPointer();
+    if ((Game.mode === 'playing' || Game.mode === 'prep') && !document.pointerLockElement
+      && !Game.prepPanelOpen) lockPointer();
   });
 
   document.addEventListener('pointerlockchange', () => {
     const locked = !!document.pointerLockElement;
-    if (Game.mode !== 'playing') return;
+    if (Game.mode !== 'playing' && Game.mode !== 'prep') return;
     if (locked) {
       paused = false;
       Player.enabled = true;
       $('pauseScreen').classList.add('hidden');
+    } else if (Game.mode === 'prep' && Game.prepPanelOpen) {
+      Player.enabled = false;   // 관리 패널이 마우스를 잡음 — 일시정지 아님
     } else {
       paused = true;
       Player.enabled = false;

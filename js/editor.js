@@ -58,8 +58,7 @@ const Editor = (() => {
 
   /* ---------- 토글 ---------- */
   function toggle() {
-    if (Game.mode !== 'playing') return;
-    if (Game.inTutorial) return;          // 튜토리얼 중엔 비활성
+    if (Game.mode !== 'prep') return;     // 기구 배치는 영업 준비 단계에서만
     active = !active;
     Game.notifyEditMode(active);
     document.getElementById('editBanner').classList.toggle('hidden', !active);

@@ -175,7 +175,7 @@
   .stat{padding:14px 8px;border-radius:10px;background:rgba(255,255,255,.05)}
   .stat .sv{font-size:24px;font-weight:800;color:var(--accent2)}
   .stat .sl{font-size:12px;opacity:.7;margin-top:2px}
-  #upgrades h3{font-size:17px;color:var(--accent2);margin:8px 0 12px;letter-spacing:1px}
+  .ppSec{font-size:17px;color:var(--accent2);margin:8px 0 12px;letter-spacing:1px;text-align:center}
   #upgradeList{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
   .upg{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;
     border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(232,184,109,.15);text-align:left}
@@ -185,6 +185,18 @@
   .upg.owned{opacity:.5}
   .upg.owned button{display:none}
   .upg .ownedTag{color:var(--green);font-weight:700;font-size:13px;flex-shrink:0}
+
+  /* ---------- 영업 준비 ---------- */
+  #prepBar{position:absolute;top:120px;left:50%;transform:translateX(-50%);
+    max-width:min(640px,72vw);padding:11px 24px;font-size:13.5px;line-height:1.5;text-align:center;
+    border-color:rgba(127,176,105,.55);box-shadow:0 0 24px rgba(127,176,105,.22)}
+  #prepBar b{color:#9fdc8a}
+  #prepPanel{position:fixed;inset:0;z-index:45;display:flex;align-items:center;justify-content:center;
+    background:rgba(8,5,3,.8)}
+  #prepPanelInner{width:min(760px,92vw);max-height:88vh;overflow-y:auto;padding:34px 42px;text-align:center}
+  #prepPanelInner h2{font-size:30px;color:var(--accent2);margin-bottom:2px}
+  #prepPanelInner .desub{opacity:.65;font-size:14px;margin-bottom:20px}
+  #prepBtns{display:flex;gap:12px;justify-content:center}
 
   /* ---------- 일시정지 ---------- */
   #pauseScreen{position:fixed;inset:0;z-index:46;display:flex;flex-direction:column;gap:16px;
@@ -263,11 +275,26 @@
     <h2 id="deTitle">DAY 1 마감</h2>
     <div class="desub" id="deSub">오늘 하루도 수고하셨습니다!</div>
     <div id="statGrid"></div>
-    <div id="upgrades">
-      <h3>─ 매장 업그레이드 ─</h3>
-      <div id="upgradeList"></div>
+    <button class="btn" id="btnNextDay">다음 날 준비로 →</button>
+  </div>
+</div>
+
+<!-- 영업 준비 배너 -->
+<div id="prepBar" class="panel hidden">
+  🔧 <b>영업 준비</b> — 창고에서 재고 보충 · <b>[B]</b> 기구 배치 · <b>[M]</b> 관리·업그레이드 · <b>[O]</b> 영업 시작
+</div>
+
+<!-- 영업 준비 관리 패널 -->
+<div id="prepPanel" class="hidden">
+  <div id="prepPanelInner" class="panel">
+    <h2 id="ppTitle">DAY 1 영업 준비</h2>
+    <div class="desub">재고를 채우고 기구를 배치한 뒤 영업을 시작하세요</div>
+    <h3 class="ppSec">─ 매장 업그레이드 ─</h3>
+    <div id="upgradeList"></div>
+    <div id="prepBtns">
+      <button class="btn" id="btnStartService">🔓 영업 시작 →</button>
+      <button class="btn ghost" id="btnClosePrep">계속 준비하기</button>
     </div>
-    <button class="btn" id="btnNextDay">다음 날 영업 시작 →</button>
   </div>
 </div>
 

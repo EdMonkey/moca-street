@@ -592,6 +592,11 @@ const Game = (() => {
   function interact(it) {
     if (!it) return;
     const id = it.id;
+    // 준비 단계엔 재고 보충만 (제조·서빙은 영업 중에)
+    if (mode === 'prep' && id !== 'restock') {
+      toast('영업을 시작하면 사용할 수 있어요 — 지금은 재고 보충과 [B] 배치');
+      return;
+    }
 
     /* --- 주문 받기 --- */
     if (id === 'register') {
@@ -852,14 +857,16 @@ const Game = (() => {
       return;
     }
 
-    /* --- 재고 보충 --- */
+    /* --- 재고 보충 (준비=정상가 / 영업중=비상 웃돈) --- */
     if (id === 'restock') {
       const r = RESTOCK[it.kind];
-      if (S.money < r.price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
-      S.money -= r.price;
-      dayStats.spent += r.price;
+      const emergency = mode === 'playing';
+      const price = emergency ? Math.round(r.price * 1.8 / 100) * 100 : r.price;
+      if (S.money < price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
+      S.money -= price;
+      if (dayStats) dayStats.spent += price;
       S.stocks[it.kind] += r.amount;
-      toast(`${r.name} +${r.amount} (${fmt(r.price)})`, 'good');
+      toast(`${r.name} +${r.amount} (${fmt(price)})${emergency ? ' · 비상 보충 ⚡' : ''}`, emergency ? 'bad' : 'good');
       AudioFX.cash();
       updateHUD();
       return;
@@ -1257,11 +1264,16 @@ const Game = (() => {
   }
 
   function updateClock() {
+    const os = $('openState');
+    if (mode === 'prep') {
+      $('clock').textContent = '08:00';
+      os.textContent = '● 영업 준비 중'; os.className = 'closed';
+      return;
+    }
     const h = 9 + (timeSec / DAY_LEN) * 9;
     const hh = Math.min(18, h) | 0;
     const mm = Math.min(59, ((h - hh) * 60) | 0);
     $('clock').textContent = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
-    const os = $('openState');
     if (open) { os.textContent = '● 영업 중'; os.className = 'open'; }
     else { os.textContent = '● 마감 — 남은 손님 응대'; os.className = 'closed'; }
   }
@@ -1304,21 +1316,17 @@ const Game = (() => {
     });
   }
 
-  /* ===== 하루 사이클 ===== */
-  let timeSec = 0, open = true;
+  /* ===== 하루 사이클 (준비 → 영업 → 정산) ===== */
+  let timeSec = 0, open = false;
+  let prepPanelOpen = false;
+  let pendingTutorial = false;
 
-  function startDay() {
-    timeSec = 0; open = true;
-    dayStats = freshDayStats();
-    orders = []; orderSeq = 0;
-    $('tickets').innerHTML = '';
-    if (tut) endTutorial(false);
-    spawnTimer = 2.5;
-    Customers.clear();
+  // 매장(머신·들고있는것·연출) 초기화 — 준비/영업 진입 시 공용
+  function resetStations() {
     setHeld(null);
     clearPlacedItems();
+    clearServeFx();
     env.placeIndicator.visible = false;
-    // 에스프레소 슬롯 정리 — 두 슬롯 모두 '빈' 포터필터 장착 상태로 리셋
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
@@ -1327,12 +1335,60 @@ const Game = (() => {
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
-    clearServeFx();
+  }
+
+  /* --- 영업 준비 단계: 손님 없음 · 시간 정지 · 배치/구매/보충 --- */
+  function startPrep() {
+    mode = 'prep';
+    open = false; timeSec = 0;
+    dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    if (tut) endTutorial(false);
+    Customers.clear();
+    resetStations();
+    prepPanelOpen = false;
+    $('prepPanel').classList.add('hidden');
+    $('prepBar').classList.remove('hidden');
+    $('hud').classList.remove('hidden');
+    mode = 'prep';
+    Player.enabled = true;
+    updateHUD(); updateClock();
+    toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
+  }
+
+  /* --- 영업 시작: 손님 입장 · 시계 진행 --- */
+  function beginOpen() {
+    if (mode !== 'prep') return;
+    if (typeof Editor !== 'undefined' && Editor.active) Editor.toggle();   // 편집 중이면 종료
+    prepPanelOpen = false;
+    $('prepPanel').classList.add('hidden');
+    $('prepBar').classList.add('hidden');
+    open = true; timeSec = 0;
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    spawnTimer = 2.5;
+    resetStations();
     mode = 'playing';
     Player.enabled = true;
     updateHUD(); updateClock();
     toast(`DAY ${S.day} — 영업 시작! ☕`, 'gold', 3000);
     AudioFX.bell();
+    if (pendingTutorial) { pendingTutorial = false; startTutorial(); }
+  }
+
+  function openPrepPanel() {
+    if (mode !== 'prep') return;
+    prepPanelOpen = true;
+    $('ppTitle').textContent = `DAY ${S.day} 영업 준비`;
+    renderUpgrades();
+    $('prepPanel').classList.remove('hidden');
+    Player.enabled = false;
+    document.exitPointerLock && document.exitPointerLock();
+  }
+  function closePrepPanel() {
+    prepPanelOpen = false;
+    $('prepPanel').classList.add('hidden');
   }
 
   function spawnInterval() {
@@ -1359,7 +1415,7 @@ const Game = (() => {
       [dayStats.served + '명', '서빙한 손님'],
       [dayStats.angry + '명', '화난 손님'],
     ].map(([v, l]) => `<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div></div>`).join('');
-    renderUpgrades();
+    $('prepBar').classList.add('hidden');
     $('dayEnd').classList.remove('hidden');
     $('hud').classList.add('hidden');
     S.day++;
@@ -1406,7 +1462,21 @@ const Game = (() => {
   }
 
   /* ===== 메인 업데이트 ===== */
+  function updatePrep() {
+    // 준비 단계: 재고 보충 프롬프트만 표시 (손님·시계 정지)
+    const pr = $('prompt');
+    if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); return; }
+    const aimData = Player.aim();
+    if (aimData && aimData.id === 'restock') {
+      pr.innerHTML = promptFor(aimData);
+      pr.classList.remove('hidden'); $('crosshair').classList.add('active');
+    } else {
+      pr.classList.add('hidden'); $('crosshair').classList.remove('active');
+    }
+  }
+
   function update(dt) {
+    if (mode === 'prep') { updatePrep(); return; }
     if (mode !== 'playing') return;
 
     // 시간
@@ -1486,8 +1556,18 @@ const Game = (() => {
     // const Editor는 window 속성이 아니므로 typeof로 확인해야 게이트가 작동함
     const editing = () => typeof Editor !== 'undefined' && Editor.active;
     document.addEventListener('keydown', ev => {
-      if (mode !== 'playing') return;
+      if (mode !== 'playing' && mode !== 'prep') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
+      // 준비 단계 전용 조작
+      if (mode === 'prep') {
+        if (prepPanelOpen) return;                       // 패널은 버튼으로 조작
+        if (ev.code === 'KeyE') onUse();                 // 재고 보충
+        else if (ev.code === 'KeyO') beginOpen();        // 영업 시작
+        else if (ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
+        else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
+        return;
+      }
+      // 영업 중 조작
       if (ev.code === 'KeyE') onUse();
       if (ev.code === 'KeyQ' && held) {
         if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
@@ -1509,24 +1589,26 @@ const Game = (() => {
   function newGame() {
     S = freshState();
     renderRecipeBook();
-    startDay();
-    startTutorial();
+    pendingTutorial = true;      // 튜토리얼은 첫 영업 시작 때 시작
+    startPrep();
   }
   function continueGame() {
     load();
     renderRecipeBook();
-    startDay();
+    startPrep();
   }
   function nextDay() {
     $('dayEnd').classList.add('hidden');
     $('hud').classList.remove('hidden');
-    startDay();
+    startPrep();
   }
 
   return {
     init, update, newGame, continueGame, nextDay, hasSave, onAngryLeave,
+    beginOpen, openPrepPanel, closePrepPanel,
     get mode() { return mode; },
     set mode(v) { mode = v; },
+    get prepPanelOpen() { return prepPanelOpen; },
     get inTutorial() { return !!tut; },
     notifyEditMode(on) {
       if (on) {
