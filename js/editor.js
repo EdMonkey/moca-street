@@ -267,7 +267,7 @@ const Editor = (() => {
   }
 
   return {
-    init, update, toggle, resetLayout,
+    init, update, toggle, resetLayout, saveLayout, applyLayout,
     get active() { return active; },
   };
 })();

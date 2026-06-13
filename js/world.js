@@ -486,9 +486,14 @@ const WORLD = (() => {
       childHitbox(st, 0.65, 0.7, 0.6, 0, 0.3, 0.1, { id: 'ice' });
     })();
 
-    /* ---------- 에스프레소 머신 (메인) ---------- */
-    (function espresso() {
-      const st = station('espresso', '에스프레소 머신', -3.1, -4.25, 1.45, 0.8);
+    /* 런타임에 추가 구매 가능한 머신은 배열로 관리 */
+    env.machines.espressoSlots = [];
+    env.machines.grinderJobs = [];
+    env.machines.steamerJobs = [];
+
+    /* ---------- 에스프레소 머신 (구매 시 재사용되는 빌더) ---------- */
+    function buildEspresso(id, x, z, lockSecond) {
+      const st = station(id, '에스프레소 머신', x, z, 1.45, 0.8);
       const g = st.root;
       const body = box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0);
       const topTray = box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0);
@@ -510,7 +515,7 @@ const WORLD = (() => {
         g.add(cyl(0.045, 0.038, 0.07, M().cupWhite, -0.45 + i * 0.3, 0.684, 0, 12, { cast: false }));
       // 그룹헤드 2개 + 장착식 포터필터 + 드립트레이
       // 그룹헤드를 충분히 높여(y 0.30) 아이스컵(0.16m)도 추출구 아래에 들어가게 함
-      env.machines.espressoSlots = [];
+      const slotBase = env.machines.espressoSlots.length;   // 추가 머신은 전역 슬롯 배열에 이어 붙임
       [-0.3, 0.3].forEach((ox, i) => {
         g.add(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14));            // 그룹헤드
         // 포터필터(기본 '빈' 상태로 장착되어 있음)
@@ -524,7 +529,9 @@ const WORLD = (() => {
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
           progress: makeProgress(g, ox, 0.27, 0.3),   // 추출 중인 컵 바로 위
-          stream, pf, pfState: 'empty', busy: false, cupMesh: null, done: false, drink: null, t: 0
+          stream, pf, pfState: 'empty',
+          locked: (i === 1 ? !!lockSecond : false),    // 원래 머신의 2번 슬롯만 듀얼헤드 업그레이드 필요
+          busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
       const drip = box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3);
@@ -562,13 +569,15 @@ const WORLD = (() => {
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.85, 0.25);
       g.add(lbl);
-      childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: 0 });
-      childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: 1 });
-    })();
+      childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 0 });
+      childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 1 });
+      return st;
+    }
+    buildEspresso('espresso', -3.1, -4.25, true);   // 원래 머신: 2번 슬롯은 듀얼헤드 잠금
 
-    /* ---------- 밀크 스티머 ---------- */
-    (function steamer() {
-      const st = station('steamer', '밀크 스티머', -1.7, -4.3, 0.62, 0.55);
+    /* ---------- 밀크 스티머 (구매 시 재사용되는 빌더) ---------- */
+    function buildSteamer(id, x, z) {
+      const st = station(id, '밀크 스티머', x, z, 0.62, 0.55);
       const g = st.root;
       const body = box(0.3, 0.42, 0.3, M().steel, 0, 0.21, 0);
       const wand = cyl(0.012, 0.012, 0.26, M().steel, 0.16, 0.3, 0.12, 8);
@@ -582,14 +591,17 @@ const WORLD = (() => {
       lbl.position.set(0, 0.62, 0.2);
       g.add(lbl);
       env.steamEmitters.push({ st, local: new THREE.Vector3(0.2, 0.2, 0.15) });
-      childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamer' });
-      env.machines.steamerJob = {
+      const job = {
         kind: 'steamer',
         st, localPos: new THREE.Vector3(0.2, 0, 0.22),
         progress: makeProgress(g, 0.2, 0.24, 0.22),   // 스팀 중인 컵 바로 위
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
-    })();
+      childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamer', job });
+      env.machines.steamerJobs.push(job);
+      return st;
+    }
+    buildSteamer('steamer', -1.7, -4.3);
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
     env.machines.waterJobs = {};
@@ -704,9 +716,9 @@ const WORLD = (() => {
       scene.add(lbl);
     })();
 
-    /* ---------- 원두 그라인더 (분쇄 → 포터필터) ---------- */
-    (function grinder() {
-      const st = station('grinder', '그라인더', -6.95, -4.3, 0.45, 0.5);
+    /* ---------- 원두 그라인더 (구매 시 재사용되는 빌더) ---------- */
+    function buildGrinder(id, x, z) {
+      const st = station(id, '그라인더', x, z, 0.45, 0.5);
       const g = st.root;
       g.add(cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16));      // 받침
       g.add(box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0));            // 본체
@@ -722,18 +734,46 @@ const WORLD = (() => {
       const glbl = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.13), textLabel('그라인더', 192, 56, '700 30px "Malgun Gothic"'));
       glbl.position.set(0, 0.78, 0.18);
       g.add(glbl);
-      childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder' });
       // 삽입된 포터필터가 받침 위에 표시됨 (초기엔 숨김)
       const pfOut = makePortafilterMesh('none');
       pfOut.position.set(0, 0.145, 0.13);
       g.add(pfOut);
-      env.machines.grinderJob = {
+      const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
         progress: makeProgress(g, 0, 0.34, 0.13),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
-    })();
+      childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder', job });
+      env.machines.grinderJobs.push(job);
+      return st;
+    }
+    buildGrinder('grinder', -6.95, -4.3);
+
+    /* 구매로 추가 머신을 만들 수 있도록 빌더와 빈자리 탐색기 노출 */
+    env.builders = { grinder: buildGrinder, steamer: buildSteamer, espresso: buildEspresso };
+    env.findFreeSpot = function (w, d) {
+      const fp = (cx, cz, fw, fd) => ({ x0: cx - fw / 2, x1: cx + fw / 2, z0: cz - fd / 2, z1: cz + fd / 2 });
+      const overlap = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.z0 < b.z1 && a.z1 > b.z0;
+      const occupied = (cx, cz) => {
+        const me = fp(cx, cz, w + 0.05, d + 0.05);
+        for (const s of env.stations) {
+          if (s.floor) continue;
+          const rot = s.rotY % 180 !== 0;
+          if (overlap(me, fp(s.root.position.x, s.root.position.z, rot ? s.d : s.w, rot ? s.w : s.d))) return true;
+        }
+        for (const b of env.staticBlockers) if (overlap(me, fp(b.x, b.z, b.w, b.d))) return true;
+        return false;
+      };
+      // 백 카운터(z=-4.3) → 앞 카운터(z=-1.0) 순으로 빈 칸 탐색
+      for (const cz of [-4.3, -1.0]) {
+        for (let cx = -6.9; cx <= 3.9; cx += 0.2) {
+          if (cx - w / 2 < -7.0 || cx + w / 2 > 4.0) continue;
+          if (!occupied(cx, cz)) return { x: Math.round(cx * 20) / 20, z: cz };
+        }
+      }
+      return null;
+    };
 
     /* ---------- 장식 ---------- */
     (function deco() {

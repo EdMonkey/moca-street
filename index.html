@@ -176,7 +176,7 @@
   .stat .sv{font-size:24px;font-weight:800;color:var(--accent2)}
   .stat .sl{font-size:12px;opacity:.7;margin-top:2px}
   .ppSec{font-size:17px;color:var(--accent2);margin:8px 0 12px;letter-spacing:1px;text-align:center}
-  #upgradeList{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
+  #upgradeList,#equipList{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:24px}
   .upg{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;
     border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(232,184,109,.15);text-align:left}
   .upg .un{font-weight:700;font-size:14px}
@@ -292,6 +292,8 @@
     <h2 id="ppTitle">DAY 1 영업 준비</h2>
     <div class="desub">재고를 채우고 기구를 배치한 뒤 영업을 시작하세요</div>
     <div id="ppMoney">보유 금액 <b>₩ 0</b></div>
+    <h3 class="ppSec">─ 장비 구매 (구매 후 [B]로 배치) ─</h3>
+    <div id="equipList"></div>
     <h3 class="ppSec">─ 매장 업그레이드 ─</h3>
     <div id="upgradeList"></div>
     <div id="prepBtns">

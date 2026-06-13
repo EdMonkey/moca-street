@@ -303,6 +303,12 @@ const Game = (() => {
     ads:       { name: 'SNS 광고',         desc: '손님 방문 빈도 +30%', price: 15000 },
     grinder:   { name: '프리미엄 그라인더', desc: '모든 음료 가격 +15%', price: 22000 },
   };
+  // 구매 가능한 추가 장비 (영업 준비 단계에서 구입 → 빈 카운터에 배치)
+  const EQUIPMENT = {
+    grinder:  { name: '추가 그라인더',      desc: '원두를 병렬로 분쇄해 병목 해소', price: 18000, w: 0.45, d: 0.5, max: 2 },
+    espresso: { name: '2번째 에스프레소 머신', desc: '추출 슬롯 2개 추가',          price: 35000, w: 1.45, d: 0.8, max: 1 },
+    steamer:  { name: '추가 밀크 스티머',    desc: '우유를 병렬로 스팀',            price: 15000, w: 0.62, d: 0.55, max: 2 },
+  };
   const RESTOCK = {
     beans:   { name: '원두',   amount: 30, price: 8000 },
     milk:    { name: '우유',   amount: 20, price: 6000 },
@@ -330,6 +336,7 @@ const Game = (() => {
       money: 20000, day: 1, rep: 50, level: 1, xp: 0,
       stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
       upgrades: {},
+      equip: {},          // 구매한 추가 장비 개수 { grinder, espresso, steamer }
     };
   }
   function freshDayStats() {
@@ -527,9 +534,9 @@ const Game = (() => {
     { text: '<b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>를 눌러 손님의 주문을 받으세요',
       check: () => orders.length > 0 },
     { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
-      check: () => (held && held.type === 'portafilter') || env.machines.grinderJob.busy },
+      check: () => (held && held.type === 'portafilter') || env.machines.grinderJobs.some(j => j.busy) },
     { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 원두를 분쇄하세요 — 완료 후 <b>[E]</b>로 꺼내기',
-      check: () => env.machines.grinderJob.busy || (held && held.type === 'portafilter' && held.state === 'filled') },
+      check: () => env.machines.grinderJobs.some(j => j.busy) || (held && held.type === 'portafilter' && held.state === 'filled') },
     { text: '분쇄된 포터필터를 들고 <b>에스프레소 머신</b>에 가서 <b>[E]</b>로 장착하세요',
       check: () => env.machines.espressoSlots.some(s => s.pfState === 'filled' || s.busy) },
     { text: '컵 디스펜서에서 <b>머그컵</b>을 집어 머신에 올려놓고 <b>[E]</b>로 추출을 시작하세요',
@@ -648,7 +655,7 @@ const Game = (() => {
 
     /* --- 그라인더: 빈 포터필터 삽입 → 분쇄 → 완료되면 채워진 포터필터 꺼내기 --- */
     if (id === 'grinder') {
-      const job = env.machines.grinderJob;
+      const job = it.job;
       if (job.busy) {
         if (!job.done) { toast('분쇄 중입니다…'); return; }
         if (held) { toast('손이 비어있어야 포터필터를 꺼낼 수 있어요'); return; }
@@ -677,7 +684,7 @@ const Game = (() => {
     /* --- 에스프레소 머신: 포터필터 분리/장착 → 컵 올려 추출 → 꺼내기 --- */
     if (id === 'espresso') {
       const slot = env.machines.espressoSlots[it.slot];
-      if (it.slot === 1 && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
+      if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
       if (slot.busy) {
         if (!slot.done) { toast('추출 중입니다…'); return; }
         // 완료된 샷 꺼내기 — 포터필터(used)는 머신에 남는다
@@ -733,7 +740,7 @@ const Game = (() => {
 
     /* --- 밀크 스티머: 컵 올려두기 → (자유 행동) → 완료되면 꺼내기 --- */
     if (id === 'steamer') {
-      const job = env.machines.steamerJob;
+      const job = it.job;
       if (job.busy) {
         if (!job.done) { toast('스팀 중입니다…'); return; }
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
@@ -1084,7 +1091,7 @@ const Game = (() => {
   /* ===== 머신 비동기 작업 (그라인더·스티머·온수/냉수) =====
    * 컵/재료를 올려두고 자리를 떠나도 진행되며, 머신 위 프로그레스 바로 상태 표시 */
   function machineJobs() {
-    return [env.machines.grinderJob, env.machines.steamerJob,
+    return [...env.machines.grinderJobs, ...env.machines.steamerJobs,
       env.machines.waterJobs.waterHot, env.machines.waterJobs.waterCold];
   }
   function swapJobCup(job) {
@@ -1169,7 +1176,7 @@ const Game = (() => {
       case 'cupEsp': return E + '에스프레소 잔 잡기';
       case 'ice': return E + '얼음 담기';
       case 'grinder': {
-        const job = env.machines.grinderJob;
+        const job = it.job;
         if (job.busy) {
           if (!job.done) return `분쇄 중… ${Math.ceil(job.dur - job.t)}s`;
           return held ? '손을 비우면 포터필터를 꺼낼 수 있어요' : E + '분쇄 완료 — 포터필터 꺼내기';
@@ -1182,8 +1189,8 @@ const Game = (() => {
         return E + '원두 분쇄 시작';
       }
       case 'espresso': {
-        if (it.slot === 1 && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
         const slot = env.machines.espressoSlots[it.slot];
+        if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
         if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
         if (held && held.type === 'drink' && !held.drink.espresso) {
@@ -1197,7 +1204,7 @@ const Game = (() => {
         return E + `포터필터 분리 (${slot.pfState === 'used' ? '사용한 가루 — 넉박스에 비우세요' : '비어 있음 — 분쇄하세요'})`;
       }
       case 'steamer': {
-        const job = env.machines.steamerJob;
+        const job = it.job;
         if (job.busy) {
           if (!job.done) return `스팀 중… ${Math.ceil(job.dur - job.t)}s`;
           return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
@@ -1382,6 +1389,7 @@ const Game = (() => {
     prepPanelOpen = true;
     $('ppTitle').textContent = `DAY ${S.day} 영업 준비`;
     $('ppMoney').innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
+    renderEquipment();
     renderUpgrades();
     $('prepPanel').classList.remove('hidden');
     Player.enabled = false;
@@ -1446,9 +1454,73 @@ const Game = (() => {
         AudioFX.cash();
         save();
         renderUpgrades();
-        const pm = $('ppMoney'); if (pm) pm.innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
+        refreshPrepMoney();
         updateHUD();
       };
+    });
+  }
+
+  /* ===== 장비 상점 (구매 → 빈 카운터에 새 머신 배치) ===== */
+  function refreshPrepMoney() {
+    const pm = $('ppMoney'); if (pm) pm.innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
+  }
+  function spawnEquipment(kind, id, x, z) {
+    if (kind === 'grinder') env.builders.grinder(id, x, z);
+    else if (kind === 'steamer') env.builders.steamer(id, x, z);
+    else if (kind === 'espresso') env.builders.espresso(id, x, z, false);   // 구매 머신은 두 슬롯 모두 개방
+  }
+  function recreateEquipment() {
+    // 저장된 구매 장비를 매장에 다시 생성 (위치는 이후 applyLayout이 복원)
+    const eq = S.equip || {};
+    Object.keys(EQUIPMENT).forEach(kind => {
+      const n = eq[kind] || 0;
+      for (let i = 0; i < n; i++) {
+        const id = kind + '_' + (i + 2);
+        const spot = env.findFreeSpot(EQUIPMENT[kind].w, EQUIPMENT[kind].d) || { x: 0, z: -4.3 };
+        spawnEquipment(kind, id, spot.x, spot.z);
+      }
+    });
+    if (typeof Editor !== 'undefined') Editor.applyLayout();   // 저장된 배치 복원
+  }
+  function buyEquipment(kind) {
+    const e = EQUIPMENT[kind];
+    const owned = (S.equip[kind] || 0);
+    if (owned >= e.max) { toast('이 장비는 더 들일 수 없어요'); return; }
+    if (S.money < e.price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
+    const spot = env.findFreeSpot(e.w, e.d);
+    if (!spot) { toast('배치할 빈 공간이 없어요 — 기구를 정리하세요', 'bad'); AudioFX.err(); return; }
+    S.money -= e.price;
+    if (dayStats) dayStats.spent += e.price;
+    S.equip[kind] = owned + 1;
+    const id = kind + '_' + (owned + 2);
+    spawnEquipment(kind, id, spot.x, spot.z);
+    if (typeof Editor !== 'undefined') Editor.saveLayout();    // 새 머신 위치 즉시 저장
+    save();
+    AudioFX.cash();
+    renderEquipment();
+    refreshPrepMoney();
+    updateHUD();
+    toast(`${e.name} 구매 완료! [B] 편집 모드로 위치를 옮길 수 있어요`, 'good', 4500);
+  }
+  function renderEquipment() {
+    const list = $('equipList');
+    if (!list) return;
+    list.innerHTML = '';
+    Object.keys(EQUIPMENT).forEach(k => {
+      const e = EQUIPMENT[k];
+      const owned = (S.equip[k] || 0);
+      const full = owned >= e.max;
+      const div = document.createElement('div');
+      div.className = 'upg' + (full ? ' owned' : '');
+      div.innerHTML =
+        `<div><div class="un">${e.name}${owned ? ` <span style="color:var(--green)">×${owned}</span>` : ''}</div>` +
+        `<div class="ud">${e.desc}</div></div>` +
+        (full ? `<span class="ownedTag">최대 ✓</span>`
+              : `<button class="btn" data-equip="${k}" ${S.money < e.price ? 'disabled' : ''}>${fmt(e.price)}</button>`);
+      list.appendChild(div);
+    });
+    list.querySelectorAll('button[data-equip]').forEach(b => {
+      b.onclick = () => buyEquipment(b.dataset.equip);
     });
   }
 
@@ -1596,6 +1668,7 @@ const Game = (() => {
   }
   function continueGame() {
     load();
+    recreateEquipment();   // 저장된 구매 장비 복원 (위치 포함)
     renderRecipeBook();
     startPrep();
   }
