@@ -88,6 +88,10 @@
   #held{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);padding:8px 22px;
     font-size:14px;font-weight:600;text-align:center}
   #held .ing{font-size:12px;opacity:.85;color:var(--accent2)}
+  /* 신선도 표시 (들고 있는 컵/샷잔/피처) */
+  #freshness{position:absolute;bottom:46px;left:50%;transform:translateX(-50%);
+    padding:3px 12px;font-size:12px;font-weight:700;border-radius:20px;
+    background:var(--panel);border:1px solid rgba(232,184,109,.3);white-space:nowrap}
 
   /* 튜토리얼 */
   #tutorial{position:absolute;top:80px;left:50%;transform:translateX(-50%);padding:14px 28px;
@@ -289,6 +293,7 @@
   <div id="crosshair"></div>
   <div id="prompt" class="hidden"></div>
   <div id="held" class="panel hidden"></div>
+  <div id="freshness" class="hidden"></div>
   <div id="toasts"></div>
   <div id="serveBadge"><span class="chk">✓</span><span>서빙 완료!</span></div>
   <div id="hint">[WASD] 이동 · [E] 상호작용 / 내려놓기 · [Q] 버리기 · [R] 레시피북 · [B] 기구 편집 · [Esc] 일시정지</div>

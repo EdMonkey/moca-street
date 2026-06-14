@@ -10,7 +10,7 @@
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 0.6;   // 전체 밝기(노출) — 낮출수록 눈부심 감소
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
@@ -148,6 +148,9 @@
           if (j.wandLocal && ((j.busy && !j.done) || j.steamT > 0))
             emit(j.st.root.localToWorld(j.wandLocal.clone()), true);
         });
+        // 뜨거운 음료(컵/샷잔/피처)에서 김 — 제조 후 30초 내(신선)에만, 30초 지나면 사라짐
+        if (Game.mode === 'playing' && Game.steamSources)
+          Game.steamSources().forEach(p => { if (Math.random() < 0.6) emit(p, false); });
       }
       pool.forEach(s => {
         if (!s.visible) return;

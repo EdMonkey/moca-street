@@ -105,19 +105,23 @@ const Player = (() => {
 
   /* 조준 중인 상호작용 대상 */
   let lastAimHit = null;        // 마지막으로 조준한 히트박스 메시 (아웃라인 하이라이트용)
-  const PLACED_PRIORITY = 0.5;  // 표면에 놓인 아이템이 가장 가까운 히트와 이 거리(m) 내면 우선 선택
+  const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimC = new THREE.Vector3(), _aimV = new THREE.Vector3();
   function aim() {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
-    const hits = ray.intersectObjects(env.interactables, false);   // 거리 오름차순 정렬
-    let chosen = hits.length ? hits[0] : null;
-    // 표면에 내려놓은 컵(placedItem)은 작은 히트박스라 픽업대·계산대 같은 큰 카운터 박스에
-    // 가려진다. 가장 가까운 히트와 거의 겹쳐 있으면 컵을 우선해 외곽선·집기가 컵에 걸리게 한다.
-    if (chosen && (!chosen.object.userData.interact || chosen.object.userData.interact.id !== 'placedItem')) {
-      const pi = hits.find(h => h.object.userData.interact && h.object.userData.interact.id === 'placedItem');
-      if (pi && pi.distance - hits[0].distance < PLACED_PRIORITY) chosen = pi;
+    const hits = ray.intersectObjects(env.interactables, false);
+    // 겹친 박스 중 '점이 가장 정확히 향한' 것 선택 — 박스 중심이 조준선에 가장 가까운 대상
+    // (픽업대 위 놓인 컵 등 작은 박스가 큰 카운터 박스에 가려지는 문제도 함께 해결)
+    let best = null, bestPerp = Infinity;
+    _aimO.copy(ray.ray.origin); _aimD.copy(ray.ray.direction);
+    for (const h of hits) {
+      h.object.getWorldPosition(_aimC);
+      _aimV.copy(_aimC).sub(_aimO);
+      const proj = _aimV.dot(_aimD);
+      const perp2 = Math.max(0, _aimV.lengthSq() - proj * proj);   // 조준선~박스중심 수직거리²
+      if (perp2 < bestPerp) { bestPerp = perp2; best = h.object; }
     }
-    lastAimHit = chosen ? chosen.object : null;
-    return lastAimHit ? lastAimHit.userData.interact : null;
+    lastAimHit = best;
+    return best ? best.userData.interact : null;
   }
 
   /* 조준 중인 배치 가능 표면의 윗면 지점 (없으면 null) */
@@ -151,8 +155,14 @@ const Player = (() => {
     }
   }
 
+    // 들고 있는 메시의 월드 위치(없으면 null) — 뜨거운 음료 김 연출용
+  function heldWorldPos(out) {
+    if (!heldMesh) return null;
+    return heldMesh.getWorldPosition(out || new THREE.Vector3());
+  }
+
   return {
-    init, update, aim, aimSurface, setHeld, reset, punch,
+    init, update, aim, aimSurface, setHeld, reset, punch, heldWorldPos,
     setLook(on) { look = on; },
     get aimedObject() { return lastAimHit; },
     get position() { return pos; },
