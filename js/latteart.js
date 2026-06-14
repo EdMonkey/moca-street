@@ -32,11 +32,11 @@ const LatteArt = (() => {
   })();
 
   // 튜닝값
-  const MILK_RATE = 78;            // 초당 우유 주입량
-  const FOUNTAIN = 16;             // 닿는 지점 바깥 분수 흐름 세기(셀/초/프레임환산)
-  const VEL_FROM_MOVE = 0.95;      // 피처 이동 → 흐름 전달
+  const MILK_RATE = 105;     // 초당 우유 주입량
+  const FOUNTAIN = 9;        // 닿는 지점 바깥 분수 흐름 세기(과하면 우유가 흩어짐)
+  const VEL_FROM_MOVE = 0.7;       // 피처 이동 → 흐름 전달
   const VEL_DAMP = 0.955;          // 프레임당 속도 감쇠(60fps 기준)
-  const MILK_DECAY = 0.997;        // 프레임당 우유 감쇠
+  const MILK_DECAY = 0.999;        // 프레임당 우유 감쇠(우유가 오래 남아 또렷이 쌓이도록)
   const DISP = 5;                  // 표면 수평 변위(물결) 스케일
 
   let active = false;
@@ -62,21 +62,21 @@ const LatteArt = (() => {
     return c;
   }
 
-  // 에스프레소 크레마 텍스처 — 가운데가 짙고 가장자리가 옅은 갈색 + 미세한 얼룩
+  // 크레마 텍스처 — 실제 라떼처럼 따뜻한 캐러멜/오렌지(짙은 초콜릿 갈색이 아니라).
   function buildCrema() {
     crema = makeCanvas(SIZE, SIZE);
     const c = crema.getContext('2d');
     const g = c.createRadialGradient(CX, CY - 8, 10, CX, CY, R);
-    g.addColorStop(0, '#6b4324');
-    g.addColorStop(0.55, '#8a5a30');
-    g.addColorStop(0.85, '#b07a44');
-    g.addColorStop(1, '#7a4f2b');
+    g.addColorStop(0, '#cf9352');     // 가운데 옅은 캐러멜
+    g.addColorStop(0.55, '#c2823f');
+    g.addColorStop(0.85, '#ad6e30');
+    g.addColorStop(1, '#965b28');     // 가장자리 약간 짙게
     c.fillStyle = g;
     c.fillRect(0, 0, SIZE, SIZE);
     for (let i = 0; i < 900; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.random() * R;
       const x = CX + Math.cos(a) * r, y = CY + Math.sin(a) * r;
-      c.fillStyle = `rgba(${200 + Math.random() * 40 | 0},${150 + Math.random() * 40 | 0},90,${Math.random() * 0.12})`;
+      c.fillStyle = `rgba(${225 + Math.random() * 30 | 0},${175 + Math.random() * 35 | 0},120,${Math.random() * 0.12})`;
       c.fillRect(x, y, 1.5, 1.5);
     }
   }
@@ -128,7 +128,7 @@ const LatteArt = (() => {
       for (let x = 0; x < N; x++) {
         const i = y * N + x;
         if (!inside[i]) { u[i] = v[i] = 0; continue; }
-        u[i] *= vd; v[i] *= vd;
+        u[i] = clamp(u[i] * vd, -24, 24); v[i] = clamp(v[i] * vd, -24, 24);
         if (m[i] > 1.4) m[i] = 1.4;
         su += u[i]; cnt++;
       }
@@ -147,9 +147,10 @@ const LatteArt = (() => {
     // 1) 우유 그리드 → N×N 오버레이(흰색, 알파=밀도)
     const d = mImg.data;
     for (let i = 0; i < N * N; i++) {
-      const a = inside[i] ? clamp(Math.sqrt(m[i]) * 1.05, 0, 1) : 0;
+      // 살짝 문턱을 둬 옅은 우유는 떨궈 경계를 또렷하게(층 사이 캐러멜 결이 보이도록)
+      const a = inside[i] ? clamp((m[i] - 0.04) * 3.4, 0, 1) : 0;
       const p = i * 4;
-      d[p] = 247; d[p + 1] = 241; d[p + 2] = 228; d[p + 3] = (a * 255) | 0;
+      d[p] = 251; d[p + 1] = 246; d[p + 2] = 236; d[p + 3] = (a * 255) | 0;
     }
     mctx.putImageData(mImg, 0, 0);
     // 2) 크레마 + 우유 합성
@@ -245,7 +246,9 @@ const LatteArt = (() => {
       vol = Math.max(0, vol - dt);
       // 피처 속도(셀/초) → 흐름 주입 + 우유 주입
       const gx = clamp(px / CELL, 1, N - 2), gy = clamp(py / CELL, 1, N - 2);
-      const vxg = (px - prevPx) / CELL / dt, vyg = (py - prevPy) / CELL / dt;
+      // 속도는 상한을 둔다 — 빠르게 흔들 때 속도장이 폭증해 우유가 흩어지는 것을 방지
+      const vxg = clamp((px - prevPx) / CELL / dt, -22, 22);
+      const vyg = clamp((py - prevPy) / CELL / dt, -22, 22);
       const fr = dt * 60;
       splatVel(gx, gy, 3.2, vxg * VEL_FROM_MOVE, vyg * VEL_FROM_MOVE, FOUNTAIN * fr);
       splatM(gx, gy, 2.4, MILK_RATE * dt);
