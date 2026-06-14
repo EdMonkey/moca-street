@@ -104,9 +104,20 @@ const Assets = (() => {
     return o;
   }
 
+  // 원본 glb 로컬 트랜스폼(위치·회전·스케일)을 그대로 유지해 복제. 다른 프롭 기준 "제자리"로
+  // 모델링된 부속(예: 에스프레소 머신 좌우 받침판)을 같은 부모에 그대로 얹을 때 쓴다.
+  // (spawn은 x/z를 덮어써 모델링된 오프셋이 사라지므로 이 경우엔 부적합.)
+  function spawnInPlace(name) {
+    const e = _entry(name);
+    if (!e) { console.warn('[Assets] 프롭 없음:', name); return null; }
+    const o = e.obj.clone(true);
+    o.traverse((n) => { if (n.isMesh) { n.castShadow = true; n.receiveShadow = true; } });
+    return o;
+  }
+
   function names() { return lib ? lib.children.map((c) => c.name).filter(Boolean) : []; }
   function isReady() { return !!lib; }
 
-  return { boot, spawn, names, isReady, ready };
+  return { boot, spawn, spawnInPlace, names, isReady, ready };
 })();
 window.Assets = Assets;

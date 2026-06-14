@@ -3,7 +3,9 @@
  * ESM 애드온(GLTFLoader 등)이 별도 three 사본 없이 "단일 전역 THREE"를 공유하도록 한다.
  * 빌드 없음 · 외부 런타임 의존성 없음. import map에서 "three" -> 이 파일로 매핑.
  *
- * export 목록 = GLTFLoader + BufferGeometryUtils + RGBELoader 가 'three'에서 import하는 이름들의 합집합.
+ * export 목록 = GLTFLoader + BufferGeometryUtils + RGBELoader
+ *               + postprocessing(EffectComposer·RenderPass·ShaderPass·MaskPass·OutlinePass·OutputPass)
+ *               가 'three'에서 import하는 이름들의 합집합.
  * three 버전(r158) 업데이트 시 애드온들의 import 블록과 동기화할 것.
  * ============================================================ */
 const THREE = window.THREE;
@@ -26,6 +28,10 @@ export const {
   QuaternionKeyframeTrack, RepeatWrapping, Skeleton, SkinnedMesh, Sphere, SpotLight,
   SRGBColorSpace, Texture, TextureLoader, TriangleFanDrawMode, TriangleStripDrawMode,
   TrianglesDrawMode, Vector2, Vector3, VectorKeyframeTrack,
+  // --- postprocessing 애드온(EffectComposer/OutlinePass/OutputPass)이 추가로 import하는 이름들 ---
+  ACESFilmicToneMapping, AdditiveBlending, CineonToneMapping, Clock, LinearToneMapping,
+  MeshDepthMaterial, NoBlending, RawShaderMaterial, ReinhardToneMapping, RGBADepthPacking,
+  SRGBTransfer, ShaderMaterial, UniformsUtils, WebGLRenderTarget,
 } = THREE;
 
 export default THREE;

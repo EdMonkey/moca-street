@@ -968,7 +968,7 @@ const Game = (() => {
       } else {
         // 커피 줄기 애니메이션 (위치 떨림 + 압력 느낌의 길이 흔들림)
         const s = slot.stream;
-        s.position.y = 0.1 + Math.sin(slot.t * 30) * 0.005;
+        s.position.y = 0.115 + Math.sin(slot.t * 30) * 0.005;   // 올라간 추출구에 맞춘 줄기 중심
         s.scale.y = 1 + Math.sin(slot.t * 22) * 0.08;
       }
     });
@@ -1169,6 +1169,7 @@ const Game = (() => {
     mode = 'prep';
     Player.enabled = true;
     if (env.doorSign) env.doorSign.setOpen(false);             // 영업 전 = CLOSE 팻말
+    if (env.door) env.door.open = false;                       // 영업 전 = 문 닫힘
     if (typeof Weather !== 'undefined') {                      // 오늘 바깥 날씨 결정 + 실외 분위기 갱신
       const w = Weather.setForDay(S.day);
       Weather.setClock(8);                                     // 준비 단계 = 아침 08시(해 낮게)
@@ -1187,6 +1188,7 @@ const Game = (() => {
     $('prepBar').classList.add('hidden');
     open = true; timeSec = 0;
     if (env.doorSign) env.doorSign.setOpen(true);   // 영업 중 = OPEN 팻말
+    if (env.door) env.door.open = true;             // 영업 시작 = 문 열림
     if (typeof Weather !== 'undefined') Weather.setClock(9);   // 영업 시작 = 09시
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
@@ -1235,6 +1237,7 @@ const Game = (() => {
     mode = 'dayEnd';
     Player.enabled = false;
     if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
+    if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
     document.exitPointerLock && document.exitPointerLock();
@@ -1388,49 +1391,43 @@ const Game = (() => {
   }
 
   /* ===== 메인 업데이트 ===== */
-  /* 조준 대상 아웃라인 — 모델 메시에 맞춘 외곽선(인버티드 헐).
-   * 대상의 실제 메시를 살짝 키운 복제본(BackSide, 골드)을 덧대 실루엣 외곽선을 만든다.
+  /* 조준 대상 아웃라인 — 후처리(OutlinePass) 기반 외곽선.
+   * 모델 메시를 OutlinePass.selectedObjects에 올려 두께가 균일한 깔끔한 엣지 외곽선을 그린다.
+   * (composer는 main.js가 만들어 Game.setOutlinePass로 주입 — 준비 전이면 박스로 폴백)
    * 모델을 못 찾는 일부(계산대·픽업대 등)는 히트박스 박스로 폴백. */
-  let _outlineClones = [];
-  let _outlineSrc = null;
-  let _outlineMat = null;
-  function outlineMat() {
-    return _outlineMat || (_outlineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide }));
-  }
-  function clearOutlineClones() {
-    for (const c of _outlineClones) if (c.parent) c.parent.remove(c);
-    _outlineClones = [];
+  let _outlinePass = null;     // main.js가 후처리 컴포저 준비 후 주입
+  let _outlineSrc = null;      // 현재 외곽선 대상 키(재선택 판단)
+  function clearOutline() {
+    if (_outlinePass) _outlinePass.selectedObjects = [];
     _outlineSrc = null;
   }
   function meshVisible(o) {     // 부모까지 따라가 실제로 보이는 메시인지
     for (let p = o; p; p = p.parent) if (!p.visible) return false;
     return true;
   }
-  function addOutlineClone(o) {
-    if (!o.isMesh || o.userData.isHitbox) return;
-    if (o.geometry && o.geometry.type === 'PlaneGeometry') return;   // 라벨 텍스트 평면 제외
-    if (!meshVisible(o)) return;                                     // 숨겨진 메시(예: 분리된 포터필터)는 제외
-    const clone = new THREE.Mesh(o.geometry, outlineMat());
-    clone.position.copy(o.position);
-    clone.quaternion.copy(o.quaternion);
-    clone.scale.copy(o.scale).multiplyScalar(1.07);                  // 살짝 키워 외곽선 rim 생성
-    clone.renderOrder = 2;
-    clone.castShadow = clone.receiveShadow = false;
-    o.parent.add(clone);
-    _outlineClones.push(clone);
+  // srcList의 루트들을 순회해 외곽선을 그릴 실제 메시만 수집(라벨 평면·히트박스·숨김 제외)
+  function collectOutlineTargets(srcList) {
+    const out = [];
+    for (const s of srcList) s.traverse(o => {
+      if (!o.isMesh || o.userData.isHitbox) return;
+      if (o.geometry && o.geometry.type === 'PlaneGeometry') return;   // 라벨 텍스트 평면 제외
+      if (!meshVisible(o)) return;                                     // 숨겨진 메시(예: 분리된 포터필터)는 제외
+      out.push(o);
+    });
+    return out;
   }
-  function buildOutline(srcList) { for (const s of srcList) s.traverse(addOutlineClone); }
   // 조준한 히트박스 → 외곽선을 그릴 대상 { key(재생성 판단), srcList(외곽선 만들 루트들) }
   function aimOutlineSpec(aimMesh) {
     if (!aimMesh) return null;
     const it = aimMesh.userData.interact;
-    // 에스프레소 머신 컵 자리: 올라간 컵만 (없으면 박스 폴백)
+    // 에스프레소 머신 컵 자리: 올라간 컵 → 컵에, 비어 있으면 받침판(EspressoPlateL/R)에 외곽선
     if (it && it.id === 'espCup') {
       const slot = env.machines.espressoSlots[it.slot];
-      return slot.cupMesh ? { key: slot.cupMesh, srcList: [slot.cupMesh] } : null;
+      if (slot.cupMesh) return { key: slot.cupMesh, srcList: [slot.cupMesh] };
+      if (slot.plateMesh) return { key: slot.plateMesh, srcList: [slot.plateMesh] };
+      return null;
     }
-    if (it && it.id === 'brew') return null;   // 추출 버튼은 작아서 박스 외곽선으로(헐 rim이 안 보임)
-    // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들)
+    // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들 — 후처리 외곽선은 작은 버튼도 잘 보임)
     if (aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes };
     if (aimMesh.userData.station) return { key: aimMesh.userData.station.root, srcList: [aimMesh.userData.station.root] };
     if (aimMesh.userData.outlineRoot) return { key: aimMesh.userData.outlineRoot, srcList: [aimMesh.userData.outlineRoot] };
@@ -1440,13 +1437,13 @@ const Game = (() => {
   function updateAimHighlight(aimMesh) {
     const box = env.aimHighlight;
     const spec = aimOutlineSpec(aimMesh);
-    if (spec) {                            // 모델 메시에 맞춘 헐 외곽선
+    if (spec && _outlinePass) {             // 모델 메시 → 후처리 외곽선
       if (box) box.visible = false;
-      if (_outlineSrc !== spec.key) { clearOutlineClones(); buildOutline(spec.srcList); _outlineSrc = spec.key; }
+      if (_outlineSrc !== spec.key) { _outlinePass.selectedObjects = collectOutlineTargets(spec.srcList); _outlineSrc = spec.key; }
       return;
     }
-    if (_outlineClones.length) clearOutlineClones();
-    if (!box) return;                      // 모델 매핑 불가 → 히트박스 박스 폴백
+    if (_outlineSrc !== null) clearOutline();
+    if (!box) return;                      // 모델 매핑 불가(또는 컴포저 준비 전) → 히트박스 박스 폴백
     const g = aimMesh && aimMesh.geometry && aimMesh.geometry.parameters;
     if (g) {
       aimMesh.updateWorldMatrix(true, false);
@@ -1660,6 +1657,8 @@ const Game = (() => {
   return {
     init, update, newGame, continueGame, nextDay, hasSave, onAngryLeave,
     beginOpen, openPrepPanel, closePrepPanel,
+    setOutlinePass(p) { _outlinePass = p; },   // main.js가 후처리 OutlinePass 주입
+
     get mode() { return mode; },
     set mode(v) { mode = v; },
     get prepPanelOpen() { return prepPanelOpen; },
@@ -1669,7 +1668,7 @@ const Game = (() => {
         // 내려놓기 표시·레시피북·조준 아웃라인 숨김 (머신 작업은 계속 표시되며 시간만 정지)
         env.placeIndicator.visible = false;
         if (env.aimHighlight) env.aimHighlight.visible = false;
-        clearOutlineClones();
+        clearOutline();
         $('prompt').classList.add('hidden');
         $('recipeBook').classList.add('hidden');
       }

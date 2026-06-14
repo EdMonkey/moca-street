@@ -406,11 +406,18 @@
 <script type="module">
   import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
   import { RGBELoader } from './vendor/jsm/loaders/RGBELoader.js';
+  // 후처리 외곽선(OutlinePass) 체인 — 공식 three 애드온을 GLTFLoader와 동일하게 vendoring
+  import { EffectComposer } from './vendor/jsm/postprocessing/EffectComposer.js';
+  import { RenderPass } from './vendor/jsm/postprocessing/RenderPass.js';
+  import { OutlinePass } from './vendor/jsm/postprocessing/OutlinePass.js';
+  import { OutputPass } from './vendor/jsm/postprocessing/OutputPass.js';
   window.GLTFLoader = GLTFLoader;
   window.RGBELoader = RGBELoader;
   if (window.Assets) window.Assets.boot(GLTFLoader);
   // 실내 HDR 환경맵(PBR 금속 반사) — main.js가 폴백 환경맵을 먼저 깔고, HDR 로드되면 교체
   if (window.__applyHDREnv) window.__applyHDREnv(RGBELoader);
+  // 후처리 컴포저 초기화(외곽선) — main.js가 렌더 루프를 composer 경로로 전환
+  if (window.__initOutline) window.__initOutline({ EffectComposer, RenderPass, OutlinePass, OutputPass });
 </script>
 </body>
 </html>

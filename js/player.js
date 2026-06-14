@@ -110,6 +110,7 @@ const Player = (() => {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
     const hits = ray.intersectObjects(env.interactables, false);
     // 겹친 박스 중 '점이 가장 정확히 향한' 것 선택 — 박스 중심이 조준선에 가장 가까운 대상
+    // (픽업대 위 놓인 컵 등 작은 박스가 큰 카운터 박스에 가려지는 문제도 함께 해결)
     let best = null, bestPerp = Infinity;
     _aimO.copy(ray.ray.origin); _aimD.copy(ray.ray.direction);
     for (const h of hits) {

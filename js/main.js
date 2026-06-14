@@ -58,6 +58,30 @@
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 120);
   scene.add(camera);
 
+  /* ---------- 후처리 외곽선 컴포저 (index.html 모듈이 OutlinePass 등 준비 후 호출) ----------
+   * RenderPass(씬) → OutlinePass(조준 대상 골드 외곽선) → OutputPass(ACES 톤매핑·sRGB 보존).
+   * MSAA(samples:4) 멀티샘플 렌더타깃으로 antialias:true의 계단현상 완화를 유지한다. */
+  let composer = null, outlinePass = null;
+  window.__initOutline = function ({ EffectComposer, RenderPass, OutlinePass, OutputPass }) {
+    try {
+      const rt = new THREE.WebGLRenderTarget(innerWidth, innerHeight, { type: THREE.HalfFloatType, samples: 4 });
+      composer = new EffectComposer(renderer, rt);
+      composer.addPass(new RenderPass(scene, camera));
+      outlinePass = new OutlinePass(new THREE.Vector2(innerWidth, innerHeight), scene, camera);
+      outlinePass.edgeStrength = 4.0;
+      outlinePass.edgeGlow = 0.3;
+      outlinePass.edgeThickness = 1.4;
+      outlinePass.pulsePeriod = 0;                 // 고정 외곽선(깜빡임 없음)
+      outlinePass.visibleEdgeColor.set(0xffa000);  // 진한 노랑(주황빛) — 시인성 강화
+      outlinePass.hiddenEdgeColor.set(0x6b4200);   // 가려진 부분은 어두운 주황
+      composer.addPass(outlinePass);
+      composer.addPass(new OutputPass());          // 톤매핑·색공간을 체인 끝에서 적용
+      composer.setSize(innerWidth, innerHeight);   // DPR 반영해 타깃·패스 크기 정렬(이중적용 방지)
+      Game.setOutlinePass(outlinePass);
+      if (window.__dbg) { window.__dbg.composer = composer; window.__dbg.outlinePass = outlinePass; }
+    } catch (e) { console.error('[outline] 후처리 초기화 실패:', e); composer = null; outlinePass = null; }
+  };
+
   /* ---------- 월드 & 시스템 초기화 ---------- */
   TEX.build();
   // 환경맵 반사 강도: 금속/대리석은 강하게, 무광 표면은 은은하게
@@ -206,6 +230,7 @@
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(innerWidth, innerHeight);
+    if (composer) composer.setSize(innerWidth, innerHeight);   // 후처리 타깃·패스 크기도 갱신
   });
 
   /* ---------- 메인 루프 ---------- */
@@ -223,7 +248,8 @@
       Weather.update(dt);
       if (env.door) env.door.update(dt);   // 출입문 여닫힘 애니메이션 + 통과 충돌 토글
     }
-    renderer.render(scene, camera);
+    if (composer) composer.render(dt);   // 후처리(외곽선) 경로
+    else renderer.render(scene, camera);  // 컴포저 준비 전 폴백
   }
   loop();
 })();
