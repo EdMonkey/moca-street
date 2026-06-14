@@ -778,6 +778,7 @@ const Game = (() => {
       if (!job.busy) return;
       if (!job.done) {
         job.t += dt;
+        if (job.kind === 'grinder' && job.hasPf) WORLD.setPortafilterFill(job.pfMesh, job.t / job.dur);   // 분쇄 중 가루 차오름
         if (job.t >= job.dur) {
           job.done = true;
           if (job.sound) { job.sound.stop(); job.sound = null; }

@@ -186,7 +186,7 @@ const WORLD = (() => {
       if (m) {
         m.traverse(n => { if (n.isMesh) n.castShadow = false; });
         g.add(m); usedGlb = true;
-        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.014;   // 바스켓 입구 높이에 가루 안착
+        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.008;   // 가루 상단을 림 위로 살짝 봉긋(옆/앞에서도 보이게)
       }
     }
     if (!usedGlb) {   // 폴백: 절차적 포터필터 (glb 로드 전)
@@ -199,6 +199,7 @@ const WORLD = (() => {
     g.add(grounds);
     g.userData.grounds = grounds;
     g.userData.groundsY = groundsY;
+    g.userData.groundsH = 0.024;
     g.userData.glb = usedGlb;
     setPortafilterState(g, g.userData.state || 'filled');
   }
@@ -221,6 +222,20 @@ const WORLD = (() => {
       grounds.scale.y = tamped ? 0.55 : 1;
       grounds.position.y = tamped ? by - 0.004 : by;
     }
+  }
+
+  // 분쇄 중 커피가루가 바닥부터 차오르는 표현 (frac 0..1) — 그라인더에서 사용
+  function setPortafilterFill(group, frac) {
+    const grounds = group.userData.grounds;
+    if (!grounds) return;
+    group.visible = true;
+    grounds.visible = true;
+    grounds.material = GROUNDS_MAT.filled;
+    frac = Math.max(0.02, Math.min(1, frac));
+    const by = group.userData.groundsY != null ? group.userData.groundsY : 0.028;
+    const h = group.userData.groundsH != null ? group.userData.groundsH : 0.024;
+    grounds.scale.y = frac;                                   // 바닥 고정 후 위로 차오름
+    grounds.position.y = (by - h / 2) + (h * frac) / 2;
   }
 
   // 추출 중 컵에 차오르는 에스프레소 — 컵 메시의 자식으로 넣고 setBrewFill로 높이를 키운다
@@ -732,7 +747,7 @@ const WORLD = (() => {
       const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
         const pf = makePortafilterMesh('empty');   // 동적 포터필터(그룹헤드에 장착)
-        pf.position.set(ox, 0.16, 0.26);   // glb 포터필터는 원점이 베이스 → 바스켓이 그룹헤드 아래에 오도록 낮춤
+        pf.position.set(ox, 0.145, 0.26);   // 바스켓 림이 그룹헤드에 맞물리고 가루(봉긋)는 바로 아래로 보이게
         g.add(pf);
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
         stream.visible = false;
@@ -1205,5 +1220,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
 })();
