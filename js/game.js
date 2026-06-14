@@ -878,23 +878,25 @@ const Game = (() => {
     const t = env.machines.tamp && env.machines.tamp.tamper;
     if (t) { t.position.y = 0.012; setTimeout(() => { t.position.y = 0.04; }, 180); }
   }
-  // 손을 뗀(또는 가득 찬) 순간 판정 — 짧은 히트스톱 후 확정
+  // 손을 뗀(또는 가득 찬) 순간 즉시 판정·확정 — 히트스톱(시간 지연) 없음.
+  // 연출 대기 중 시선이 탬핑대를 벗어나면 취소되던 문제를 없애기 위해 떼는 즉시 상태 커밋.
   function lockTampGame(fill) {
     if (tampGame.locked) return;
+    tampGame.locked = true;
     stopTampSound();
     const pz = tampGame.perfect;
     const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
       : (fill >= TAMP_MIN) ? 'good' : 'weak';
-    tampGame.locked = { result, t: 0 };
     if (result === 'weak') {
       AudioFX.err(); Player.punch(0.3);
-      $('tampGame').classList.add('hitMiss');
+      toast('약하게 눌렀어요 — 다시 꾹 눌러 다지세요', 'bad', 1500);
+      endTampGame();
     } else {
       pressTamper();
       AudioFX.tampDone();
       Player.punch(result === 'perfect' ? 1.0 : 0.6);
       if (result === 'perfect') AudioFX.tampPerfectSfx();
-      $('tampGame').classList.add(result === 'perfect' ? 'hitPerfect' : 'hitGood');
+      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', result === 'perfect' ? 'gold' : 'good');
     }
   }
   function finishTamp(perfect, msg, cls) {
@@ -908,17 +910,7 @@ const Game = (() => {
     if (!tampGame) return false;
     const ok = aimData && aimData.id === 'tamp' && held && held.type === 'portafilter' && held.state === 'filled';
     if (!ok) { endTampGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
-    // 판정 후 히트스톱: 게이지를 멈춘 채 결과 연출을 보여주고 확정
-    if (tampGame.locked) {
-      tampGame.locked.t += dt;
-      const r = tampGame.locked.result;
-      if (tampGame.locked.t >= (r === 'weak' ? 0.16 : 0.24)) {
-        if (r === 'weak') { toast('약하게 눌렀어요 — 다시 꾹 눌러 다지세요', 'bad', 1500); endTampGame(); }
-        else finishTamp(r === 'perfect', r === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', r === 'perfect' ? 'gold' : 'good');
-      }
-      return true;
-    }
-    // 누르는 동안 게이지 상승, 손을 떼면 그 지점으로 판정
+    // 누르는 동안 게이지 상승, 손을 떼면 그 지점으로 즉시 판정·확정
     if (useDown) {
       tampGame.fill = Math.min(1, tampGame.fill + dt / TAMP_DUR);
       $('tgFill').style.height = (tampGame.fill * 100) + '%';
@@ -956,18 +948,21 @@ const Game = (() => {
   }
   function lockSteamGame(fill) {
     if (steamGame.locked) return;
+    steamGame.locked = true;
     stopSteamSound();
     const pz = steamGame.perfect;
     const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
       : (fill >= TAMP_MIN) ? 'good' : 'weak';
-    steamGame.locked = { result, t: 0 };
     if (result === 'weak') {
       AudioFX.err();
-      $('tampGame').classList.add('hitMiss');
+      toast('스팀이 약해요 — 다시 꾹 눌러 데우세요', 'bad', 1500);
+      endSteamGame();
     } else {
       AudioFX.tampDone();
       if (result === 'perfect') AudioFX.tampPerfectSfx();
-      $('tampGame').classList.add(result === 'perfect' ? 'hitPerfect' : 'hitGood');
+      finishSteam(result === 'perfect',
+        result === 'perfect' ? '✨ 퍼펙트 마이크로폼! (팁 보너스)' : (steamGame.makingFoam ? '우유 거품 완성!' : '우유 스팀 완성!'),
+        result === 'perfect' ? 'gold' : 'good');
     }
   }
   function finishSteam(perfect, msg, cls) {
@@ -983,18 +978,7 @@ const Game = (() => {
     if (!steamGame) return false;
     const ok = aimData && aimData.id === 'steamer' && held && held.type === 'pitcher' && !held.foam;
     if (!ok) { endSteamGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
-    if (steamGame.locked) {
-      steamGame.locked.t += dt;
-      const r = steamGame.locked.result;
-      if (steamGame.locked.t >= (r === 'weak' ? 0.16 : 0.24)) {
-        if (r === 'weak') { toast('스팀이 약해요 — 다시 꾹 눌러 데우세요', 'bad', 1500); endSteamGame(); }
-        else finishSteam(r === 'perfect',
-          r === 'perfect' ? '✨ 퍼펙트 마이크로폼! (팁 보너스)' : (steamGame.makingFoam ? '우유 거품 완성!' : '우유 스팀 완성!'),
-          r === 'perfect' ? 'gold' : 'good');
-      }
-      return true;
-    }
-    // 누르는 동안 폼 게이지 상승 + 스팀봉 증기, 손 떼면 그 지점으로 판정
+    // 누르는 동안 폼 게이지 상승 + 스팀봉 증기, 손 떼면 그 지점으로 즉시 판정·확정
     if (useDown) {
       steamGame.fill = Math.min(1, steamGame.fill + dt / steamGame.dur);
       $('tgFill').style.height = (steamGame.fill * 100) + '%';
