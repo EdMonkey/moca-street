@@ -986,12 +986,12 @@ const WORLD = (() => {
       g.add(glbl);
       // 삽입된 포터필터가 받침 위에 표시됨 (초기엔 숨김)
       const pfOut = makePortafilterMesh('none');
-      pfOut.position.set(0, 0.23, 0.13);   // glb 그라인더 배출구 높이에 맞춰 포터필터(커피가루)를 위로
+      pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
-        progress: makeProgress(g, 0, 0.34, 0.13),   // 분쇄 중인 포터필터 바로 위
+        progress: makeProgress(g, 0, 0.34, 0.15),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
       childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder', job });
