@@ -384,16 +384,22 @@ const WORLD = (() => {
         scene.add(box(0.14, glassH, 0.2, M().woodDark, b, 0.9 + glassH / 2, z));
         scene.add(box(w, 0.1, 0.18, M().woodDark, cx, 0.9 + glassH * 0.55, z, { cast: false })); // 가로 살
       });
-      // 출입문(항상 열린 상태로 비스듬히)
+      // 출입문 틀(좌/우 기둥)
       scene.add(box(0.14, ROOM.h, 0.2, M().woodDark, 4.7, ROOM.h / 2, z));
       scene.add(box(0.14, ROOM.h, 0.2, M().woodDark, 6.3, ROOM.h / 2, z));
+      // 통유리 출입문(살짝 열린 채) — 전체 유리 + 가는 금속 테두리 + 세로 바 손잡이
       const door = new THREE.Group();
-      const dframe = box(0.74, 2.6, 0.06, M().woodDark, 0.37, 1.3, 0);
-      const dglass = new THREE.Mesh(new THREE.PlaneGeometry(0.54, 2.1), M().glass);
-      dglass.position.set(0.37, 1.45, 0.04);
-      const knob = cyl(0.02, 0.02, 0.12, M().steel, 0.66, 1.25, 0.05, 10);
-      knob.rotation.x = Math.PI / 2;
-      door.add(dframe, dglass, knob);
+      const gmat = M().glass, fmat = M().steel;
+      const leaf = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 2.46), gmat);  // 통유리 한 장(raw 메시 → 그림자 안 만듦)
+      leaf.position.set(0.37, 1.3, 0.02);
+      const railT = box(0.74, 0.08, 0.05, fmat, 0.37, 2.52, 0.02);   // 상단 레일
+      const railB = box(0.74, 0.10, 0.05, fmat, 0.37, 0.06, 0.02);   // 하단 레일
+      const stileL = box(0.05, 2.5, 0.05, fmat, 0.02, 1.3, 0.02);    // 좌측 세로틀
+      const stileR = box(0.05, 2.5, 0.05, fmat, 0.72, 1.3, 0.02);    // 우측 세로틀
+      const handle = cyl(0.016, 0.016, 0.95, fmat, 0.62, 1.3, 0.07, 10);  // 세로 바 손잡이
+      const hTop = cyl(0.013, 0.013, 0.06, fmat, 0.62, 1.74, 0.045, 8); hTop.rotation.x = Math.PI / 2;
+      const hBot = cyl(0.013, 0.013, 0.06, fmat, 0.62, 0.86, 0.045, 8); hBot.rotation.x = Math.PI / 2;
+      door.add(leaf, railT, railB, stileL, stileR, handle, hTop, hBot);
       door.position.set(4.75, 0, z - 0.1);
       door.rotation.y = -0.9;
       scene.add(door);
@@ -1028,9 +1034,9 @@ const WORLD = (() => {
       sun.target.position.set(-1, 0, -1);
       sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.left = -14; sun.shadow.camera.right = 14;
-      sun.shadow.camera.top = 14; sun.shadow.camera.bottom = -14;
-      sun.shadow.camera.near = 2; sun.shadow.camera.far = 45;
+      sun.shadow.camera.left = -18; sun.shadow.camera.right = 18;   // 해가 하루 동안 동→서로 움직여 범위를 넓힘
+      sun.shadow.camera.top = 18; sun.shadow.camera.bottom = -18;
+      sun.shadow.camera.near = 2; sun.shadow.camera.far = 55;
       sun.shadow.bias = -0.0004;
       scene.add(sun, sun.target);
       env.sun = sun;

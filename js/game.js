@@ -1014,6 +1014,7 @@ const Game = (() => {
     if (env.doorSign) env.doorSign.setOpen(false);             // 영업 전 = CLOSE 팻말
     if (typeof Weather !== 'undefined') {                      // 오늘 바깥 날씨 결정 + 실외 분위기 갱신
       const w = Weather.setForDay(S.day);
+      Weather.setClock(8);                                     // 준비 단계 = 아침 08시(해 낮게)
       if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
     }
     UI.hud(); UI.clock();
@@ -1029,6 +1030,7 @@ const Game = (() => {
     $('prepBar').classList.add('hidden');
     open = true; timeSec = 0;
     if (env.doorSign) env.doorSign.setOpen(true);   // 영업 중 = OPEN 팻말
+    if (typeof Weather !== 'undefined') Weather.setClock(9);   // 영업 시작 = 09시
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
     spawnTimer = S.day === 1 ? 7 : 2.5;   // 첫날은 첫 손님 입장까지 여유를 둠
@@ -1071,6 +1073,7 @@ const Game = (() => {
     mode = 'dayEnd';
     Player.enabled = false;
     if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
+    if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
     document.exitPointerLock && document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
@@ -1248,6 +1251,8 @@ const Game = (() => {
       AudioFX.bell();
     }
     UI.clock();
+    if (typeof Weather !== 'undefined')                         // 시각에 맞춰 해 고도·하늘빛 갱신(일출→정오→일몰)
+      Weather.setClock(Math.min(18, 9 + (timeSec / DAY_LEN) * 9));
 
     // 손님 스폰
     if (open) {
