@@ -658,101 +658,88 @@ const WORLD = (() => {
     function buildEspresso(id, x, z, lockSecond) {
       const st = station(id, '에스프레소 머신', x, z, 1.45, 0.8);
       const g = st.root;
-      const body = box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0);
-      const topTray = box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0);
-      const front = box(1.1, 0.26, 0.04, M().blackMatte, 0, 0.4, 0.3);
-      g.add(body, topTray, front);
-      // 원목 사이드 패널(본체 측면과 동일 평면 회피: 안쪽 면을 본체 내부로) + 상단 레일
-      g.add(box(0.06, 0.5, 0.56, M().woodDark, -0.64, 0.33, 0));
-      g.add(box(0.06, 0.5, 0.56, M().woodDark, 0.64, 0.33, 0));
-      g.add(box(1.29, 0.02, 0.04, M().steel, 0, 0.66, 0.28, { cast: false }));
-      // 브랜드 플레이트
-      const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.07),
-        textLabel('MOCHA ST.', 256, 52, 'italic 700 30px Georgia', '#e8b86d', '#1c1815'));
-      plate.position.set(0, 0.55, 0.335);
-      g.add(plate);
-      // 크롬 그룹 커버(전면 패널 면 0.32보다 앞으로 빼서 z-fighting 방지)
-      [-0.3, 0.3].forEach(ox => g.add(box(0.2, 0.14, 0.12, M().steel, ox, 0.42, 0.27)));
-      // 상단 데코 컵들 (트레이 윗면과 동일 평면 회피)
-      for (let i = 0; i < 4; i++)
-        g.add(cyl(0.045, 0.038, 0.07, M().cupWhite, -0.45 + i * 0.3, 0.684, 0, 12, { cast: false }));
-      // 그룹헤드 2개 + 장착식 포터필터 + 드립트레이
-      // 그룹헤드를 충분히 높여(y 0.30) 아이스컵(0.16m)도 추출구 아래에 들어가게 함
-      const slotBase = env.machines.espressoSlots.length;   // 추가 머신은 전역 슬롯 배열에 이어 붙임
+      // ---- 비주얼 셸: glb EspressoMachine(게임 앵커에 맞춰 새로 제작, ×1.0) 또는 절차적 폴백 ----
+      const vis = new THREE.Group(); g.add(vis);
+      decorVisual(vis, 'EspressoMachine', () => {
+        const p = [];
+        p.push(box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0));
+        p.push(box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0));
+        p.push(box(1.1, 0.26, 0.04, M().blackMatte, 0, 0.4, 0.3));
+        p.push(box(0.06, 0.5, 0.56, M().woodDark, -0.64, 0.33, 0));
+        p.push(box(0.06, 0.5, 0.56, M().woodDark, 0.64, 0.33, 0));
+        p.push(box(1.29, 0.02, 0.04, M().steel, 0, 0.66, 0.28, { cast: false }));
+        const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.07),
+          textLabel('MOCHA ST.', 256, 52, 'italic 700 30px Georgia', '#e8b86d', '#1c1815'));
+        plate.position.set(0, 0.55, 0.335); p.push(plate);
+        [-0.3, 0.3].forEach(ox => p.push(box(0.2, 0.14, 0.12, M().steel, ox, 0.42, 0.27)));
+        for (let i = 0; i < 4; i++)
+          p.push(cyl(0.045, 0.038, 0.07, M().cupWhite, -0.45 + i * 0.3, 0.684, 0, 12, { cast: false }));
+        [-0.3, 0.3].forEach(ox => p.push(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14)));   // 그룹헤드
+        p.push(box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3));   // 드립트레이
+        // 압력 게이지 + LED
+        const [gc, gx] = TEX.canvas(128, 128);
+        gx.fillStyle = '#f5f0e2'; gx.beginPath(); gx.arc(64, 64, 60, 0, 7); gx.fill();
+        gx.strokeStyle = '#2a2520'; gx.lineWidth = 7;
+        gx.beginPath(); gx.arc(64, 64, 56, 0, 7); gx.stroke();
+        gx.lineWidth = 3;
+        for (let a = -0.75 * Math.PI; a <= -0.25 * Math.PI + 1.6; a += 0.31) {
+          gx.beginPath();
+          gx.moveTo(64 + Math.cos(a) * 44, 64 + Math.sin(a) * 44);
+          gx.lineTo(64 + Math.cos(a) * 52, 64 + Math.sin(a) * 52);
+          gx.stroke();
+        }
+        gx.strokeStyle = '#c43e2e'; gx.lineWidth = 5;
+        gx.beginPath(); gx.moveTo(64, 64); gx.lineTo(64 + 34, 64 - 30); gx.stroke();
+        const gt = new THREE.CanvasTexture(gc); gt.colorSpace = THREE.SRGBColorSpace;
+        const gauge = new THREE.Mesh(new THREE.CircleGeometry(0.052, 24),
+          new THREE.MeshStandardMaterial({ map: gt, roughness: 0.25 }));
+        gauge.position.set(0, 0.42, 0.34);
+        const gring = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.008, 8, 24), M().steel);
+        gring.position.copy(gauge.position);
+        const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8),
+          new THREE.MeshStandardMaterial({ color: 0xff9a3e, emissive: 0xff7a1e, emissiveIntensity: 2 }));
+        led.position.set(-0.48, 0.42, 0.34);
+        p.push(gauge, gring, led);
+        // 스팀봉 + 노브
+        const steamBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 14), M().steel);
+        steamBall.position.set(0.57, 0.4, 0.3);
+        const steamWand = cyl(0.013, 0.013, 0.3, M().steel, 0.565, 0.255, 0.325, 12); steamWand.rotation.x = -0.22;
+        const steamNozzle = cyl(0.019, 0.009, 0.055, M().steelDark, 0.562, 0.085, 0.36, 12); steamNozzle.rotation.x = -0.22;
+        const knobBase = cyl(0.026, 0.026, 0.03, M().steel, 0.46, 0.44, 0.31, 16); knobBase.rotation.x = Math.PI / 2;
+        const knobGrip = cyl(0.036, 0.033, 0.045, M().blackMatte, 0.46, 0.44, 0.345, 18); knobGrip.rotation.x = Math.PI / 2;
+        const knobMark = box(0.005, 0.022, 0.006, M().cupWhite, 0.46, 0.44, 0.37, { cast: false });
+        p.push(steamBall, steamWand, steamNozzle, knobBase, knobGrip, knobMark);
+        const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
+        lbl.position.set(0, 0.85, 0.25); p.push(lbl);
+        return p;
+      }, 0, 1.0);
+
+      // ---- 기능부 (앵커는 유지 — 새 glb 그룹헤드 ±0.3 / 우측 스팀완드와 정렬) ----
+      const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
-        g.add(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14));            // 그룹헤드
-        // 포터필터(기본 '빈' 상태로 장착되어 있음)
-        const pf = makePortafilterMesh('empty');
+        const pf = makePortafilterMesh('empty');   // 동적 포터필터(그룹헤드에 장착)
         pf.position.set(ox, 0.235, 0.26);
         g.add(pf);
-        // 추출 중 커피 줄기(애니메이션용)
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
         stream.visible = false;
         g.add(stream);
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
-          progress: makeProgress(g, ox, 0.27, 0.3),   // 추출 중인 컵 바로 위
+          progress: makeProgress(g, ox, 0.27, 0.3),
           stream, pf, pfState: 'empty', tampPerfect: false, brewLiquid: null,
-          locked: (i === 1 ? !!lockSecond : false),    // 원래 머신의 2번 슬롯만 듀얼헤드 업그레이드 필요
+          locked: (i === 1 ? !!lockSecond : false),
           busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
       });
-      const drip = box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3);
-      g.add(drip);
-      // 압력 게이지 (다이얼 페이스) + 전원 LED
-      const [gc, gx] = TEX.canvas(128, 128);
-      gx.fillStyle = '#f5f0e2'; gx.beginPath(); gx.arc(64, 64, 60, 0, 7); gx.fill();
-      gx.strokeStyle = '#2a2520'; gx.lineWidth = 7;
-      gx.beginPath(); gx.arc(64, 64, 56, 0, 7); gx.stroke();
-      gx.lineWidth = 3;
-      for (let a = -0.75 * Math.PI; a <= -0.25 * Math.PI + 1.6; a += 0.31) {
-        gx.beginPath();
-        gx.moveTo(64 + Math.cos(a) * 44, 64 + Math.sin(a) * 44);
-        gx.lineTo(64 + Math.cos(a) * 52, 64 + Math.sin(a) * 52);
-        gx.stroke();
-      }
-      gx.strokeStyle = '#c43e2e'; gx.lineWidth = 5;
-      gx.beginPath(); gx.moveTo(64, 64); gx.lineTo(64 + 34, 64 - 30); gx.stroke();
-      const gt = new THREE.CanvasTexture(gc); gt.colorSpace = THREE.SRGBColorSpace;
-      const gauge = new THREE.Mesh(new THREE.CircleGeometry(0.052, 24),
-        new THREE.MeshStandardMaterial({ map: gt, roughness: 0.25 }));
-      gauge.position.set(0, 0.42, 0.34);
-      const gring = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.008, 8, 24), M().steel);
-      gring.position.copy(gauge.position);
-      const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0xff9a3e, emissive: 0xff7a1e, emissiveIntensity: 2 }));
-      led.position.set(-0.48, 0.42, 0.34);
-      g.add(gauge, gring, led);
-      // 스팀봉 + 스팀 밸브 노브 (오른쪽) — 밀크 스티머를 머신에 통합. 별도 [E]로 상호작용한다.
-      const steamCupPos = new THREE.Vector3(0.6, 0.03, 0.3);   // 스팀할 컵이 놓이는 우측 자리
-      // 스팀봉: 볼 조인트 → 크롬 파이프 → 어두운 노즐 팁 (앞쪽 아래로 내려옴)
-      const steamBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 14), M().steel);
-      steamBall.position.set(0.57, 0.4, 0.3);
-      const steamWand = cyl(0.013, 0.013, 0.3, M().steel, 0.565, 0.255, 0.325, 12);
-      steamWand.rotation.x = -0.22;                             // 앞쪽 아래로 기울인 스팀봉
-      const steamNozzle = cyl(0.019, 0.009, 0.055, M().steelDark, 0.562, 0.085, 0.36, 12);
-      steamNozzle.rotation.x = -0.22;
-      // 스팀 밸브 노브: 크롬 베이스 + 검은 그립 + 흰 인디케이터 (앞면에서 돌리는 손잡이)
-      const knobBase = cyl(0.026, 0.026, 0.03, M().steel, 0.46, 0.44, 0.31, 16);
-      knobBase.rotation.x = Math.PI / 2;
-      const knobGrip = cyl(0.036, 0.033, 0.045, M().blackMatte, 0.46, 0.44, 0.345, 18);
-      knobGrip.rotation.x = Math.PI / 2;
-      const knobMark = box(0.005, 0.022, 0.006, M().cupWhite, 0.46, 0.44, 0.37, { cast: false });
-      g.add(steamBall, steamWand, steamNozzle, knobBase, knobGrip, knobMark);
       env.machines.espressoGroup = g;
-      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });            // 상단 장식 증기
-      // 통합 밀크 스티머 잡 (별도 히트박스 id 'steamer'). 스팀봉 증기는 노브 조작/스팀 중에만 분사.
+      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
       const steamJob = {
-        kind: 'steamer', st, localPos: steamCupPos,
-        wandLocal: new THREE.Vector3(0.562, 0.045, 0.37),   // 스팀봉 노즐 끝(증기 분출 지점)
-        steamT: 0,                                          // >0이면 스팀 분사 중
-        progress: makeProgress(g, 0.6, 0.27, 0.3),   // 스팀 중인 컵 바로 위
+        kind: 'steamer', st, localPos: new THREE.Vector3(0.6, 0.03, 0.3),
+        wandLocal: new THREE.Vector3(0.562, 0.045, 0.37), steamT: 0,
+        progress: makeProgress(g, 0.6, 0.27, 0.3),
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
       env.machines.steamerJobs.push(steamJob);
-      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
-      lbl.position.set(0, 0.85, 0.25);
-      g.add(lbl);
       childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 0 });
       childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 1 });
       childHitbox(st, 0.4, 0.62, 0.55, 0.6, 0.28, 0.28, { id: 'steamer', job: steamJob });   // 우측 통합 스티머
