@@ -126,47 +126,59 @@ const UI = (() => {
         if (S.stocks.beans <= 0) return '원두 없음 — 창고에서 보충하세요';
         return E + '원두 분쇄 시작';
       }
-      case 'espresso': {
+      case 'espCup': {
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
+        const canPour = slot.cupMesh && slot.drink.cup !== 'shot' && !(slot.busy && !slot.done);
+        if (canPour && held && held.type === 'shotglass')
+          return !held.filled ? '샷잔이 비어 있어요' : slot.drink.espresso ? '이미 샷이 든 컵이에요' : E + '샷 붓기 ☕';
+        if (canPour && held && held.type === 'pitcher')
+          return (!held.milk && !held.foam) ? '피처가 비어 있어요' : slot.drink.milk ? '이미 우유가 든 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
-        // 컵을 들고 있으면 샷잔 올리기
-        if (held && held.type === 'drink' && !held.drink.espresso)
-          return slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '컵 올리기';
-        if (held && held.type === 'drink') return '이미 샷이 추출된 컵이에요';
+        if (held && held.type === 'drink')
+          return held.drink.espresso ? '이미 샷이 든 컵이에요' : slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '컵 올리기';
         if (held && held.type === 'shotglass')
           return held.filled ? '샷이 든 샷잔 — 컵에 따르세요' : slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '샷잔 올리기';
-        if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
-        // 빈손 + 컵이 올라가 있음 → 추출 버튼
-        if (slot.cupMesh) {
-          if (slot.pfState === 'tamped') return E + '에스프레소 추출 ▶';
-          if (slot.pfState === 'filled') return E + '샷잔 내리기 (탬핑 필요)';
-          if (slot.pfState === 'used') return E + '샷잔 내리기 (사용한 가루 비우기)';
-          if (slot.pfState === 'empty') return E + '샷잔 내리기 (포터필터 분쇄 필요)';
-          return E + '샷잔 내리기 (포터필터 장착·탬핑 필요)';
-        }
-        // 빈손 + 컵 없음 → 포터필터 분리
-        if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
-        if (slot.pfState === 'tamped') return E + '포터필터 분리 (탬핑 완료 ✓ — 샷잔을 올리세요)';
-        if (slot.pfState === 'filled') return E + '포터필터 분리 (탬핑 필요 — 탬핑 스테이션으로)';
-        return E + `포터필터 분리 (${slot.pfState === 'used' ? '사용한 가루 — 넉박스에 비우세요' : '비어 있음 — 분쇄하세요'})`;
+        if (held) return '컵이나 샷잔을 올리세요';
+        return slot.cupMesh ? E + '컵 내리기' : '컵이나 샷잔을 올리세요';
       }
-      case 'steamer': {
-        const job = it.job;
-        if (job.busy) {
-          if (!job.done) return `스팀 중… ${Math.ceil(job.dur - job.t)}s`;
-          return held ? '손을 비우면 피처를 꺼낼 수 있어요' : E + '스팀 피처 꺼내기';
-        }
+      case 'pfSlot': {
+        const slot = env.machines.espressoSlots[it.slot];
+        if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
+        if (slot.busy) return '추출 중…';
+        if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
+        if (held) return '포터필터를 들고 오세요';
+        if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
+        return E + `포터필터 분리 (${slot.pfState === 'tamped' ? '탬핑 완료 ✓' : slot.pfState === 'used' ? '사용한 가루 — 넉박스에' : slot.pfState === 'empty' ? '비어 있음 — 분쇄' : '탬핑 필요'})`;
+      }
+      case 'brew': {
+        const slot = env.machines.espressoSlots[it.slot];
+        if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
+        if (slot.busy) return slot.done ? '추출 완료 — 컵을 꺼내세요' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
+        if (!slot.cupMesh) return '컵을 먼저 올리세요';
+        if (slot.pfState !== 'tamped')
+          return slot.pfState === 'none' ? '탬핑한 포터필터를 장착하세요'
+            : slot.pfState === 'filled' ? '탬핑이 필요해요 (탬핑 스테이션)'
+            : slot.pfState === 'used' ? '포터필터를 분리해 비우세요' : '포터필터를 분쇄하세요';
+        return E + '에스프레소 추출 ▶';
+      }
+      case 'steamwand': {
         if (held && held.type === 'pitcher')
           return held.foam ? '이미 거품까지 만들었어요 — 컵에 부으세요' : held.milk ? E + '꾹 눌러 우유 거품(마이크로폼)' : E + '꾹 눌러 우유 스팀';
         if (held && held.type === 'drink') return '컵에 직접 스팀 불가 — 스팀 피처를 사용하세요';
-        return held ? '스팀 피처를 들고 오세요' : E + '스팀 분사 (노브 돌리기)';
+        return held ? '스팀 피처를 들고 오세요' : E + '스팀 분사';
+      }
+      case 'steamknob': {
+        if (held && held.type === 'pitcher') return '스팀봉에 대고 데우세요';
+        return E + '스팀 분사 (노브)';
       }
       case 'waterHot': case 'waterCold': {
         const job = env.machines.waterJobs[it.id];
         const nm = it.id === 'waterHot' ? '온수' : '냉수';
         if (job.busy) {
           if (!job.done) return `${nm} 받는 중…`;
+          if (held && held.type === 'shotglass')
+            return !held.filled ? '샷잔이 비어 있어요' : job.drink.espresso ? '이미 샷이 든 컵이에요' : E + '샷 붓기 ☕';
           return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
         }
         if (held && held.type === 'drink' && !held.drink.water) return E + `컵 올려 ${nm} 받기`;

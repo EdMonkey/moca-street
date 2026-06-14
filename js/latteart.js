@@ -1,118 +1,164 @@
 /* ============================================================
- * latteart.js — 라떼아트 미니게임 (자유 푸어)
- * 우유를 부으며 마우스(피처)를 좌우로 흔들어 패턴을 만든다.
+ * latteart.js — 라떼아트 미니게임 (자유 푸어 · 유체 어드벡션)
+ * 우유를 부으며 마우스(피처)를 "위로 밀며 좌우로 흔들어" 무늬를 그린다.
  *   - 포인터 락은 유지한 채 movementX/Y(상대 이동)로 피처를 움직임
  *     (락을 풀면 main.js가 일시정지로 전환되므로 풀지 않는다).
- *   - 표면을 2D 캔버스로 다룬다: 정적 크레마(갈색) 위에 우유(흰색) 레이어를
- *     얹고, 부을 때마다 이동 방향으로 기존 우유를 살짝 끌어(smear) "흘러드는"
- *     착시를 만든다 — 풀 유체 시뮬 없이 자유 푸어의 감성만 흉내.
- *   - 표면이 고정 템포로 좌우로 출렁(슬로시 메트로놈)이고, 그 박자에 맞춰 마우스를
- *     흔들면 공명해 출렁임이 커지며 무늬가 살아난다(가로 스트립 변위로 렌더).
- *   - 채점: 박자 일치도(싱크)를 메인으로, 좌우 대칭 + 적정 양을 보조로.
+ *   - 실제 라떼아트 물리를 흉내: 피처 움직임이 표면에 "흐름(속도장)"을 만들고,
+ *     흰 우유(밀도장)가 그 흐름에 끌려(어드벡션) 잎으로 번진다. 외부 박자 없음 —
+ *     흐름·물결을 내가 직접 만든다. (작은 CPU 그리드, WebGL 불필요)
+ *     · 좌우로 흔들면 측면 흐름 → 잎의 좌우 결
+ *     · 위로 밀며 빼면 잎이 뒤로 쌓이고, 마지막에 가운데로 곧게 빼면 줄기(컷스루)
+ *   - 채점: 흔들기의 일관성(펜듈럼) + 위로 빼기 + 좌우 대칭 + 적정 양.
  * 게임 코어와 독립 — start(opts)로 시작하고, 판정되면 opts.onDone(tier, score) 호출.
  * 전역 LatteArt로 노출.
  * ============================================================ */
 const LatteArt = (() => {
-  const SIZE = 240;                 // 시뮬/표시 캔버스 한 변(px)
-  const CX = SIZE / 2, CY = SIZE / 2, R = 104;   // 컵 중심·반지름
-  const { ART_VOL, ART_PERFECT, ART_GOOD, ART_SWAY_F } = DATA;
-  // 표면 출렁임(슬로시) — 고정 템포 메트로놈에 마우스를 맞춰 흔들면 공명해 진폭이 커진다.
-  const OMEGA = Math.PI * 2 * ART_SWAY_F;
-  const BASE_AMP = 3.0;             // 기본 슬로시 진폭(px) — 항상 살짝 출렁여 박자를 보여줌
-  const GAIN_AMP = 13;             // 싱크(공명) 시 추가 진폭(px)
+  const SIZE = 240;                 // 표시 캔버스 한 변(px)
+  const CX = SIZE / 2, CY = SIZE / 2, R = 104;   // 컵 중심·반지름(px)
+  const { ART_VOL, ART_PERFECT, ART_GOOD } = DATA;
+
+  // 유체 그리드 (컵 표면을 N×N으로 다룸)
+  const N = 84;
+  const CELL = SIZE / N;            // 셀당 px
+  const GC = N / 2;                 // 그리드 중심
+  const RG = R / CELL;              // 그리드 반지름
+  const u = new Float32Array(N * N), v = new Float32Array(N * N);   // 속도장(셀/초)
+  const m = new Float32Array(N * N), m2 = new Float32Array(N * N);  // 우유 밀도
+  const inside = new Uint8Array(N * N);                             // 컵 안 마스크
+  const rowU = new Float32Array(N);                                // 행별 평균 수평속도(표면 변위용)
+  (function buildMask() {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++)
+      inside[y * N + x] = Math.hypot(x - GC, y - GC) <= RG ? 1 : 0;
+  })();
+
+  // 튜닝값
+  const MILK_RATE = 105;     // 초당 우유 주입량
+  const FOUNTAIN = 9;        // 닿는 지점 바깥 분수 흐름 세기(과하면 우유가 흩어짐)
+  const VEL_FROM_MOVE = 0.7;       // 피처 이동 → 흐름 전달
+  const VEL_DAMP = 0.955;          // 프레임당 속도 감쇠(60fps 기준)
+  const MILK_DECAY = 0.999;        // 프레임당 우유 감쇠(우유가 오래 남아 또렷이 쌓이도록)
+  const DISP = 5;                  // 표면 수평 변위(물결) 스케일
 
   let active = false;
-  let onDone = null;                // 판정 콜백(tier, score)
-  let disp, dctx;                   // 표시 캔버스(오버레이에 보임)
-  let milk, mctx;                   // 우유 레이어(오프스크린, 왜곡 없는 원본 — 채점 기준)
-  let surf, sctx;                   // 크레마+우유 합성 버퍼(변위 렌더용)
-  let crema;                        // 크레마 텍스처(정적, 시작 시 1회 생성)
+  let onDone = null;
+  let disp, dctx;                   // 표시 캔버스
+  let surf, sctx;                   // 크레마+우유 합성 버퍼(변위 전)
+  let mcv, mctx, mImg;              // 우유 그리드 → 픽셀 오버레이(N×N)
+  let crema;                        // 크레마 텍스처(정적)
 
-  let phase = 0;                    // 슬로시 메트로놈 위상
-  let waveAmp = BASE_AMP;           // 현재 출렁임 진폭(싱크에 따라 증가)
-  let syncLevel = 0;                // 최근 박자 일치도(0~1) — 진폭/연출에 사용
-  let syncSum = 0, syncFrames = 0;  // 붓는 동안 평균 싱크(최종 점수)
-
-  let px, py;                       // 피처(우유 줄기) 위치
-  let prevPx, prevPy;               // 직전 프레임 위치 — 리본을 잇는 데 사용
-  let vx = 0, vy = 0;               // 부드럽게 보간한 이동 속도(px/프레임)
-  let vol = 0;                      // 남은 우유 양(초)
-  let elapsed = 0;
-  let idleT = 0;                    // 붓기 시작 후 손을 뗀 채 흐른 시간(자동 마감용)
-  let pouredOnce = false;
-  let pouring = false;
+  let px, py, prevPx, prevPy;       // 피처 위치(px)
+  let vol = 0, elapsed = 0, idleT = 0, pouredOnce = false, pouring = false;
   let patternLabel = '하트';
 
-  // 동작 채점 누적값
-  let pourPath = 0;                 // 부으며 이동한 총 거리(너무 가만있으면 감점)
+  // 채점 누적
+  let osc = 0, lastSign = 0, runDist = 0;   // 좌우 흔들기 횟수/일관성
+  let pourPath = 0;                          // 총 이동량
+  let startY = 0, minY = 0;                  // 위로 빼기 진행도
 
-  function makeCanvas() {
+  function clamp(a, lo, hi) { return a < lo ? lo : a > hi ? hi : a; }
+  function makeCanvas(w, h) {
     const c = document.createElement('canvas');
-    c.width = c.height = SIZE;
+    c.width = w; c.height = h;
     return c;
   }
 
-  // 에스프레소 크레마 텍스처 — 가운데가 짙고 가장자리가 옅은 갈색 + 미세한 얼룩
+  // 크레마 텍스처 — 실제 라떼처럼 따뜻한 캐러멜/오렌지(짙은 초콜릿 갈색이 아니라).
   function buildCrema() {
-    crema = makeCanvas();
+    crema = makeCanvas(SIZE, SIZE);
     const c = crema.getContext('2d');
     const g = c.createRadialGradient(CX, CY - 8, 10, CX, CY, R);
-    g.addColorStop(0, '#6b4324');
-    g.addColorStop(0.55, '#8a5a30');
-    g.addColorStop(0.85, '#b07a44');
-    g.addColorStop(1, '#7a4f2b');
+    g.addColorStop(0, '#cf9352');     // 가운데 옅은 캐러멜
+    g.addColorStop(0.55, '#c2823f');
+    g.addColorStop(0.85, '#ad6e30');
+    g.addColorStop(1, '#965b28');     // 가장자리 약간 짙게
     c.fillStyle = g;
     c.fillRect(0, 0, SIZE, SIZE);
-    // 크레마 결 — 옅은 점 얼룩
     for (let i = 0; i < 900; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.random() * R;
       const x = CX + Math.cos(a) * r, y = CY + Math.sin(a) * r;
-      c.fillStyle = `rgba(${200 + Math.random() * 40 | 0},${150 + Math.random() * 40 | 0},90,${Math.random() * 0.12})`;
+      c.fillStyle = `rgba(${225 + Math.random() * 30 | 0},${175 + Math.random() * 35 | 0},120,${Math.random() * 0.12})`;
       c.fillRect(x, y, 1.5, 1.5);
     }
   }
 
-  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+  // 가우시안 스플랫: 밀도장에 주입
+  function splatM(gx, gy, rad, amt) {
+    const r = Math.ceil(rad), r2 = rad * rad;
+    for (let y = Math.max(0, gy - r | 0); y <= Math.min(N - 1, gy + r | 0); y++)
+      for (let x = Math.max(0, gx - r | 0); x <= Math.min(N - 1, gx + r | 0); x++) {
+        const i = y * N + x; if (!inside[i]) continue;
+        m[i] += amt * Math.exp(-((x - gx) ** 2 + (y - gy) ** 2) / r2);
+      }
+  }
+  // 속도장 주입: 피처 이동 방향 + 닿는 지점 바깥 분수
+  function splatVel(gx, gy, rad, vxg, vyg, fountain) {
+    const r = Math.ceil(rad), r2 = rad * rad;
+    for (let y = Math.max(0, gy - r | 0); y <= Math.min(N - 1, gy + r | 0); y++)
+      for (let x = Math.max(0, gx - r | 0); x <= Math.min(N - 1, gx + r | 0); x++) {
+        const i = y * N + x; if (!inside[i]) continue;
+        const w = Math.exp(-((x - gx) ** 2 + (y - gy) ** 2) / r2);
+        u[i] += vxg * w; v[i] += vyg * w;
+        if (fountain) {
+          const ddx = x - gx, ddy = y - gy, dd = Math.hypot(ddx, ddy) + 1e-3;
+          u[i] += ddx / dd * fountain * w; v[i] += ddy / dd * fountain * w;
+        }
+      }
+  }
 
-  // 우유 줄기가 표면에 닿으며 흰 거품 리본을 흘린다.
-  //   직전 피처 위치 → 현재 위치를 따라 부드러운 흰 원을 촘촘히 찍어 끊김 없는 리본을 만든다.
-  //   (우유 레이어를 자기 위에 합성하는 피드백 smear는 색 노이즈를 만들어 폐기 — 브러시로 깨끗하게.)
-  function deposit() {
-    const speed = Math.hypot(px - prevPx, py - prevPy);
-    const r = clamp(13 - speed * 0.22, 7, 14);     // 빠를수록 줄기가 가늘어짐
-    const dist = speed;
-    const steps = Math.max(1, Math.ceil(dist / 3));
-    for (let s = 1; s <= steps; s++) {
-      const tt = s / steps;
-      const x = prevPx + (px - prevPx) * tt;
-      const y = prevPy + (py - prevPy) * tt;
-      const g = mctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, 'rgba(248,242,229,0.85)');
-      g.addColorStop(0.7, 'rgba(246,239,224,0.5)');
-      g.addColorStop(1, 'rgba(246,239,224,0)');
-      mctx.fillStyle = g;
-      mctx.beginPath();
-      mctx.arc(x, y, r, 0, Math.PI * 2);
-      mctx.fill();
+  // 한 스텝 시뮬: 어드벡션(밀도) + 감쇠
+  function step(dt) {
+    const fr = dt * 60;                       // 60fps 기준 프레임 환산
+    // 우유 어드벡션 (semi-Lagrangian backtrace, bilinear)
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const i = y * N + x;
+      if (!inside[i]) { m2[i] = 0; continue; }
+      let sx = x - u[i] * dt, sy = y - v[i] * dt;
+      sx = sx < 0 ? 0 : sx > N - 1.001 ? N - 1.001 : sx;
+      sy = sy < 0 ? 0 : sy > N - 1.001 ? N - 1.001 : sy;
+      const x0 = sx | 0, y0 = sy | 0, fx = sx - x0, fy = sy - y0, j = y0 * N + x0;
+      const val = m[j] * (1 - fx) * (1 - fy) + m[j + 1] * fx * (1 - fy)
+        + m[j + N] * (1 - fx) * fy + m[j + N + 1] * fx * fy;
+      m2[i] = val * Math.pow(MILK_DECAY, fr);
+    }
+    m.set(m2);
+    // 속도 감쇠 + 경계, 행별 평균 수평속도(표면 변위)
+    const vd = Math.pow(VEL_DAMP, fr);
+    for (let y = 0; y < N; y++) {
+      let su = 0, cnt = 0;
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x;
+        if (!inside[i]) { u[i] = v[i] = 0; continue; }
+        u[i] = clamp(u[i] * vd, -24, 24); v[i] = clamp(v[i] * vd, -24, 24);
+        if (m[i] > 1.4) m[i] = 1.4;
+        su += u[i]; cnt++;
+      }
+      rowU[y] = cnt ? su / cnt : 0;
+    }
+    // 행 변위 스무딩 — 인접 행 속도차로 표면이 찢어져 보이는 것을 완화(부드러운 물결)
+    let prev = rowU[0];
+    for (let y = 1; y < N - 1; y++) {
+      const cur = rowU[y];
+      rowU[y] = prev * 0.25 + cur * 0.5 + rowU[y + 1] * 0.25;
+      prev = cur;
     }
   }
 
-  // 표면의 수평 변위(px) — 위(뒤)로 갈수록 슬로시가 크고, 진행파 잔물결을 더한다.
-  function waveOffset(y) {
-    const depth = clamp((CY + R - y) / (2 * R), 0, 1);     // 아래=0, 위=1
-    const slosh = Math.sin(phase) * waveAmp * (0.35 + depth * 0.95);
-    const ripple = Math.sin(y * 0.17 - phase * 1.7) * waveAmp * 0.4;
-    return slosh + ripple;
-  }
-
   function render() {
-    // 1) 크레마+우유를 합성 버퍼에 그림. 크레마는 캔버스를 꽉 채워(원형 클립 X) 두어야
-    //    스트립 변위로 가장자리가 밀려도 빈틈 없이 크레마가 받쳐준다(원형은 표시 단계에서 클립).
+    // 1) 우유 그리드 → N×N 오버레이(흰색, 알파=밀도)
+    const d = mImg.data;
+    for (let i = 0; i < N * N; i++) {
+      // 살짝 문턱을 둬 옅은 우유는 떨궈 경계를 또렷하게(층 사이 캐러멜 결이 보이도록)
+      const a = inside[i] ? clamp((m[i] - 0.04) * 3.4, 0, 1) : 0;
+      const p = i * 4;
+      d[p] = 251; d[p + 1] = 246; d[p + 2] = 236; d[p + 3] = (a * 255) | 0;
+    }
+    mctx.putImageData(mImg, 0, 0);
+    // 2) 크레마 + 우유 합성
     sctx.clearRect(0, 0, SIZE, SIZE);
     sctx.drawImage(crema, 0, 0);
-    sctx.drawImage(milk, 0, 0);
-
-    // 2) 가로 스트립마다 수평 변위를 줘 표면이 좌우로 출렁이게 블릿
+    sctx.imageSmoothingEnabled = true;
+    sctx.drawImage(mcv, 0, 0, N, N, 0, 0, SIZE, SIZE);
+    // 3) 행별 수평 변위로 표면이 흐름 따라 출렁이게 블릿(물결)
     dctx.clearRect(0, 0, SIZE, SIZE);
     dctx.save();
     dctx.beginPath();
@@ -120,49 +166,24 @@ const LatteArt = (() => {
     dctx.clip();
     const STRIP = 3;
     for (let y = 0; y < SIZE; y += STRIP) {
-      const off = waveOffset(y + STRIP / 2);
+      const gy = clamp((y / CELL) | 0, 0, N - 1);
+      const off = clamp(rowU[gy] * DISP, -10, 10);
       dctx.drawImage(surf, 0, y, SIZE, STRIP, off, y, SIZE, STRIP);
     }
-    // 표면에 흐르는 빛 띠(스펙큘러) — 출렁임에 따라 위아래로 쓸려 액체 윤기를 줌
-    const hy = CY + Math.sin(phase + 0.6) * (R * 0.55);
-    const sg = dctx.createLinearGradient(0, hy - 26, 0, hy + 26);
-    sg.addColorStop(0, 'rgba(255,255,255,0)');
-    sg.addColorStop(0.5, `rgba(255,255,255,${0.05 + syncLevel * 0.07})`);
-    sg.addColorStop(1, 'rgba(255,255,255,0)');
-    dctx.fillStyle = sg;
-    dctx.fillRect(0, hy - 26, SIZE, 52);
     dctx.restore();
-
     // 컵 테두리
-    dctx.lineWidth = 9;
-    dctx.strokeStyle = '#efe6d2';
-    dctx.beginPath();
-    dctx.arc(CX, CY, R + 1, 0, Math.PI * 2);
-    dctx.stroke();
-    dctx.lineWidth = 2;
-    dctx.strokeStyle = 'rgba(120,80,45,0.5)';
-    dctx.beginPath();
-    dctx.arc(CX, CY, R - 4, 0, Math.PI * 2);
-    dctx.stroke();
-    // 피처 줄기 + 위치 표시 (붓는 동안)
+    dctx.lineWidth = 9; dctx.strokeStyle = '#efe6d2';
+    dctx.beginPath(); dctx.arc(CX, CY, R + 1, 0, Math.PI * 2); dctx.stroke();
+    dctx.lineWidth = 2; dctx.strokeStyle = 'rgba(120,80,45,0.5)';
+    dctx.beginPath(); dctx.arc(CX, CY, R - 4, 0, Math.PI * 2); dctx.stroke();
+    // 피처 줄기 + 위치
     if (pouring) {
-      dctx.strokeStyle = 'rgba(247,241,227,0.85)';
-      dctx.lineWidth = clamp(7 - Math.hypot(vx, vy) * 0.3, 3, 7);
-      dctx.beginPath();
-      dctx.moveTo(px, -6);
-      dctx.lineTo(px, py);
-      dctx.stroke();
+      dctx.strokeStyle = 'rgba(247,241,227,0.9)';
+      dctx.lineWidth = 5;
+      dctx.beginPath(); dctx.moveTo(px, -6); dctx.lineTo(px, py); dctx.stroke();
     }
-    dctx.fillStyle = pouring ? '#fff' : 'rgba(255,255,255,0.55)';
-    dctx.beginPath();
-    dctx.arc(px, py, 4, 0, Math.PI * 2);
-    dctx.fill();
-    // 박자 큐 — 컵 위 작은 추가 좌우로 흔들림(메트로놈). 마우스를 이 추에 맞춰 흔든다.
-    const cueX = CX + Math.sin(phase) * 26;
-    dctx.fillStyle = syncLevel > 0.5 ? '#7fd08a' : 'rgba(232,184,109,0.9)';
-    dctx.beginPath();
-    dctx.arc(cueX, 8, 5, 0, Math.PI * 2);
-    dctx.fill();
+    dctx.fillStyle = pouring ? '#fff' : 'rgba(255,255,255,0.5)';
+    dctx.beginPath(); dctx.arc(px, py, 4, 0, Math.PI * 2); dctx.fill();
     // 남은 우유 양 링
     const frac = vol / ART_VOL;
     dctx.lineWidth = 4;
@@ -172,136 +193,119 @@ const LatteArt = (() => {
     dctx.stroke();
   }
 
-  // 상대 마우스 이동 → 피처 이동 + 흔들기(진동) 집계
+  // 상대 마우스 이동 → 피처 이동 + 흔들기/이동 집계
   function onMove(dx, dy) {
     if (!active) return;
-    const k = 0.42;                 // 마우스 감도
-    px = clamp(px + dx * k, 18, SIZE - 18);
-    py = clamp(py + dy * k, 18, SIZE - 18);
-    // 속도 보간(부드러운 줄기/스미어용)
-    vx = vx * 0.6 + dx * k * 0.4;
-    vy = vy * 0.6 + dy * k * 0.4;
+    const k = 0.42;
+    px = clamp(px + dx * k, CX - R + 6, CX + R - 6);
+    py = clamp(py + dy * k, CY - R + 6, CY + R + 4);
     if (!pouring) return;
-    pourPath += Math.hypot(dx, dy) * k;   // 움직임 총량(가만히 부으면 보너스 차단용)
-  }
-
-  // 우유 양(흰 픽셀) 비율 — 적정 범위(0.3~0.62)에서 만점
-  function coverageScore() {
-    const data = mctx.getImageData(0, 0, SIZE, SIZE).data;
-    let filled = 0, total = 0;
-    for (let y = 0; y < SIZE; y += 3) {
-      for (let x = 0; x < SIZE; x += 3) {
-        if (Math.hypot(x - CX, y - CY) > R) continue;
-        total++;
-        if (data[(y * SIZE + x) * 4 + 3] > 60) filled++;
-      }
+    pourPath += Math.hypot(dx, dy) * k;
+    if (py < minY) minY = py;
+    // 좌우 흔들기 집계 — 일정 거리 이어진 방향이 뒤집힐 때마다 1회
+    const sign = dx > 0.6 ? 1 : dx < -0.6 ? -1 : 0;
+    if (sign !== 0) {
+      if (lastSign !== 0 && sign !== lastSign && runDist > 8) { osc++; runDist = 0; }
+      runDist = (sign === lastSign ? runDist : 0) + Math.abs(dx) * k;
+      lastSign = sign;
     }
-    const cov = total ? filled / total : 0;
-    if (cov < 0.12) return 0;
-    if (cov < 0.3) return cov / 0.3;
-    if (cov <= 0.62) return 1;
-    return Math.max(0, 1 - (cov - 0.62) / 0.3);
-  }
-
-  // 좌우 대칭도 — 하트·로제타·튤립은 모두 좌우 대칭이라 잘 부었을수록 높다
-  function symmetryScore() {
-    const data = mctx.getImageData(0, 0, SIZE, SIZE).data;
-    let match = 0, count = 0;
-    for (let y = 0; y < SIZE; y += 3) {
-      for (let x = 0; x < CX; x += 3) {
-        if (Math.hypot(x - CX, y - CY) > R) continue;
-        const a = data[(y * SIZE + x) * 4 + 3] > 60 ? 1 : 0;
-        const mx = SIZE - 1 - x;
-        const b = data[(y * SIZE + mx) * 4 + 3] > 60 ? 1 : 0;
-        if (a || b) { count++; if (a === b) match++; }
-      }
-    }
-    return count ? match / count : 0;
   }
 
   function start(opts) {
     onDone = opts && opts.onDone || null;
     patternLabel = (opts && opts.pattern) || '하트';
     if (!disp) {
-      disp = $('artCanvas');
-      dctx = disp.getContext('2d');
-      milk = makeCanvas();
-      mctx = milk.getContext('2d');
-      surf = makeCanvas();
-      sctx = surf.getContext('2d');
+      disp = $('artCanvas'); dctx = disp.getContext('2d');
+      surf = makeCanvas(SIZE, SIZE); sctx = surf.getContext('2d');
+      mcv = makeCanvas(N, N); mctx = mcv.getContext('2d');
+      mImg = mctx.createImageData(N, N);
     }
     if (!crema) buildCrema();
-    mctx.clearRect(0, 0, SIZE, SIZE);
-    px = CX; py = CY + R * 0.45;          // 컵 아래쪽에서 시작(앞에서 뒤로 흔들며 빼기)
-    prevPx = px; prevPy = py;
-    vx = vy = 0; vol = ART_VOL; elapsed = 0; idleT = 0; pouredOnce = false;
-    pourPath = 0;
-    phase = Math.random() * Math.PI * 2; waveAmp = BASE_AMP;
-    syncLevel = 0; syncSum = 0; syncFrames = 0;
-    pouring = false;
+    u.fill(0); v.fill(0); m.fill(0); rowU.fill(0);
+    px = CX; py = CY + R * 0.52;           // 컵 아래쪽(앞)에서 시작 → 위로 밀며 흔든다
+    prevPx = px; prevPy = py; startY = py; minY = py;
+    vol = ART_VOL; elapsed = 0; idleT = 0; pouredOnce = false; pouring = false;
+    osc = 0; lastSign = 0; runDist = 0; pourPath = 0;
     active = true;
-    Player.setLook(false);                // 마우스를 피처 조작에 양보
+    Player.setLook(false);
     const t = $('artTitle'), h = $('artHint');
     if (t) t.innerHTML = `🎨 라떼아트 — <b>${patternLabel}</b>에 도전!`;
-    if (h) h.innerHTML = '<b>[E]/좌클릭</b>을 누른 채 — 위 <b>초록 점(박자)</b>에 맞춰 마우스를 <b>좌우로 흔들면</b> 표면이 출렁이며 무늬가 살아나요';
+    if (h) h.innerHTML = '<b>[E]/좌클릭</b>을 누른 채 마우스를 <b>위로 밀며 좌우로 흔들면</b> 흐름이 생겨 무늬가 번져요 · 마지막에 가운데로 곧게 빼면 줄기';
     $('artGame').classList.remove('hidden');
     render();
   }
 
-  // 게임 루프에서 매 프레임 호출. pourBtn = [E]/좌클릭을 누르고 있는지.
+  // 게임 루프에서 매 프레임 호출. pourBtn = [E]/좌클릭 누름.
   function update(dt, pourBtn) {
     if (!active) return false;
-    Player.setLook(false);                // 매 프레임 재확인(상태 꼬임 방지)
+    Player.setLook(false);
     elapsed += dt;
-    phase += OMEGA * dt;                   // 슬로시 메트로놈 진행
     pouring = !!pourBtn && vol > 0;
     if (pouring) {
       pouredOnce = true; idleT = 0;
       vol = Math.max(0, vol - dt);
-      deposit();
+      // 피처 속도(셀/초) → 흐름 주입 + 우유 주입
+      const gx = clamp(px / CELL, 1, N - 2), gy = clamp(py / CELL, 1, N - 2);
+      // 속도는 상한을 둔다 — 빠르게 흔들 때 속도장이 폭증해 우유가 흩어지는 것을 방지
+      const vxg = clamp((px - prevPx) / CELL / dt, -22, 22);
+      const vyg = clamp((py - prevPy) / CELL / dt, -22, 22);
+      const fr = dt * 60;
+      splatVel(gx, gy, 3.2, vxg * VEL_FROM_MOVE, vyg * VEL_FROM_MOVE, FOUNTAIN * fr);
+      splatM(gx, gy, 2.4, MILK_RATE * dt);
       if (Math.random() < dt * 6) AudioFX.pourWater(0.25);
-      // 박자 일치도 = 상관(마우스 수평속도 × 파동속도). 동상이면 +, 다른 템포면 ≈0(직교), 역상이면 −.
-      // 순간 부호일치가 아니라 상관을 누적해야 "엉뚱한 템포"가 정박처럼 점수를 먹지 않는다.
-      const waveVel = Math.cos(phase);
-      const corr = clamp(vx / 3.2, -1, 1) * waveVel;
-      syncSum += corr; syncFrames++;
-      const target = clamp(corr * 1.6, 0, 1);   // 시각 진폭: 양의 상관일 때만 키움
-      syncLevel = clamp(syncLevel + (target - syncLevel) * Math.min(1, dt * 3.5), 0, 1);
     } else if (pouredOnce) {
-      idleT += dt;               // 붓다가 손을 떼고 가만히 있으면 곧 마감
-      syncLevel = clamp(syncLevel - dt * 1.2, 0, 1);
+      idleT += dt;
     }
-    waveAmp = BASE_AMP + syncLevel * GAIN_AMP;   // 싱크가 오를수록 출렁임이 커짐(공명)
-    prevPx = px; prevPy = py;    // 다음 프레임 리본의 시작점
-    // 속도 감쇠(마우스가 멈추면 줄기도 가늘어짐)
-    vx *= 0.85; vy *= 0.85;
+    prevPx = px; prevPy = py;
+    step(dt);
     render();
-    // 우유를 다 부었거나 · 다 붓고 멈춘 채 1.6초 · 또는 너무 오래 끌면 자동 판정
     if (vol <= 0 || idleT > 1.6 || elapsed > 14) finish();
     return true;
+  }
+
+  // 좌우 대칭도 — 컵 안에서 좌/우 미러 일치율
+  function symmetryScore() {
+    let match = 0, count = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < GC; x++) {
+      const i = y * N + x; if (!inside[i]) continue;
+      const a = m[i] > 0.12 ? 1 : 0;
+      const b = m[y * N + (N - 1 - x)] > 0.12 ? 1 : 0;
+      if (a || b) { count++; if (a === b) match++; }
+    }
+    return count ? match / count : 0;
+  }
+  // 우유 양(컵 면적 대비) — 적정 범위에서 만점
+  function coverageScore() {
+    let filled = 0, total = 0;
+    for (let i = 0; i < N * N; i++) {
+      if (!inside[i]) continue; total++;
+      if (m[i] > 0.12) filled++;
+    }
+    const cov = total ? filled / total : 0;
+    if (cov < 0.1) return 0;
+    if (cov < 0.28) return cov / 0.28;
+    if (cov <= 0.66) return 1;
+    return Math.max(0, 1 - (cov - 0.66) / 0.3);
   }
 
   function finish() {
     if (!active) return;
     active = false;
     Player.setLook(true);
-    const cov = coverageScore();
+    const wig = Math.min(1, osc / 7);                       // 흔들기 일관성
+    const up = clamp((startY - minY) / (R * 0.7), 0, 1);    // 위로 빼기 진행도
     const sym = symmetryScore();
-    const sync = syncFrames ? clamp((syncSum / syncFrames) / 0.4, 0, 1) : 0;  // 평균 상관 → 0~1
-    const moved = pourPath > 60 ? 1 : pourPath / 60;   // 거의 안 움직이면 감점
-    // 박자(싱크)를 메인 지표로, 대칭·양을 보조로. 가만히 부으면(움직임 부족) 전체를 깎아 보너스 차단.
-    const score = clamp((sync * 0.6 + sym * 0.25 + cov * 0.15) * (0.5 + 0.5 * moved), 0, 1);
+    const cov = coverageScore();
+    const moved = pourPath > 60 ? 1 : pourPath / 60;
+    // 흔들기 메인 + 위로빼기·대칭·양 보조. 가만히 부으면 전체 감점.
+    const score = clamp((wig * 0.4 + up * 0.18 + sym * 0.27 + cov * 0.15) * (0.5 + 0.5 * moved), 0, 1);
     const tier = score >= ART_PERFECT ? 'perfect' : score >= ART_GOOD ? 'good' : 'plain';
     $('artGame').classList.add('hidden');
     const cb = onDone; onDone = null;
     if (cb) cb(tier, score);
   }
 
-  // 시선을 돌리는 등 외부 사유로 중단 — 부은 만큼 평범(plain)으로 마감
-  function cancel() {
-    if (!active) return;
-    finish();
-  }
+  function cancel() { if (active) finish(); }
 
   function init() {
     document.addEventListener('mousemove', ev => {
