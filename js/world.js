@@ -195,7 +195,7 @@ const WORLD = (() => {
       const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
       g.add(basket, handle, spout);
     }
-    const grounds = cyl(0.032, 0.032, 0.014, GROUNDS_MAT.filled, 0, groundsY, 0, 12);
+    const grounds = cyl(0.028, 0.027, 0.024, GROUNDS_MAT.filled, 0, groundsY, 0, 14);   // 바스켓 캐비티를 채우는 커피가루 퍽
     g.add(grounds);
     g.userData.grounds = grounds;
     g.userData.groundsY = groundsY;
