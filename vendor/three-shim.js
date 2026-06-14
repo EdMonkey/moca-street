@@ -3,8 +3,8 @@
  * ESM 애드온(GLTFLoader 등)이 별도 three 사본 없이 "단일 전역 THREE"를 공유하도록 한다.
  * 빌드 없음 · 외부 런타임 의존성 없음. import map에서 "three" -> 이 파일로 매핑.
  *
- * export 목록 = GLTFLoader + BufferGeometryUtils 가 'three'에서 import하는 이름들의 합집합.
- * three 버전(r158) 업데이트 시 두 애드온의 import 블록과 동기화할 것.
+ * export 목록 = GLTFLoader + BufferGeometryUtils + RGBELoader 가 'three'에서 import하는 이름들의 합집합.
+ * three 버전(r158) 업데이트 시 애드온들의 import 블록과 동기화할 것.
  * ============================================================ */
 const THREE = window.THREE;
 if (!THREE) {
@@ -13,7 +13,8 @@ if (!THREE) {
 
 export const {
   AnimationClip, Bone, Box3, BufferAttribute, BufferGeometry, ClampToEdgeWrapping,
-  Color, ColorManagement, DirectionalLight, DoubleSide, FileLoader, Float32BufferAttribute,
+  Color, ColorManagement, DataTextureLoader, DataUtils, DirectionalLight, DoubleSide,
+  FileLoader, Float32BufferAttribute, FloatType, HalfFloatType,
   FrontSide, Group, ImageBitmapLoader, InstancedBufferAttribute, InstancedMesh,
   InterleavedBuffer, InterleavedBufferAttribute, Interpolant, InterpolateDiscrete,
   InterpolateLinear, Line, LineBasicMaterial, LineLoop, LineSegments, LinearFilter,

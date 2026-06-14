@@ -400,8 +400,12 @@
 </script>
 <script type="module">
   import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
+  import { RGBELoader } from './vendor/jsm/loaders/RGBELoader.js';
   window.GLTFLoader = GLTFLoader;
+  window.RGBELoader = RGBELoader;
   if (window.Assets) window.Assets.boot(GLTFLoader);
+  // 실내 HDR 환경맵(PBR 금속 반사) — main.js가 폴백 환경맵을 먼저 깔고, HDR 로드되면 교체
+  if (window.__applyHDREnv) window.__applyHDREnv(RGBELoader);
 </script>
 </body>
 </html>
