@@ -370,7 +370,9 @@ const WORLD = (() => {
     // 앞벽(z=8): 큰 유리창 + 출입문
     (function frontWall() {
       const z = 8.05;
-      scene.add(box(18, 0.9, 0.25, M().counterWoodDark, 0, 0.45, z));      // 하단 패널
+      // 하단 패널 — 출입문 구간(x 4.7~6.3)은 비워 통유리 문이 바닥까지 드러나게
+      scene.add(box(13.7, 0.9, 0.25, M().counterWoodDark, -2.15, 0.45, z));   // 좌측 패널(−9 ~ 4.7)
+      scene.add(box(2.7, 0.9, 0.25, M().counterWoodDark, 7.65, 0.45, z));     // 우측 패널(6.3 ~ 9)
       scene.add(box(18, 0.7, 0.25, M().plaster, 0, ROOM.h - 0.35, z));     // 상단 보
       // 유리 구간: x -8.6 ~ 4.3 / 문: 4.7~6.3 / 오른쪽 기둥
       const glassTop = ROOM.h - 0.7, glassH = glassTop - 0.9;
