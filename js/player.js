@@ -89,10 +89,12 @@ const Player = (() => {
   function punch(a) { kick = Math.max(kick, a); }
 
   /* 조준 중인 상호작용 대상 */
+  let lastAimHit = null;        // 마지막으로 조준한 히트박스 메시 (아웃라인 하이라이트용)
   function aim() {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
     const hits = ray.intersectObjects(env.interactables, false);
-    return hits.length ? hits[0].object.userData.interact : null;
+    lastAimHit = hits.length ? hits[0].object : null;
+    return lastAimHit ? lastAimHit.userData.interact : null;
   }
 
   /* 조준 중인 배치 가능 표면의 윗면 지점 (없으면 null) */
@@ -119,6 +121,7 @@ const Player = (() => {
   return {
     init, update, aim, aimSurface, setHeld, reset, punch,
     setLook(on) { look = on; },
+    get aimedObject() { return lastAimHit; },
     get position() { return pos; },
     set enabled(v) { enabled = v; },
     get enabled() { return enabled; },

@@ -663,7 +663,7 @@ const WORLD = (() => {
       // 그룹헤드를 충분히 높여(y 0.30) 아이스컵(0.16m)도 추출구 아래에 들어가게 함
       const slotBase = env.machines.espressoSlots.length;   // 추가 머신은 전역 슬롯 배열에 이어 붙임
       [-0.3, 0.3].forEach((ox, i) => {
-        g.add(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14));            // 그룹헤드
+        const groupHead = cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14); g.add(groupHead);   // 그룹헤드
         // 포터필터(기본 '빈' 상태로 장착되어 있음)
         const pf = makePortafilterMesh('empty');
         pf.position.set(ox, 0.235, 0.26);
@@ -679,6 +679,18 @@ const WORLD = (() => {
           locked: (i === 1 ? !!lockSecond : false),    // 원래 머신의 2번 슬롯만 듀얼헤드 업그레이드 필요
           busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
+        const slotIdx = slotBase + i;
+        // 추출 버튼(빨간 버튼) — 전면 상단, 그룹헤드 위
+        const brewBtn = cyl(0.028, 0.028, 0.025, M().steelDark, ox, 0.46, 0.32, 14);
+        brewBtn.rotation.x = Math.PI / 2;
+        const brewLed = new THREE.Mesh(new THREE.CircleGeometry(0.017, 16),
+          new THREE.MeshStandardMaterial({ color: 0xd9534f, emissive: 0xd9534f, emissiveIntensity: 1.3 }));
+        brewLed.position.set(ox, 0.46, 0.346);
+        g.add(brewBtn, brewLed);
+        // 분리된 상호작용 히트박스 3종 (높이로 구분): 컵 자리(낮음) · 포터필터(중간) · 추출 버튼(위)
+        childHitbox(st, 0.3, 0.18, 0.34, ox, 0.06, 0.33, { id: 'espCup', slot: slotIdx });
+        childHitbox(st, 0.26, 0.18, 0.3, ox, 0.27, 0.24, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [groupHead, pf];
+        childHitbox(st, 0.2, 0.16, 0.18, ox, 0.46, 0.33, { id: 'brew', slot: slotIdx }).userData.outlineMeshes = [brewBtn, brewLed];
       });
       const drip = box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3);
       g.add(drip);
@@ -736,9 +748,11 @@ const WORLD = (() => {
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.85, 0.25);
       g.add(lbl);
-      childHitbox(st, 0.62, 0.75, 0.75, -0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 0 });
-      childHitbox(st, 0.62, 0.75, 0.75, 0.3, 0.3, 0.1, { id: 'espresso', slot: slotBase + 1 });
-      childHitbox(st, 0.4, 0.62, 0.55, 0.6, 0.28, 0.28, { id: 'steamer', job: steamJob });   // 우측 통합 스티머
+      // 스티머 분리: 스팀봉(피처 데우기) + 노브(스팀 분사) — 각각 따로 조준·하이라이트
+      childHitbox(st, 0.34, 0.42, 0.5, 0.62, 0.2, 0.32, { id: 'steamwand', job: steamJob })
+        .userData.outlineMeshes = [steamBall, steamWand, steamNozzle];
+      childHitbox(st, 0.16, 0.18, 0.18, 0.46, 0.44, 0.34, { id: 'steamknob', job: steamJob })
+        .userData.outlineMeshes = [knobBase, knobGrip, knobMark];
       return st;
     }
     buildEspresso('espresso', -3.1, -4.25, true);   // 원래 머신: 2번 슬롯은 듀얼헤드 잠금
@@ -765,7 +779,7 @@ const WORLD = (() => {
         progress: makeProgress(g, 0.2, 0.24, 0.22),   // 스팀 중인 컵 바로 위
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
-      childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamer', job });
+      childHitbox(st, 0.6, 0.7, 0.6, 0, 0.3, 0.05, { id: 'steamwand', job });   // 구매용 스티머는 단일(스팀봉)
       env.machines.steamerJobs.push(job);
       return st;
     }
@@ -782,7 +796,7 @@ const WORLD = (() => {
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.11), textLabel('스팀 피처', 200, 52, '700 28px "Malgun Gothic"'));
       lbl.position.set(0, 0.36, 0.05);
       r.add(lbl);
-      addI(hitbox(0.34, 0.5, 0.42, x, 1.13, z, { id: 'pitcherrack' }));
+      addI(hitbox(0.34, 0.5, 0.42, x, 1.13, z, { id: 'pitcherrack' })).userData.outlineRoot = r;
     })();
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
@@ -873,7 +887,7 @@ const WORLD = (() => {
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.1), textLabel('샷잔', 144, 48, '700 28px "Malgun Gothic"'));
       lbl.position.set(0, 0.34, 0.04);
       r.add(lbl);
-      addI(hitbox(0.24, 0.45, 0.34, x, 1.12, z, { id: 'shotrack' }));
+      addI(hitbox(0.24, 0.45, 0.34, x, 1.12, z, { id: 'shotrack' })).userData.outlineRoot = r;
     })();
 
     /* ---------- 탬핑 스테이션 (분쇄된 원두를 평평하게 다짐) ---------- */
@@ -1089,6 +1103,19 @@ const WORLD = (() => {
       g.visible = false;
       scene.add(g);
       env.placeIndicator = g;
+    })();
+
+    /* ---------- 조준 중인 상호작용 대상 아웃라인 (빛나는 외곽선 박스) ---------- */
+    (function aimHighlight() {
+      const hi = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
+        new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthTest: false })
+      );
+      hi.renderOrder = 7;
+      hi.frustumCulled = false;
+      hi.visible = false;
+      scene.add(hi);
+      env.aimHighlight = hi;
     })();
 
     /* ---------- 조명 ---------- */

@@ -415,113 +415,117 @@ const Game = (() => {
       return;
     }
 
-    /* --- 에스프레소 머신: 포터필터 분리/장착 → 컵 올려 추출 → 꺼내기 --- */
-    if (id === 'espresso') {
+    /* --- 에스프레소 머신: 컵 자리 (컵/샷잔 올리기·꺼내기) --- */
+    if (id === 'espCup') {
       const slot = env.machines.espressoSlots[it.slot];
       if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
       if (slot.busy) {
         if (!slot.done) { toast('추출 중입니다…'); return; }
-        // 완료된 샷 꺼내기 — 포터필터(used)는 머신에 남는다
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
         slot.st.root.remove(slot.cupMesh);
-        slot.busy = slot.done = false;
-        slot.stream.visible = false;
-        const drink = slot.drink;
-        slot.cupMesh = null; slot.drink = null;
-        slot.progress.hide();
+        slot.busy = slot.done = false; slot.stream.visible = false;
+        const drink = slot.drink; slot.cupMesh = null; slot.drink = null; slot.progress.hide();
         setHeld(vesselToHand(drink));
         AudioFX.cupClink(0.5);
         return;
       }
-      // 포터필터를 들고 빈 슬롯에 장착 (상태 유지)
-      if (held && held.type === 'portafilter') {
-        if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
-        slot.pfState = held.state || 'empty';
-        slot.tampPerfect = !!held.tampPerfect;   // 퍼펙트 탬핑 보너스 인계
-        WORLD.setPortafilterState(slot.pf, slot.pfState);
-        setHeld(null);
-        AudioFX.metalClack();
-        return;
-      }
-      // 샷잔(컵) 올리기 — 추출은 빈손 [E]로 시작
       if (held && held.type === 'drink') {
         if (held.drink.espresso) { toast('이미 샷이 추출된 컵이에요'); return; }
         if (slot.cupMesh) { toast('이미 컵이 올라가 있어요'); return; }
-        const drink = held.drink;
-        setHeld(null);
-        const cm = WORLD.makeDrinkMesh(drink);
-        cm.position.copy(slot.localPos);
-        slot.st.root.add(cm);
-        slot.cupMesh = cm;
-        slot.drink = drink;
-        AudioFX.cupClink(0.4);
+        const drink = held.drink; setHeld(null);
+        const cm = WORLD.makeDrinkMesh(drink); cm.position.copy(slot.localPos);
+        slot.st.root.add(cm); slot.cupMesh = cm; slot.drink = drink; AudioFX.cupClink(0.4);
         return;
       }
-      // 샷잔(재사용 도구) 올리기 — 내부적으로 cup:'shot' 음료로 다룬다
       if (held && held.type === 'shotglass') {
         if (held.filled) { toast('이미 샷이 들어있는 샷잔이에요 — 컵에 따르세요', 'bad'); AudioFX.err(); return; }
         if (slot.cupMesh) { toast('이미 컵이 올라가 있어요'); return; }
         setHeld(null);
         const drink = { cup: 'shot' };
-        const cm = WORLD.makeDrinkMesh(drink);
-        cm.position.copy(slot.localPos);
-        slot.st.root.add(cm);
-        slot.cupMesh = cm;
-        slot.drink = drink;
-        AudioFX.cupClink(0.4);
+        const cm = WORLD.makeDrinkMesh(drink); cm.position.copy(slot.localPos);
+        slot.st.root.add(cm); slot.cupMesh = cm; slot.drink = drink; AudioFX.cupClink(0.4);
         return;
       }
-      // 빈손 + 컵이 올라가 있음 → 추출 버튼(탬핑 완료 시) 또는 컵 회수
-      if (slot.cupMesh) {
-        if (slot.pfState === 'tamped') {
-          slot.busy = true; slot.done = false; slot.t = 0;
-          slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
-          slot.stream.visible = true;
-          slot.brewLiquid = WORLD.makeBrewLiquid(slot.drink.cup);
-          slot.cupMesh.add(slot.brewLiquid);
-          AudioFX.metalClack();
-          slot.sound = AudioFX.brewing(slot.dur);
-          return;
-        }
-        // 추출 불가 — 컵을 다시 손에 돌려주고 안내
+      if (held) { toast('컵이나 샷잔을 올리세요'); return; }
+      if (slot.cupMesh) {   // 빈손 + 컵 있음(추출 전) → 컵 회수
         slot.st.root.remove(slot.cupMesh);
-        const drink = slot.drink;
-        slot.cupMesh = null; slot.drink = null;
-        setHeld(vesselToHand(drink));
-        AudioFX.cupClink(0.4);
-        toast(slot.pfState === 'none' ? '먼저 탬핑한 포터필터를 장착하세요'
-          : slot.pfState === 'used' ? '사용한 가루 — 포터필터를 분리해 넉박스에 비우세요'
-          : slot.pfState === 'empty' ? '빈 포터필터 — 분리해 그라인더에서 분쇄하세요'
-          : '탬핑이 안 됐어요 — 포터필터를 분리해 탬핑하세요', 'bad');
+        const drink = slot.drink; slot.cupMesh = null; slot.drink = null;
+        setHeld(vesselToHand(drink)); AudioFX.cupClink(0.4);
         return;
       }
-      // 빈손 + 컵 없음 → 포터필터 분리
-      if (slot.pfState === 'none') { toast('포터필터가 없어요'); return; }
-      const state = slot.pfState;
-      slot.pfState = 'none';
-      WORLD.setPortafilterState(slot.pf, 'none');
-      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect });
-      slot.tampPerfect = false;
-      AudioFX.metalClack();
+      toast('컵이나 샷잔을 올리세요');
       return;
     }
 
-    /* --- 밀크 스티머: 피처를 들고 [E]를 꾹 눌러 스팀 미니게임 (퍼펙트=마이크로폼 보너스) --- */
-    if (id === 'steamer') {
+    /* --- 에스프레소 머신: 포터필터 (장착·분리) --- */
+    if (id === 'pfSlot') {
+      const slot = env.machines.espressoSlots[it.slot];
+      if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
+      if (slot.busy) { toast('추출 중입니다…'); return; }
+      if (held && held.type === 'portafilter') {
+        if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
+        slot.pfState = held.state || 'empty';
+        slot.tampPerfect = !!held.tampPerfect;
+        WORLD.setPortafilterState(slot.pf, slot.pfState);
+        setHeld(null); AudioFX.metalClack();
+        return;
+      }
+      if (held) { toast('포터필터를 들고 오세요'); return; }
+      if (slot.pfState === 'none') { toast('포터필터가 없어요'); return; }
+      const state = slot.pfState;     // 빈손 → 분리
+      slot.pfState = 'none';
+      WORLD.setPortafilterState(slot.pf, 'none');
+      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect });
+      slot.tampPerfect = false; AudioFX.metalClack();
+      return;
+    }
+
+    /* --- 에스프레소 머신: 추출 버튼 --- */
+    if (id === 'brew') {
+      const slot = env.machines.espressoSlots[it.slot];
+      if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
+      if (slot.busy) { toast(slot.done ? '추출 완료 — 컵을 꺼내세요' : '추출 중입니다…'); return; }
+      if (!slot.cupMesh) { toast('먼저 컵을 올리세요', 'bad'); AudioFX.err(); return; }
+      if (slot.pfState !== 'tamped') {
+        toast(slot.pfState === 'none' ? '탬핑한 포터필터를 장착하세요'
+          : slot.pfState === 'used' ? '사용한 가루 — 포터필터를 분리해 넉박스에 비우세요'
+          : slot.pfState === 'empty' ? '빈 포터필터 — 분리해 그라인더에서 분쇄하세요'
+          : '탬핑이 안 됐어요 — 포터필터를 분리해 탬핑하세요', 'bad');
+        AudioFX.err();
+        return;
+      }
+      slot.busy = true; slot.done = false; slot.t = 0;
+      slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
+      slot.stream.visible = true;
+      slot.brewLiquid = WORLD.makeBrewLiquid(slot.drink.cup);
+      slot.cupMesh.add(slot.brewLiquid);
+      AudioFX.metalClack();
+      slot.sound = AudioFX.brewing(slot.dur);
+      return;
+    }
+
+    /* --- 스팀봉: 피처를 들고 [E]를 꾹 눌러 스팀 미니게임 (빈손은 퍼지) --- */
+    if (id === 'steamwand') {
       const job = it.job;
-      if (!held) {
-        // 빈손으로 노브 조작 → 스팀봉 끝에서 스팀 분사 (퍼지)
+      if (!held) {                       // 빈손 → 스팀봉 끝에서 스팀 분사 (퍼지)
         job.steamT = Math.max(job.steamT || 0, 1.2);
-        AudioFX.steam(1.2);
-        AudioFX.metalClack();
+        AudioFX.steam(1.2); AudioFX.metalClack();
         return;
       }
       if (held.type === 'drink') { toast('컵에 직접 스팀할 수 없어요 — 스팀 피처에 우유를 데우세요', 'bad'); AudioFX.err(); return; }
       if (held.type !== 'pitcher') { toast('스팀 피처를 들고 오세요', 'bad'); AudioFX.err(); return; }
       if (held.foam) { toast('이미 거품까지 만든 피처예요 — 컵에 부으세요'); return; }
       if (S.stocks.milk <= 0) { toast('우유가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      // [E]를 꾹 눌러 진행하는 스팀 미니게임 시작
       if (!steamGame) startSteamGame(job);
+      return;
+    }
+
+    /* --- 스팀 노브: [E]로 스팀 분사(퍼지). 피처를 들었으면 스팀봉으로 안내 --- */
+    if (id === 'steamknob') {
+      const job = it.job;
+      if (held && held.type === 'pitcher') { toast('스팀봉(아래)에 대고 [E]를 꾹 눌러 데우세요'); return; }
+      job.steamT = Math.max(job.steamT || 0, 1.2);
+      AudioFX.steam(1.2); AudioFX.metalClack();
       return;
     }
 
@@ -975,7 +979,7 @@ const Game = (() => {
   }
   function updateSteamGame(dt, aimData) {
     if (!steamGame) return false;
-    const ok = aimData && aimData.id === 'steamer' && held && held.type === 'pitcher' && !held.foam;
+    const ok = aimData && aimData.id === 'steamwand' && held && held.type === 'pitcher' && !held.foam;
     if (!ok) { endSteamGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
     // 누르는 동안 폼 게이지 상승 + 스팀봉 증기, 손 떼면 그 지점으로 즉시 판정·확정
     if (useDown) {
@@ -1254,12 +1258,84 @@ const Game = (() => {
   }
 
   /* ===== 메인 업데이트 ===== */
+  /* 조준 대상 아웃라인 — 모델 메시에 맞춘 외곽선(인버티드 헐).
+   * 대상의 실제 메시를 살짝 키운 복제본(BackSide, 골드)을 덧대 실루엣 외곽선을 만든다.
+   * 모델을 못 찾는 일부(계산대·픽업대 등)는 히트박스 박스로 폴백. */
+  let _outlineClones = [];
+  let _outlineSrc = null;
+  let _outlineMat = null;
+  function outlineMat() {
+    return _outlineMat || (_outlineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.BackSide }));
+  }
+  function clearOutlineClones() {
+    for (const c of _outlineClones) if (c.parent) c.parent.remove(c);
+    _outlineClones = [];
+    _outlineSrc = null;
+  }
+  function meshVisible(o) {     // 부모까지 따라가 실제로 보이는 메시인지
+    for (let p = o; p; p = p.parent) if (!p.visible) return false;
+    return true;
+  }
+  function addOutlineClone(o) {
+    if (!o.isMesh || o.userData.isHitbox) return;
+    if (o.geometry && o.geometry.type === 'PlaneGeometry') return;   // 라벨 텍스트 평면 제외
+    if (!meshVisible(o)) return;                                     // 숨겨진 메시(예: 분리된 포터필터)는 제외
+    const clone = new THREE.Mesh(o.geometry, outlineMat());
+    clone.position.copy(o.position);
+    clone.quaternion.copy(o.quaternion);
+    clone.scale.copy(o.scale).multiplyScalar(1.07);                  // 살짝 키워 외곽선 rim 생성
+    clone.renderOrder = 2;
+    clone.castShadow = clone.receiveShadow = false;
+    o.parent.add(clone);
+    _outlineClones.push(clone);
+  }
+  function buildOutline(srcList) { for (const s of srcList) s.traverse(addOutlineClone); }
+  // 조준한 히트박스 → 외곽선을 그릴 대상 { key(재생성 판단), srcList(외곽선 만들 루트들) }
+  function aimOutlineSpec(aimMesh) {
+    if (!aimMesh) return null;
+    const it = aimMesh.userData.interact;
+    // 에스프레소 머신 컵 자리: 올라간 컵만 (없으면 박스 폴백)
+    if (it && it.id === 'espCup') {
+      const slot = env.machines.espressoSlots[it.slot];
+      return slot.cupMesh ? { key: slot.cupMesh, srcList: [slot.cupMesh] } : null;
+    }
+    if (it && it.id === 'brew') return null;   // 추출 버튼은 작아서 박스 외곽선으로(헐 rim이 안 보임)
+    // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들)
+    if (aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes };
+    if (aimMesh.userData.station) return { key: aimMesh.userData.station.root, srcList: [aimMesh.userData.station.root] };
+    if (aimMesh.userData.outlineRoot) return { key: aimMesh.userData.outlineRoot, srcList: [aimMesh.userData.outlineRoot] };
+    if (it && it.id === 'placedItem' && it.rec) return { key: it.rec.mesh, srcList: [it.rec.mesh] };
+    return null;
+  }
+  function updateAimHighlight(aimMesh) {
+    const box = env.aimHighlight;
+    const spec = aimOutlineSpec(aimMesh);
+    if (spec) {                            // 모델 메시에 맞춘 헐 외곽선
+      if (box) box.visible = false;
+      if (_outlineSrc !== spec.key) { clearOutlineClones(); buildOutline(spec.srcList); _outlineSrc = spec.key; }
+      return;
+    }
+    if (_outlineClones.length) clearOutlineClones();
+    if (!box) return;                      // 모델 매핑 불가 → 히트박스 박스 폴백
+    const g = aimMesh && aimMesh.geometry && aimMesh.geometry.parameters;
+    if (g) {
+      aimMesh.updateWorldMatrix(true, false);
+      aimMesh.matrixWorld.decompose(box.position, box.quaternion, box.scale);
+      box.scale.set(box.scale.x * g.width, box.scale.y * g.height, box.scale.z * g.depth).multiplyScalar(1.04);
+      box.visible = true;
+    } else {
+      box.visible = false;
+    }
+  }
+
   function updatePrep() {
     // 준비 단계: 재고 보충 프롬프트만 표시 (손님·시계 정지)
     const pr = $('prompt');
-    if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); return; }
+    if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); updateAimHighlight(null); return; }
     const aimData = Player.aim();
-    if (aimData && (aimData.id === 'restock' || aimData.id === 'door')) {   // 준비 단계에도 문 여닫기 안내
+    const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door');   // 준비 단계에 쓸 수 있는 것만
+    updateAimHighlight(usable ? Player.aimedObject : null);
+    if (usable) {
       pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
@@ -1269,7 +1345,7 @@ const Game = (() => {
 
   function update(dt) {
     if (mode === 'prep') { updatePrep(); return; }
-    if (mode !== 'playing') return;
+    if (mode !== 'playing') { updateAimHighlight(null); return; }
 
     // 시간
     timeSec += dt;
@@ -1304,14 +1380,16 @@ const Game = (() => {
       $('prompt').classList.add('hidden');
       $('crosshair').classList.remove('active');
       env.placeIndicator.visible = false;
+      updateAimHighlight(null);
       barTimer -= dt;
       if (barTimer <= 0) { UI.ticketBars(); barTimer = 0.25; }
       Tutorial.update();
       return;
     }
 
-    // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
+    // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
     const aimData = Player.aim();
+    updateAimHighlight(aimData ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
     const steaming = updateSteamGame(dt, aimData);
     let p = UI.prompt(aimData);
@@ -1442,8 +1520,10 @@ const Game = (() => {
     get inTutorial() { return Tutorial.active(); },
     notifyEditMode(on) {
       if (on) {
-        // 내려놓기 표시·레시피북 숨김 (머신 작업은 계속 표시되며 시간만 정지)
+        // 내려놓기 표시·레시피북·조준 아웃라인 숨김 (머신 작업은 계속 표시되며 시간만 정지)
         env.placeIndicator.visible = false;
+        if (env.aimHighlight) env.aimHighlight.visible = false;
+        clearOutlineClones();
         $('prompt').classList.add('hidden');
         $('recipeBook').classList.add('hidden');
       }
