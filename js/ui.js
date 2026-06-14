@@ -83,6 +83,7 @@ const UI = (() => {
     switch (it.id) {
       case 'register': return Customers.frontCustomer() ? E + '주문 받기' : '대기 중인 손님이 없습니다';
       case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
+      case 'door': return E + (env.door && env.door.open ? '문 닫기' : '문 열기');
       case 'placedItem': {
         const tgt = it.rec.item;
         if (held && held.type === 'shotglass') {

@@ -50,6 +50,7 @@
   const env = WORLD.build(scene);
   Player.init(camera, env);
   Game.init(scene, env);
+  Weather.init(scene, env);   // 실외 날씨(하늘·안개·햇빛·비) — 하루마다 game.js가 갱신
   Customers.init(scene, env, {
     onAngryLeave: c => { if (Game.mode === 'playing') Game.onAngryLeave(c); },
   });
@@ -198,6 +199,8 @@
       if (Editor.active) Editor.update(dt);   // 편집 중엔 게임 시간·손님 정지
       else Game.update(dt);
       steam.update(dt);
+      Weather.update(dt);
+      if (env.door) env.door.update(dt);   // 출입문 여닫힘 애니메이션 + 통과 충돌 토글
     }
     renderer.render(scene, camera);
   }

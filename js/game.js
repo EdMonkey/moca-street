@@ -264,6 +264,11 @@ const Game = (() => {
   function interact(it) {
     if (!it) return;
     const id = it.id;
+    // 출입문 여닫기 — 밖으로 나가거나 들어올 때(준비·영업 모두 가능)
+    if (id === 'door') {
+      if (env.door) { env.door.toggle(); AudioFX.bell(); toast(env.door.open ? '🚪 문을 열었어요' : '🚪 문을 닫았어요'); }
+      return;
+    }
     // 준비 단계엔 재고 보충만 (제조·서빙은 영업 중에)
     if (mode === 'prep' && id !== 'restock') {
       toast('영업을 시작하면 사용할 수 있어요 — 지금은 재고 보충과 [B] 배치');
@@ -1046,6 +1051,12 @@ const Game = (() => {
     $('hud').classList.remove('hidden');
     mode = 'prep';
     Player.enabled = true;
+    if (env.doorSign) env.doorSign.setOpen(false);             // 영업 전 = CLOSE 팻말
+    if (typeof Weather !== 'undefined') {                      // 오늘 바깥 날씨 결정 + 실외 분위기 갱신
+      const w = Weather.setForDay(S.day);
+      Weather.setClock(8);                                     // 준비 단계 = 아침 08시(해 낮게)
+      if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
+    }
     UI.hud(); UI.clock();
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
   }
@@ -1058,6 +1069,8 @@ const Game = (() => {
     $('prepPanel').classList.add('hidden');
     $('prepBar').classList.add('hidden');
     open = true; timeSec = 0;
+    if (env.doorSign) env.doorSign.setOpen(true);   // 영업 중 = OPEN 팻말
+    if (typeof Weather !== 'undefined') Weather.setClock(9);   // 영업 시작 = 09시
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
     spawnTimer = S.day <= 3 ? [7, 4.5, 3][S.day - 1] : 2.5;   // 초반일수록 첫 손님 입장까지 여유
@@ -1104,6 +1117,8 @@ const Game = (() => {
   function endDay() {
     mode = 'dayEnd';
     Player.enabled = false;
+    if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
+    if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
     document.exitPointerLock && document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
@@ -1261,7 +1276,7 @@ const Game = (() => {
     const pr = $('prompt');
     if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); return; }
     const aimData = Player.aim();
-    if (aimData && aimData.id === 'restock') {
+    if (aimData && (aimData.id === 'restock' || aimData.id === 'door')) {   // 준비 단계에도 문 여닫기 안내
       pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
@@ -1281,6 +1296,8 @@ const Game = (() => {
       AudioFX.bell();
     }
     UI.clock();
+    if (typeof Weather !== 'undefined')                         // 시각에 맞춰 해 고도·하늘빛 갱신(일출→정오→일몰)
+      Weather.setClock(Math.min(18, 9 + (timeSec / DAY_LEN) * 9));
 
     // 손님 스폰
     if (open) {
