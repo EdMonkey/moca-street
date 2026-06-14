@@ -1022,22 +1022,49 @@ const WORLD = (() => {
       });
     })();
 
+    /* 정적 데코: 절차적로 먼저 그리고, glb 로드되면 그 자리에서 교체 (surface·collider는 호출부에서 유지) */
+    function decorVisual(parent, glbName, procFn, rotY = 0, scale = 1) {
+      const proc = procFn();
+      proc.forEach(m => parent.add(m));
+      if (window.Assets && window.Assets.ready) {
+        window.Assets.ready.then(() => {
+          const m = window.Assets.spawn(glbName, 0, 0, 0, rotY);
+          if (!m) return;
+          if (scale !== 1) m.scale.multiplyScalar(scale);
+          proc.forEach(pm => parent.remove(pm));
+          parent.add(m);
+        }).catch(() => {});
+      }
+    }
+
     /* ---------- 좌석 (테이블 · 의자 · 소파) ---------- */
     (function seating() {
       function table(x, z) {
-        const top = cyl(0.45, 0.45, 0.04, M().marble, x, 0.78, z, 24);
+        // 배치 표면: 투명 디스크(레이캐스트 전용) — glb 상판 높이(0.75)에 맞춤
+        const top = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.02, 24),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+        top.position.set(x, 0.74, z); top.castShadow = top.receiveShadow = false;
         scene.add(top); env.surfaces.push(top);
-        scene.add(cyl(0.035, 0.035, 0.76, M().steelDark, x, 0.39, z, 12));
-        scene.add(cyl(0.22, 0.26, 0.03, M().steelDark, x, 0.015, z, 16));
         addCol(x - 0.5, x + 0.5, z - 0.5, z - 0.5 + 1.0);
+        // 비주얼: glb CafeTable(로드 시) 또는 절차적 폴백
+        const vis = new THREE.Group(); vis.position.set(x, 0, z); scene.add(vis);
+        decorVisual(vis, 'CafeTable', () => [
+          cyl(0.45, 0.45, 0.04, M().marble, 0, 0.73, 0, 24),
+          cyl(0.035, 0.035, 0.72, M().steelDark, 0, 0.37, 0, 12),
+          cyl(0.22, 0.26, 0.03, M().steelDark, 0, 0.015, 0, 16),
+        ]);
       }
       function chair(x, z, ry) {
         const g = new THREE.Group();
         g.position.set(x, 0, z); g.rotation.y = ry;
-        g.add(box(0.4, 0.05, 0.4, M().woodMid, 0, 0.46, 0));
-        g.add(box(0.4, 0.5, 0.05, M().woodMid, 0, 0.73, -0.18));
-        [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]].forEach(([lx, lz]) =>
-          g.add(cyl(0.02, 0.02, 0.46, M().woodDark, lx, 0.23, lz, 8)));
+        decorVisual(g, 'CafeChair', () => {
+          const p = [];
+          p.push(box(0.4, 0.05, 0.4, M().woodMid, 0, 0.46, 0));
+          p.push(box(0.4, 0.5, 0.05, M().woodMid, 0, 0.73, -0.18));
+          [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]].forEach(([lx, lz]) =>
+            p.push(cyl(0.02, 0.02, 0.46, M().woodDark, lx, 0.23, lz, 8)));
+          return p;
+        });
         scene.add(g);
       }
       table(-5.2, 3.2); chair(-5.2, 2.45, 0); chair(-5.2, 3.95, Math.PI);
@@ -1059,16 +1086,20 @@ const WORLD = (() => {
     function plant(x, z, s = 1) {
       const g = new THREE.Group();
       g.position.set(x, 0, z); g.scale.setScalar(s);
-      g.add(cyl(0.2, 0.15, 0.35, M().pot, 0, 0.175, 0, 12));
-      g.add(cyl(0.18, 0.18, 0.04, new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 1 }), 0, 0.36, 0, 12, { cast: false }));
-      const r = TEX.rng((x * 13 + z * 7 + 100) | 0);
-      for (let i = 0; i < 7; i++) {
-        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.1 + r() * 0.08, 0.5 + r() * 0.45, 6), r() > 0.5 ? M().plant : M().plantDark);
-        const a = r() * Math.PI * 2, d = r() * 0.1;
-        leaf.position.set(Math.cos(a) * d, 0.55 + r() * 0.25, Math.sin(a) * d);
-        leaf.rotation.set((r() - 0.5) * 0.7, 0, (r() - 0.5) * 0.7);
-        g.add(leaf);
-      }
+      decorVisual(g, 'PottedPlant', () => {
+        const p = [];
+        p.push(cyl(0.2, 0.15, 0.35, M().pot, 0, 0.175, 0, 12));
+        p.push(cyl(0.18, 0.18, 0.04, new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 1 }), 0, 0.36, 0, 12, { cast: false }));
+        const r = TEX.rng((x * 13 + z * 7 + 100) | 0);
+        for (let i = 0; i < 7; i++) {
+          const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.1 + r() * 0.08, 0.5 + r() * 0.45, 6), r() > 0.5 ? M().plant : M().plantDark);
+          const a = r() * Math.PI * 2, d = r() * 0.1;
+          leaf.position.set(Math.cos(a) * d, 0.55 + r() * 0.25, Math.sin(a) * d);
+          leaf.rotation.set((r() - 0.5) * 0.7, 0, (r() - 0.5) * 0.7);
+          p.push(leaf);
+        }
+        return p;
+      });
       scene.add(g);
       addCol(x - 0.25 * s, x + 0.25 * s, z - 0.25 * s, z + 0.25 * s);
     }
