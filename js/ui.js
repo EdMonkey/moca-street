@@ -129,6 +129,11 @@ const UI = (() => {
       case 'espCup': {
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
+        const canPour = slot.cupMesh && slot.drink.cup !== 'shot' && !(slot.busy && !slot.done);
+        if (canPour && held && held.type === 'shotglass')
+          return !held.filled ? '샷잔이 비어 있어요' : slot.drink.espresso ? '이미 샷이 든 컵이에요' : E + '샷 붓기 ☕';
+        if (canPour && held && held.type === 'pitcher')
+          return (!held.milk && !held.foam) ? '피처가 비어 있어요' : slot.drink.milk ? '이미 우유가 든 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
         if (held && held.type === 'drink')
           return held.drink.espresso ? '이미 샷이 든 컵이에요' : slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '컵 올리기';
@@ -172,6 +177,8 @@ const UI = (() => {
         const nm = it.id === 'waterHot' ? '온수' : '냉수';
         if (job.busy) {
           if (!job.done) return `${nm} 받는 중…`;
+          if (held && held.type === 'shotglass')
+            return !held.filled ? '샷잔이 비어 있어요' : job.drink.espresso ? '이미 샷이 든 컵이에요' : E + '샷 붓기 ☕';
           return held ? '손을 비우면 컵을 꺼낼 수 있어요' : E + '컵 꺼내기';
         }
         if (held && held.type === 'drink' && !held.drink.water) return E + `컵 올려 ${nm} 받기`;

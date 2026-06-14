@@ -196,21 +196,49 @@ const Game = (() => {
     rec.mesh = m;
   }
 
-  // 컵에 우유(+거품)를 확정해 붓는다 — 즉시 붓기와 라떼아트 미니게임 완료가 공유.
-  // artTier: 'perfect' | 'good' | 'plain' | null (라떼아트를 거치지 않은 경우)
-  function commitMilkPour(rec, h, artTier) {
-    const d = rec.item.drink;
-    d.milk = 1;
-    addStep(d, 'milk');
-    if (h.foam) { d.foam = 1; addStep(d, 'foam'); }
-    if (h.perfectFoam) d.foamPerfect = 1;            // 퍼펙트 마이크로폼 보너스 인계
-    if (artTier && artTier !== 'plain') d.artTier = artTier;   // 라떼아트 등급 인계
-    refreshPlacedDrink(rec);
+  // 컵(drink)에 우유(+거품)를 확정해 붓는다 — 즉시 붓기와 라떼아트 미니게임 완료가 공유.
+  // refresh: 컵 메시를 다시 그리는 콜백(놓인 컵/머신 컵 공용). artTier: 'perfect'|'good'|'plain'|null
+  function commitMilkPour(drink, refresh, h, artTier) {
+    drink.milk = 1;
+    addStep(drink, 'milk');
+    if (h.foam) { drink.foam = 1; addStep(drink, 'foam'); }
+    if (h.perfectFoam) drink.foamPerfect = 1;            // 퍼펙트 마이크로폼 보너스 인계
+    if (artTier && artTier !== 'plain') drink.artTier = artTier;   // 라떼아트 등급 인계
+    refresh();
     setHeld({ type: 'pitcher', milk: 0, foam: 0 });  // 피처 비움(재사용)
     AudioFX.pourWater(0.5);
     if (artTier === 'perfect') toast('🎨 멋진 라떼아트! 팁 보너스 ✨', 'gold', 2200);
     else if (artTier === 'good') toast('🎨 라떼아트 완성 — 제법인데요 🥛', 'good');
     else toast(h.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
+  }
+  // 머신 슬롯에 올라간 컵의 메시 다시 그림 (붓기 후 색/크레마 갱신)
+  function refreshSlotCup(slot) {
+    slot.st.root.remove(slot.cupMesh);
+    const cm = WORLD.makeDrinkMesh(slot.drink);
+    cm.position.copy(slot.localPos);
+    slot.st.root.add(cm);
+    slot.cupMesh = cm;
+  }
+  // 들고 있는 샷잔/피처를 대상 컵(drink)에 붓는다 (refresh로 메시 갱신). 라떼아트 분기 공용.
+  function pourHeldInto(drink, refresh) {
+    if (held.type === 'shotglass') {
+      if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
+      if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
+      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect;
+      refresh();
+      setHeld({ type: 'shotglass', filled: false, perfect: false });
+      AudioFX.pourWater(0.5); toast('샷을 부었어요 ☕');
+      return;
+    }
+    // pitcher
+    if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
+    if (drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
+    const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam };
+    if (drink.cup === 'hot' && drink.espresso && !drink.foam && held.milk) {   // 라떼아트 가능
+      LatteArt.start({ pattern: artPatternFor(), onDone: (tier) => commitMilkPour(drink, refresh, h, tier) });
+      return;
+    }
+    commitMilkPour(drink, refresh, h, null);
   }
 
   // 레벨이 오를수록 더 어려운 패턴에 도전 (채점 방식은 동일 — 연출/동기부여용)
@@ -294,37 +322,10 @@ const Game = (() => {
     /* --- 내려놓은 아이템: 가득 찬 샷잔으로 샷 붓기 / 집기 --- */
     if (id === 'placedItem') {
       const rec = it.rec;
-      // 가득 찬 샷잔을 들고 놓인 컵을 조준 → 샷 붓기
-      if (held && held.type === 'shotglass') {
-        if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
-        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('샷은 컵에만 따를 수 있어요', 'bad'); AudioFX.err(); return; }
-        if (rec.item.drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-        rec.item.drink.espresso = 1;
-        addStep(rec.item.drink, 'espresso');
-        rec.item.drink.perfect = !!held.perfect;
-        refreshPlacedDrink(rec);
-        setHeld({ type: 'shotglass', filled: false, perfect: false });   // 샷잔 비움(재사용)
-        AudioFX.pourWater(0.5);
-        toast('샷을 부었어요 ☕');
-        return;
-      }
-      // 우유가 담긴 스팀 피처를 들고 놓인 컵을 조준 → 우유(+거품) 붓기
-      if (held && held.type === 'pitcher') {
-        if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
-        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('우유는 컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
-        if (rec.item.drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
-        const d = rec.item.drink;
-        // 라떼아트 미니게임은 크레마가 받쳐주는 핫 음료(샷 들어간)에서만 — 그 외엔 즉시 붓기
-        const artEligible = d.cup === 'hot' && d.espresso && !d.foam && held.milk;
-        if (artEligible) {
-          const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam };
-          LatteArt.start({
-            pattern: artPatternFor(),
-            onDone: (tier) => commitMilkPour(rec, h, tier),
-          });
-          return;
-        }
-        commitMilkPour(rec, { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam }, null);
+      // 가득 찬 샷잔/피처를 들고 놓인 컵을 조준 → 붓기 (붓기는 샷잔·피처만 가능)
+      if (held && (held.type === 'shotglass' || held.type === 'pitcher')) {
+        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
+        pourHeldInto(rec.item.drink, () => refreshPlacedDrink(rec));
         return;
       }
       if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
@@ -419,6 +420,12 @@ const Game = (() => {
     if (id === 'espCup') {
       const slot = env.machines.espressoSlots[it.slot];
       if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
+      // 머신 위 일반 컵(샷잔 제외)에 그 자리에서 바로 붓기 — 추출 중만 아니면 (예: 샷 추출된 컵에 우유)
+      if (slot.cupMesh && slot.drink.cup !== 'shot' && !(slot.busy && !slot.done)
+          && held && (held.type === 'shotglass' || held.type === 'pitcher')) {
+        pourHeldInto(slot.drink, () => refreshSlotCup(slot));
+        return;
+      }
       if (slot.busy) {
         if (!slot.done) { toast('추출 중입니다…'); return; }
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
@@ -534,6 +541,19 @@ const Game = (() => {
       const job = env.machines.waterJobs[id];
       if (job.busy) {
         if (!job.done) { toast('물 받는 중입니다…'); return; }
+        // 물 완료된 컵에 그 자리에서 바로 샷 붓기 (꺼내 옮길 필요 없이)
+        if (held && held.type === 'shotglass') {
+          if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
+          if (job.drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
+          job.drink.espresso = 1;
+          addStep(job.drink, 'espresso');
+          job.drink.perfect = !!held.perfect;
+          swapJobCup(job);                                   // 컵 메시 갱신(크레마 표시)
+          setHeld({ type: 'shotglass', filled: false, perfect: false });
+          AudioFX.pourWater(0.5);
+          toast('샷을 부었어요 ☕');
+          return;
+        }
         if (held) { toast('손이 비어있어야 컵을 꺼낼 수 있어요'); return; }
         const drink = job.drink;
         resetJob(job);
