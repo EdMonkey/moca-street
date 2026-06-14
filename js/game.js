@@ -82,28 +82,29 @@ const Game = (() => {
 
   /* ===== 손에 든 것 ===== */
   function setHeld(h) {
+    const equip = !held && !!h;   // 빈손 → 물건: 새로 집은 경우만 끌어당기는 연출(재료 추가 등 갱신엔 X)
     held = h;
     if (!h) { Player.setHeld(null); }
     else if (h.type === 'drink') {
       const m = WORLD.makeDrinkMesh(h.drink);
       m.scale.setScalar(1.35);
-      Player.setHeld(m);
+      Player.setHeld(m, equip);
     } else if (h.type === 'dessert') {
       const m = WORLD.makeDessertMesh(h.kind);
       m.scale.setScalar(1.3);
-      Player.setHeld(m);
+      Player.setHeld(m, equip);
     } else if (h.type === 'portafilter') {
       const m = WORLD.makePortafilterMesh(h.state || 'empty');
       m.scale.setScalar(1.3);
-      Player.setHeld(m);
+      Player.setHeld(m, equip);
     } else if (h.type === 'shotglass') {
       const m = WORLD.makeDrinkMesh({ cup: 'shot', espresso: h.filled ? 1 : 0, perfect: h.perfect });
       m.scale.setScalar(1.5);
-      Player.setHeld(m);
+      Player.setHeld(m, equip);
     } else if (h.type === 'pitcher') {
       const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
-      Player.setHeld(m);
+      Player.setHeld(m, equip);
     }
     UI.held();
   }
@@ -474,6 +475,8 @@ const Game = (() => {
         slot.pfState = held.state || 'empty';
         slot.tampPerfect = !!held.tampPerfect;
         WORLD.setPortafilterState(slot.pf, slot.pfState);
+        slot.pf.rotation.y = PF_MOUNT_TWIST;   // 왼쪽으로 틀어진 채 시작 → updateSlots가 잠금 회전
+        slot.mountT = 0;
         setHeld(null); AudioFX.metalClack();
         return;
       }
@@ -831,8 +834,17 @@ const Game = (() => {
   }
 
   /* ===== 에스프레소 슬롯 업데이트 ===== */
+  const PF_MOUNT_DUR = 0.5;     // 체결 트위스트 지속(초)
+  const PF_MOUNT_TWIST = -0.95; // 시작 시 핸들이 틀어진 각도(rad) → 0으로 돌며 잠김(왼→오)
   function updateSlots(dt) {
     env.machines.espressoSlots.forEach(slot => {
+      // 포터필터 체결 애니메이션: 왼쪽으로 틀어 끼웠다 → 오른쪽으로 돌려 잠김
+      if (slot.mountT != null) {
+        slot.mountT += dt;
+        const e = 1 - Math.pow(1 - Math.min(1, slot.mountT / PF_MOUNT_DUR), 3);   // easeOutCubic
+        slot.pf.rotation.y = PF_MOUNT_TWIST * (1 - e);
+        if (slot.mountT >= PF_MOUNT_DUR) { slot.pf.rotation.y = 0; slot.mountT = null; }
+      }
       if (!slot.busy || slot.done) return;
       slot.t += dt;
       slot.progress.draw(slot.t / slot.dur, false);
