@@ -200,6 +200,7 @@
       else Game.update(dt);
       steam.update(dt);
       Weather.update(dt);
+      if (env.door) env.door.update(dt);   // 출입문 여닫힘 애니메이션 + 통과 충돌 토글
     }
     renderer.render(scene, camera);
   }

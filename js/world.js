@@ -389,22 +389,38 @@ const WORLD = (() => {
       // 출입문 틀(좌/우 기둥)
       scene.add(box(0.14, ROOM.h, 0.2, M().woodDark, 4.7, ROOM.h / 2, z));
       scene.add(box(0.14, ROOM.h, 0.2, M().woodDark, 6.3, ROOM.h / 2, z));
-      // 통유리 출입문(살짝 열린 채) — 전체 유리 + 가는 금속 테두리 + 세로 바 손잡이
+      // 통유리 여닫이 출입문 — 좌측 기둥(x≈4.72)을 경첩축으로 바깥(거리)쪽으로 열림
       const door = new THREE.Group();
       const gmat = M().glass, fmat = M().steel;
-      const leaf = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 2.46), gmat);  // 통유리 한 장(raw 메시 → 그림자 안 만듦)
-      leaf.position.set(0.37, 1.3, 0.02);
-      const railT = box(0.74, 0.08, 0.05, fmat, 0.37, 2.52, 0.02);   // 상단 레일
-      const railB = box(0.74, 0.10, 0.05, fmat, 0.37, 0.06, 0.02);   // 하단 레일
-      const stileL = box(0.05, 2.5, 0.05, fmat, 0.02, 1.3, 0.02);    // 좌측 세로틀
-      const stileR = box(0.05, 2.5, 0.05, fmat, 0.72, 1.3, 0.02);    // 우측 세로틀
-      const handle = cyl(0.016, 0.016, 0.95, fmat, 0.62, 1.3, 0.07, 10);  // 세로 바 손잡이
-      const hTop = cyl(0.013, 0.013, 0.06, fmat, 0.62, 1.74, 0.045, 8); hTop.rotation.x = Math.PI / 2;
-      const hBot = cyl(0.013, 0.013, 0.06, fmat, 0.62, 0.86, 0.045, 8); hBot.rotation.x = Math.PI / 2;
-      door.add(leaf, railT, railB, stileL, stileR, handle, hTop, hBot);
-      door.position.set(4.75, 0, z - 0.1);
-      door.rotation.y = -0.9;
+      const DW = 1.5, DH = 2.5;                                       // 문짝 폭/높이(개구부 1.6 거의 채움)
+      const leaf = new THREE.Mesh(new THREE.PlaneGeometry(DW - 0.08, DH - 0.08), gmat);  // 통유리 한 장
+      leaf.position.set(DW / 2, DH / 2, 0);
+      const railT = box(DW, 0.08, 0.05, fmat, DW / 2, DH - 0.02, 0);   // 상단 레일
+      const railB = box(DW, 0.10, 0.05, fmat, DW / 2, 0.06, 0);        // 하단 레일
+      const stileHinge = box(0.06, DH, 0.05, fmat, 0.03, DH / 2, 0);   // 경첩쪽 세로틀
+      const stileFree  = box(0.06, DH, 0.05, fmat, DW - 0.03, DH / 2, 0); // 손잡이쪽 세로틀
+      const handle = cyl(0.018, 0.018, 1.0, fmat, DW - 0.13, DH / 2, 0.07, 10);  // 세로 바 손잡이
+      const hTop = cyl(0.014, 0.014, 0.07, fmat, DW - 0.13, DH / 2 + 0.48, 0.045, 8); hTop.rotation.x = Math.PI / 2;
+      const hBot = cyl(0.014, 0.014, 0.07, fmat, DW - 0.13, DH / 2 - 0.48, 0.045, 8); hBot.rotation.x = Math.PI / 2;
+      door.add(leaf, railT, railB, stileHinge, stileFree, handle, hTop, hBot);
+      door.position.set(4.72, 0, z - 0.05);    // 경첩축 = 좌측 기둥
       scene.add(door);
+      // 문 조준 히트박스(개구부) + 충돌체(닫힘 시 통과 차단) → game.js가 'door'로 여닫음
+      addI(hitbox(1.6, 2.5, 0.6, 5.5, 1.3, z - 0.15, { id: 'door' }));
+      const doorCol = addCol(4.7, 6.3, 7.85, 8.55);
+      env.door = {
+        group: door, open: true, angle: -1.3, openAngle: -1.3, col: doorCol,
+        toggle() { this.open = !this.open; },
+        update(dt) {
+          const tgt = this.open ? this.openAngle : 0;
+          this.angle += (tgt - this.angle) * Math.min(1, dt * 9);   // 부드럽게 여닫힘
+          this.group.rotation.y = this.angle;
+          const passable = this.angle < this.openAngle * 0.5;        // 절반 이상 열리면 통과 허용
+          this.col.x0 = passable ? 1e6 : 4.7;
+          this.col.x1 = passable ? 1e6 : 6.3;
+        },
+      };
+      env.door.update(0);   // 시작 상태(열림) 적용
       // OPEN/CLOSE 팻말 — 영업 상태에 따라 교체 (game.js가 env.doorSign.setOpen 호출)
       const openMat  = textLabel('OPEN',  160, 80, '700 44px Georgia', '#7fb069', '#23291f');
       const closeMat = textLabel('CLOSE', 160, 80, '700 40px Georgia', '#e0846c', '#2a1c18');
@@ -414,23 +430,64 @@ const WORLD = (() => {
       env.doorSign = { mesh: sign, setOpen(b) { sign.material = b ? openMat : closeMat; } };
     })();
 
-    // 충돌: 외벽 + 앞벽(문 구간 제외 — 손님만 통과, 플레이어도 영업중엔 매장 안에)
+    // 충돌: 외벽 + 앞벽(문 개구부 x4.7~6.3 제외 — 문으로 출입, 문 충돌체는 위 env.door가 토글)
     addCol(ROOM.x0 - 1, ROOM.x0, ROOM.z0 - 1, ROOM.z1 + 1);
     addCol(ROOM.x1, ROOM.x1 + 1, ROOM.z0 - 1, ROOM.z1 + 1);
     addCol(ROOM.x0 - 1, ROOM.x1 + 1, ROOM.z0 - 1, ROOM.z0);
-    addCol(ROOM.x0 - 1, ROOM.x1 + 1, ROOM.z1, ROOM.z1 + 1);
+    addCol(ROOM.x0 - 1, 4.7, ROOM.z1, ROOM.z1 + 1);
+    addCol(6.3, ROOM.x1 + 1, ROOM.z1, ROOM.z1 + 1);
 
-    /* ---------- 외부 거리 ---------- */
-    const bd = new THREE.Mesh(new THREE.PlaneGeometry(70, 26), M().backdrop);
-    bd.position.set(0, 10, 26); bd.rotation.y = Math.PI;
-    bd.castShadow = bd.receiveShadow = false;
-    scene.add(bd);
-    const sidewalk = new THREE.Mesh(new THREE.PlaneGeometry(70, 18),
-      new THREE.MeshStandardMaterial({ color: 0x9a9288, roughness: 0.95 }));
-    sidewalk.rotation.x = -Math.PI / 2;
-    sidewalk.position.set(0, -0.01, 17);
-    sidewalk.receiveShadow = true;
-    scene.add(sidewalk);
+    /* ---------- 외부 거리 (문 열고 나가서 걸어다닐 수 있는 도로) ---------- */
+    (function street() {
+      // 원경 스카이라인(배경 그림)
+      const bd = new THREE.Mesh(new THREE.PlaneGeometry(90, 30), M().backdrop);
+      bd.position.set(0, 12, 30); bd.rotation.y = Math.PI; bd.castShadow = bd.receiveShadow = false;
+      scene.add(bd);
+      // 보도(카페 앞 ~ 길 건너 넓게)
+      const walk = new THREE.Mesh(new THREE.PlaneGeometry(60, 34),
+        new THREE.MeshStandardMaterial({ color: 0x9a9288, roughness: 0.96 }));
+      walk.rotation.x = -Math.PI / 2; walk.position.set(0, -0.02, 20); walk.receiveShadow = true;
+      scene.add(walk);
+      // 차도(아스팔트)
+      const road = new THREE.Mesh(new THREE.PlaneGeometry(60, 6.4),
+        new THREE.MeshStandardMaterial({ color: 0x37373d, roughness: 0.92 }));
+      road.rotation.x = -Math.PI / 2; road.position.set(0, 0, 15.5); road.receiveShadow = true;
+      scene.add(road);
+      // 중앙 차선(노란 점선)
+      const lineMat = new THREE.MeshStandardMaterial({ color: 0xd8c258, roughness: 0.8 });
+      for (let lx = -28; lx <= 28; lx += 3.2) {
+        const d = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.16), lineMat);
+        d.rotation.x = -Math.PI / 2; d.position.set(lx, 0.01, 15.5); scene.add(d);
+      }
+      // 연석(보도/차도 경계 띠 — 시각용, 충돌 없음)
+      const curbMat = new THREE.MeshStandardMaterial({ color: 0xbcb4a8, roughness: 0.9 });
+      [12.3, 18.7].forEach(cz => scene.add(box(60, 0.12, 0.22, curbMat, 0, 0.06, cz, { cast: false })));
+      // 길 건너 건물 줄(3D, 높이 랜덤)
+      const seed = s => { const x = Math.sin(s * 12.9898) * 43758.5453; return x - Math.floor(x); };
+      const bMats = [M().brick, M().plaster];
+      let bx = -27, i = 0;
+      while (bx < 27) {
+        const w = 4 + seed(i) * 3.5, h = 5 + seed(i + 31) * 6.5;
+        scene.add(box(w, h, 4, bMats[i % 2], bx + w / 2, h / 2, 24.6));
+        bx += w + 0.3; i++;
+      }
+      // 좌우 측면 건물(거리 경계)
+      [-1, 1].forEach(s => scene.add(box(5, 11, 34, M().plaster, s * 15.5, 5.5, 20)));
+      // 가로등 2개 (일출/일몰·야간 조명과 어울리게 점등)
+      [[-6, 10.6], [8, 10.6]].forEach(([lx, lz]) => {
+        const g = new THREE.Group(); g.position.set(lx, 0, lz);
+        g.add(cyl(0.06, 0.08, 3.4, M().steelDark, 0, 1.7, 0, 8));
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 10),
+          new THREE.MeshStandardMaterial({ color: 0xfff2cc, emissive: 0xffd98a, emissiveIntensity: 1.1 }));
+        lamp.position.set(0, 3.42, 0); g.add(lamp);
+        const pl = new THREE.PointLight(0xffd98a, 5, 8, 2); pl.position.set(0, 3.4, 0); g.add(pl);
+        scene.add(g);
+      });
+      // 거리 경계 충돌체(플레이어가 도로 밖/건물로 못 나가게)
+      addCol(-30, 30, 22.4, 23.4);     // 길 건너 건물 앞
+      addCol(-14, -13, 8, 23);          // 좌측
+      addCol(13, 14, 8, 23);            // 우측
+    })();
 
     /* ---------- 메인 카운터 (z=-1) ---------- */
     (function counters() {

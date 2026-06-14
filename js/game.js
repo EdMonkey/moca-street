@@ -239,6 +239,11 @@ const Game = (() => {
   function interact(it) {
     if (!it) return;
     const id = it.id;
+    // 출입문 여닫기 — 밖으로 나가거나 들어올 때(준비·영업 모두 가능)
+    if (id === 'door') {
+      if (env.door) { env.door.toggle(); AudioFX.bell(); toast(env.door.open ? '🚪 문을 열었어요' : '🚪 문을 닫았어요'); }
+      return;
+    }
     // 준비 단계엔 재고 보충만 (제조·서빙은 영업 중에)
     if (mode === 'prep' && id !== 'restock') {
       toast('영업을 시작하면 사용할 수 있어요 — 지금은 재고 보충과 [B] 배치');
