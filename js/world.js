@@ -80,19 +80,33 @@ const WORLD = (() => {
     const R = isIce ? 0.05 : isEsp ? 0.032 : isShot ? 0.025 : 0.052;
     const base = isEsp ? 0.01 : 0;              // 데미타세는 받침접시 위에 올라감
     const cupMat = (isIce || isShot) ? M().cupClear : M().cupWhite;
-    if (isEsp) { // 받침접시
-      const saucer = cyl(0.052, 0.04, 0.009, M().cupWhite, 0, 0.0045, 0, 18);
-      saucer.castShadow = false;
-      g.add(saucer);
+    // 컵 셸: Blender 중공(안이 파인) glb 모델. 머그/아이스/에스프레소잔은 손잡이·받침까지 포함.
+    // glb 미로드 시점이거나 샷잔은 기존 절차적 실린더로 폴백한다. 재질은 게임 재질로 덮어써
+    // 라이브러리 인스턴스 공유를 깨지 않고(클론별 머티리얼 교체) 기존 음료 룩을 유지한다.
+    const glbCup = isShot ? null : (isIce ? 'GlassTumbler' : isEsp ? 'EspressoCupSaucer' : 'CoffeeMug');
+    let cupShell = null;
+    if (glbCup && window.Assets && window.Assets.isReady()) {
+      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, 0);  // 베이스 y=0 정렬된 클론
+      if (cupShell) {
+        cupShell.traverse((n) => { if (n.isMesh) { n.material = cupMat; n.castShadow = false; } });
+        g.add(cupShell);
+      }
     }
-    const cup = cyl(R, R * 0.78, H, cupMat, 0, base + H / 2, 0, 20);
-    cup.castShadow = false;
-    g.add(cup);
-    if (!isIce && !isShot) { // 손잡이 (머그/데미타세) — 샷잔은 손잡이 없음
-      const handle = new THREE.Mesh(
-        new THREE.TorusGeometry(isEsp ? 0.016 : 0.03, isEsp ? 0.005 : 0.008, 8, 16), M().cupWhite);
-      handle.position.set(R + (isEsp ? 0.007 : 0.012), base + H / 2, 0);
-      g.add(handle);
+    if (!cupShell) {  // ----- 절차적 폴백 (glb 미준비 / 샷잔) -----
+      if (isEsp) { // 받침접시
+        const saucer = cyl(0.052, 0.04, 0.009, M().cupWhite, 0, 0.0045, 0, 18);
+        saucer.castShadow = false;
+        g.add(saucer);
+      }
+      const cup = cyl(R, R * 0.78, H, cupMat, 0, base + H / 2, 0, 20);
+      cup.castShadow = false;
+      g.add(cup);
+      if (!isIce && !isShot) { // 손잡이 (머그/데미타세) — 샷잔은 손잡이 없음
+        const handle = new THREE.Mesh(
+          new THREE.TorusGeometry(isEsp ? 0.016 : 0.03, isEsp ? 0.005 : 0.008, 8, 16), M().cupWhite);
+        handle.position.set(R + (isEsp ? 0.007 : 0.012), base + H / 2, 0);
+        g.add(handle);
+      }
     }
     const filled = drink.espresso || drink.water || drink.milk;
     if (filled) {
@@ -167,15 +181,43 @@ const WORLD = (() => {
   // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | tamped | used
   function makePortafilterMesh(state = 'filled') {
     const g = new THREE.Group();
-    const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
-    const grounds = cyl(0.045, 0.045, 0.014, GROUNDS_MAT.filled, 0, 0.028, 0, 12);
-    const handle = cyl(0.017, 0.02, 0.17, M().woodDark, 0, 0, 0.135, 10);
-    handle.rotation.x = Math.PI / 2;
-    const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
-    g.add(basket, grounds, handle, spout);
-    g.userData.grounds = grounds;
-    setPortafilterState(g, state);
+    g.userData.state = state;
+    buildPortafilter(g);
+    // glb 미준비로 절차적 폴백된 경우, 로드되면 같은 그룹에서 glb로 교체
+    // (머신 장착·그라인더의 정적 포터필터도 자동 갱신 — 참조 유지, 현재 상태 재적용)
+    if (!g.userData.glb && window.Assets && window.Assets.ready) {
+      window.Assets.ready.then(() => { if (window.Assets.isReady() && !g.userData.glb) buildPortafilter(g); }).catch(() => {});
+    }
     return g;
+  }
+
+  // 포터필터 그룹의 자식을 (재)구성: glb(준비 시) 또는 절차적 + 원두가루. 마지막 상태를 재적용.
+  function buildPortafilter(g) {
+    for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]);
+    let groundsY = 0.028, usedGlb = false;
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const m = window.Assets.spawn('Portafilter', 0, 0, 0);   // 베이스 y=0
+      if (m) {
+        m.traverse(n => { if (n.isMesh) n.castShadow = false; });
+        // 림 높이는 부모(머신)에 붙이기 전 = 로컬 기준으로 측정해야 함.
+        // setFromObject는 월드 박스라, 이미 부착된 상태(업그레이드)에서 재면 월드 y로 오염돼 가루가 공중에 뜬다.
+        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.006;   // 가루 둔덕을 림 위로 봉긋(옆/앞/위 어디서나 보이게)
+        g.add(m); usedGlb = true;
+      }
+    }
+    if (!usedGlb) {   // 폴백: 절차적 포터필터 (glb 로드 전)
+      const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
+      const handle = cyl(0.017, 0.02, 0.17, M().woodDark, 0, 0, 0.135, 10); handle.rotation.x = Math.PI / 2;
+      const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
+      g.add(basket, handle, spout);
+    }
+    const grounds = cyl(0.029, 0.031, 0.026, GROUNDS_MAT.filled, 0, groundsY, 0, 16);   // 바스켓을 꽉 채우고 림 위로 봉긋한 커피가루 둔덕
+    g.add(grounds);
+    g.userData.grounds = grounds;
+    g.userData.groundsY = groundsY;
+    g.userData.groundsH = 0.026;
+    g.userData.glb = usedGlb;
+    setPortafilterState(g, g.userData.state || 'filled');
   }
 
   // 포터필터 메시의 상태별 표시 갱신
@@ -183,6 +225,7 @@ const WORLD = (() => {
   //   empty → 보이되 원두가루 숨김
   //   filled/tamped/used → 보이고 가루 색을 상태에 맞게 교체 (tamped는 눌려 납작함)
   function setPortafilterState(group, state) {
+    group.userData.state = state;   // 마지막 상태 기록(로드 후 glb 재구성 시 재적용)
     const grounds = group.userData.grounds;
     if (state === 'none') { group.visible = false; return; }
     group.visible = true;
@@ -191,9 +234,24 @@ const WORLD = (() => {
       grounds.material = GROUNDS_MAT[state === 'used' ? 'used' : state === 'tamped' ? 'tamped' : 'filled'];
       // 탬핑된 원두는 눌려 납작하고 윗면이 매끈해짐
       const tamped = state === 'tamped';
-      grounds.scale.y = tamped ? 0.55 : 1;
-      grounds.position.y = tamped ? 0.024 : 0.028;
+      const by = group.userData.groundsY != null ? group.userData.groundsY : 0.028;
+      grounds.scale.y = tamped ? 0.6 : 1;
+      grounds.position.y = tamped ? by - 0.002 : by;
     }
+  }
+
+  // 분쇄 중 커피가루가 바닥부터 차오르는 표현 (frac 0..1) — 그라인더에서 사용
+  function setPortafilterFill(group, frac) {
+    const grounds = group.userData.grounds;
+    if (!grounds) return;
+    group.visible = true;
+    grounds.visible = true;
+    grounds.material = GROUNDS_MAT.filled;
+    frac = Math.max(0.02, Math.min(1, frac));
+    const by = group.userData.groundsY != null ? group.userData.groundsY : 0.028;
+    const h = group.userData.groundsH != null ? group.userData.groundsH : 0.024;
+    grounds.scale.y = frac;                                   // 바닥 고정 후 위로 차오름
+    grounds.position.y = (by - h / 2) + (h * frac) / 2;
   }
 
   // 추출 중 컵에 차오르는 에스프레소 — 컵 메시의 자식으로 넣고 setBrewFill로 높이를 키운다
@@ -219,28 +277,27 @@ const WORLD = (() => {
     m.position.y = base + 0.008 + fullH * frac / 2;    // 바닥은 고정한 채 위로 차오름
   }
 
-  // 스팀 피처(밀크 저그) — 재사용 도구. milk/foam이면 내용물(데운 우유/거품) 표시
+  // 스팀 피처(밀크 저그) — 재사용 도구. Blender glTF 모델(MilkPitcher)을 쓰고, 미로드 시 절차적 폴백.
+  // milk/foam이면 내용물(데운 우유/거품)을 모델 종류와 무관하게 안쪽에 표시.
   function makePitcherMesh(milk, foam) {
     const g = new THREE.Group();
-    const R = 0.046, H = 0.13;
-    const body = cyl(R, R * 0.8, H, M().steel, 0, H / 2, 0, 20);
-    body.castShadow = false;
-    g.add(body);
-    // 주둥이(스파웃) — 앞쪽 위로 비스듬히
-    const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8);
-    spout.rotation.x = 0.6; spout.castShadow = false;
-    g.add(spout);
-    // 손잡이 — 옆면 고리
-    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel);
-    handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false;
-    g.add(handle);
-    if (milk || foam) {
-      const liq = cyl(R * 0.86, R * 0.72, H * 0.72, M().milkLiquid, 0, H * 0.72 / 2 + 0.006, 0, 18);
-      liq.castShadow = false; g.add(liq);
-      if (foam) {   // 거품 — 윗면 봉긋
-        const fo = cyl(R * 0.5, R * 0.84, 0.02, M().milkLiquid, 0, H * 0.72 + 0.012, 0, 18);
-        fo.castShadow = false; g.add(fo);
+    let usedGlb = false;
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const m = window.Assets.spawn('MilkPitcher', 0, 0, 0);   // 베이스를 y=0에 맞춰 복제
+      if (m) {
+        m.traverse(n => { if (n.isMesh) n.castShadow = false; });  // 손에 든 도구 — 그림자 끔(기존 동작 유지)
+        g.add(m); usedGlb = true;
       }
+    }
+    if (!usedGlb) {   // 폴백: 기존 절차적 피처 (glb 로드 전 짧은 순간)
+      const R = 0.046, H = 0.13;
+      const body = cyl(R, R * 0.8, H, M().steel, 0, H / 2, 0, 20); body.castShadow = false; g.add(body);
+      const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8); spout.rotation.x = 0.6; spout.castShadow = false; g.add(spout);
+      const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel); handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false; g.add(handle);
+    }
+    if (milk || foam) {   // 데운 우유 / 거품 — 피처 안쪽 내용물 (모델 종류 무관)
+      const liq = cyl(0.033, 0.030, 0.07, M().milkLiquid, 0, 0.040, 0.01, 18); liq.castShadow = false; g.add(liq);
+      if (foam) { const fo = cyl(0.022, 0.036, 0.018, M().milkLiquid, 0, 0.082, 0.01, 18); fo.castShadow = false; g.add(fo); }
     }
     return g;
   }
@@ -620,12 +677,17 @@ const WORLD = (() => {
     (function iceMachine() {
       const st = station('ice', '제빙기', -4.9, -4.3, 0.7, 0.65);
       const r = st.root;
-      r.add(box(0.62, 0.5, 0.55, M().steel, 0, 0.25, 0));
-      r.add(box(0.56, 0.1, 0.46, M().steelDark, 0, 0.52, 0));
-      // 얼음 보이는 개구부
-      r.add(box(0.46, 0.18, 0.06, M().blackMatte, 0, 0.18, 0.28, { cast: false }));
-      for (let i = 0; i < 6; i++)
-        r.add(box(0.05, 0.05, 0.05, M().ice, -0.15 + (i % 3) * 0.15, 0.16 + Math.floor(i / 3) * 0.05, 0.27 + (i % 2) * 0.02, { cast: false }));
+      const vis = new THREE.Group(); r.add(vis);
+      decorVisual(vis, 'IceMachine', () => {
+        const p = [
+          box(0.62, 0.5, 0.55, M().steel, 0, 0.25, 0),
+          box(0.56, 0.1, 0.46, M().steelDark, 0, 0.52, 0),
+          box(0.46, 0.18, 0.06, M().blackMatte, 0, 0.18, 0.28, { cast: false }),   // 얼음 개구부
+        ];
+        for (let i = 0; i < 6; i++)
+          p.push(box(0.05, 0.05, 0.05, M().ice, -0.15 + (i % 3) * 0.15, 0.16 + Math.floor(i / 3) * 0.05, 0.27 + (i % 2) * 0.02, { cast: false }));
+        return p;
+      }, 0, 0.71);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.13), textLabel('얼음', 192, 60, '700 32px "Malgun Gothic"'));
       lbl.position.set(0, 0.68, 0.3);
       r.add(lbl);
@@ -641,42 +703,77 @@ const WORLD = (() => {
     function buildEspresso(id, x, z, lockSecond) {
       const st = station(id, '에스프레소 머신', x, z, 1.45, 0.8);
       const g = st.root;
-      const body = box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0);
-      const topTray = box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0);
-      const front = box(1.1, 0.26, 0.04, M().blackMatte, 0, 0.4, 0.3);
-      g.add(body, topTray, front);
-      // 원목 사이드 패널(본체 측면과 동일 평면 회피: 안쪽 면을 본체 내부로) + 상단 레일
-      g.add(box(0.06, 0.5, 0.56, M().woodDark, -0.64, 0.33, 0));
-      g.add(box(0.06, 0.5, 0.56, M().woodDark, 0.64, 0.33, 0));
-      g.add(box(1.29, 0.02, 0.04, M().steel, 0, 0.66, 0.28, { cast: false }));
-      // 브랜드 플레이트
-      const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.07),
-        textLabel('MOCHA ST.', 256, 52, 'italic 700 30px Georgia', '#e8b86d', '#1c1815'));
-      plate.position.set(0, 0.55, 0.335);
-      g.add(plate);
-      // 크롬 그룹 커버(전면 패널 면 0.32보다 앞으로 빼서 z-fighting 방지)
-      [-0.3, 0.3].forEach(ox => g.add(box(0.2, 0.14, 0.12, M().steel, ox, 0.42, 0.27)));
-      // 상단 데코 컵들 (트레이 윗면과 동일 평면 회피)
-      for (let i = 0; i < 4; i++)
-        g.add(cyl(0.045, 0.038, 0.07, M().cupWhite, -0.45 + i * 0.3, 0.684, 0, 12, { cast: false }));
-      // 그룹헤드 2개 + 장착식 포터필터 + 드립트레이
-      // 그룹헤드를 충분히 높여(y 0.30) 아이스컵(0.16m)도 추출구 아래에 들어가게 함
-      const slotBase = env.machines.espressoSlots.length;   // 추가 머신은 전역 슬롯 배열에 이어 붙임
+      // ---- 비주얼 셸: glb EspressoMachine(게임 앵커에 맞춰 새로 제작, ×1.0) 또는 절차적 폴백 ----
+      const vis = new THREE.Group(); g.add(vis);
+      decorVisual(vis, 'EspressoMachine', () => {
+        const p = [];
+        p.push(box(1.25, 0.52, 0.58, M().steel, 0, 0.33, 0));
+        p.push(box(1.27, 0.05, 0.6, M().steelDark, 0, 0.62, 0));
+        p.push(box(1.1, 0.26, 0.04, M().blackMatte, 0, 0.4, 0.3));
+        p.push(box(0.06, 0.5, 0.56, M().woodDark, -0.64, 0.33, 0));
+        p.push(box(0.06, 0.5, 0.56, M().woodDark, 0.64, 0.33, 0));
+        p.push(box(1.29, 0.02, 0.04, M().steel, 0, 0.66, 0.28, { cast: false }));
+        const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.07),
+          textLabel('MOCHA ST.', 256, 52, 'italic 700 30px Georgia', '#e8b86d', '#1c1815'));
+        plate.position.set(0, 0.55, 0.335); p.push(plate);
+        [-0.3, 0.3].forEach(ox => p.push(box(0.2, 0.14, 0.12, M().steel, ox, 0.42, 0.27)));
+        for (let i = 0; i < 4; i++)
+          p.push(cyl(0.045, 0.038, 0.07, M().cupWhite, -0.45 + i * 0.3, 0.684, 0, 12, { cast: false }));
+        [-0.3, 0.3].forEach(ox => p.push(cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14)));   // 그룹헤드
+        p.push(box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3));   // 드립트레이
+        // 압력 게이지 + LED
+        const [gc, gx] = TEX.canvas(128, 128);
+        gx.fillStyle = '#f5f0e2'; gx.beginPath(); gx.arc(64, 64, 60, 0, 7); gx.fill();
+        gx.strokeStyle = '#2a2520'; gx.lineWidth = 7;
+        gx.beginPath(); gx.arc(64, 64, 56, 0, 7); gx.stroke();
+        gx.lineWidth = 3;
+        for (let a = -0.75 * Math.PI; a <= -0.25 * Math.PI + 1.6; a += 0.31) {
+          gx.beginPath();
+          gx.moveTo(64 + Math.cos(a) * 44, 64 + Math.sin(a) * 44);
+          gx.lineTo(64 + Math.cos(a) * 52, 64 + Math.sin(a) * 52);
+          gx.stroke();
+        }
+        gx.strokeStyle = '#c43e2e'; gx.lineWidth = 5;
+        gx.beginPath(); gx.moveTo(64, 64); gx.lineTo(64 + 34, 64 - 30); gx.stroke();
+        const gt = new THREE.CanvasTexture(gc); gt.colorSpace = THREE.SRGBColorSpace;
+        const gauge = new THREE.Mesh(new THREE.CircleGeometry(0.052, 24),
+          new THREE.MeshStandardMaterial({ map: gt, roughness: 0.25 }));
+        gauge.position.set(0, 0.42, 0.34);
+        const gring = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.008, 8, 24), M().steel);
+        gring.position.copy(gauge.position);
+        const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8),
+          new THREE.MeshStandardMaterial({ color: 0xff9a3e, emissive: 0xff7a1e, emissiveIntensity: 2 }));
+        led.position.set(-0.48, 0.42, 0.34);
+        p.push(gauge, gring, led);
+        // 스팀봉 + 노브
+        const steamBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 14), M().steel);
+        steamBall.position.set(0.57, 0.4, 0.3);
+        const steamWand = cyl(0.013, 0.013, 0.3, M().steel, 0.565, 0.255, 0.325, 12); steamWand.rotation.x = -0.22;
+        const steamNozzle = cyl(0.019, 0.009, 0.055, M().steelDark, 0.562, 0.085, 0.36, 12); steamNozzle.rotation.x = -0.22;
+        const knobBase = cyl(0.026, 0.026, 0.03, M().steel, 0.46, 0.44, 0.31, 16); knobBase.rotation.x = Math.PI / 2;
+        const knobGrip = cyl(0.036, 0.033, 0.045, M().blackMatte, 0.46, 0.44, 0.345, 18); knobGrip.rotation.x = Math.PI / 2;
+        const knobMark = box(0.005, 0.022, 0.006, M().cupWhite, 0.46, 0.44, 0.37, { cast: false });
+        p.push(steamBall, steamWand, steamNozzle, knobBase, knobGrip, knobMark);
+        const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
+        lbl.position.set(0, 0.85, 0.25); p.push(lbl);
+        return p;
+      }, 0, 1.0);
+
+      // ---- 기능부 (앵커는 유지 — 새 glb 그룹헤드 ±0.3 / 우측 스팀완드와 정렬) ----
+      const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
-        const groupHead = cyl(0.07, 0.08, 0.1, M().steelDark, ox, 0.30, 0.26, 14); g.add(groupHead);   // 그룹헤드
-        // 포터필터(기본 '빈' 상태로 장착되어 있음)
+        // 포터필터(기본 '빈' 상태) — glb 그룹헤드(z0.30 돌출) 아래 장착, 배출구가 컵 위로
         const pf = makePortafilterMesh('empty');
-        pf.position.set(ox, 0.235, 0.26);
+        pf.position.set(ox, 0.135, 0.30);
         g.add(pf);
-        // 추출 중 커피 줄기(애니메이션용)
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
         stream.visible = false;
         g.add(stream);
         env.machines.espressoSlots.push({
           st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
-          progress: makeProgress(g, ox, 0.27, 0.3),   // 추출 중인 컵 바로 위
+          progress: makeProgress(g, ox, 0.27, 0.3),
           stream, pf, pfState: 'empty', tampPerfect: false, brewLiquid: null,
-          locked: (i === 1 ? !!lockSecond : false),    // 원래 머신의 2번 슬롯만 듀얼헤드 업그레이드 필요
+          locked: (i === 1 ? !!lockSecond : false),
           busy: false, cupMesh: null, done: false, drink: null, t: 0
         });
         const slotIdx = slotBase + i;
@@ -689,70 +786,25 @@ const WORLD = (() => {
         g.add(brewBtn, brewLed);
         // 분리된 상호작용 히트박스 3종 (높이로 구분): 컵 자리(낮음) · 포터필터(중간) · 추출 버튼(위)
         childHitbox(st, 0.3, 0.18, 0.34, ox, 0.06, 0.33, { id: 'espCup', slot: slotIdx });
-        childHitbox(st, 0.26, 0.18, 0.3, ox, 0.27, 0.24, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [groupHead, pf];
+        childHitbox(st, 0.26, 0.2, 0.32, ox, 0.17, 0.30, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [pf];
         childHitbox(st, 0.2, 0.16, 0.18, ox, 0.46, 0.33, { id: 'brew', slot: slotIdx }).userData.outlineMeshes = [brewBtn, brewLed];
       });
-      const drip = box(0.9, 0.025, 0.3, M().steelDark, 0, 0.016, 0.3);
-      g.add(drip);
-      // 압력 게이지 (다이얼 페이스) + 전원 LED
-      const [gc, gx] = TEX.canvas(128, 128);
-      gx.fillStyle = '#f5f0e2'; gx.beginPath(); gx.arc(64, 64, 60, 0, 7); gx.fill();
-      gx.strokeStyle = '#2a2520'; gx.lineWidth = 7;
-      gx.beginPath(); gx.arc(64, 64, 56, 0, 7); gx.stroke();
-      gx.lineWidth = 3;
-      for (let a = -0.75 * Math.PI; a <= -0.25 * Math.PI + 1.6; a += 0.31) {
-        gx.beginPath();
-        gx.moveTo(64 + Math.cos(a) * 44, 64 + Math.sin(a) * 44);
-        gx.lineTo(64 + Math.cos(a) * 52, 64 + Math.sin(a) * 52);
-        gx.stroke();
-      }
-      gx.strokeStyle = '#c43e2e'; gx.lineWidth = 5;
-      gx.beginPath(); gx.moveTo(64, 64); gx.lineTo(64 + 34, 64 - 30); gx.stroke();
-      const gt = new THREE.CanvasTexture(gc); gt.colorSpace = THREE.SRGBColorSpace;
-      const gauge = new THREE.Mesh(new THREE.CircleGeometry(0.052, 24),
-        new THREE.MeshStandardMaterial({ map: gt, roughness: 0.25 }));
-      gauge.position.set(0, 0.42, 0.34);
-      const gring = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.008, 8, 24), M().steel);
-      gring.position.copy(gauge.position);
-      const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0xff9a3e, emissive: 0xff7a1e, emissiveIntensity: 2 }));
-      led.position.set(-0.48, 0.42, 0.34);
-      g.add(gauge, gring, led);
-      // 스팀봉 + 스팀 밸브 노브 (오른쪽) — 밀크 스티머를 머신에 통합. 별도 [E]로 상호작용한다.
-      const steamCupPos = new THREE.Vector3(0.6, 0.03, 0.3);   // 스팀할 컵이 놓이는 우측 자리
-      // 스팀봉: 볼 조인트 → 크롬 파이프 → 어두운 노즐 팁 (앞쪽 아래로 내려옴)
-      const steamBall = new THREE.Mesh(new THREE.SphereGeometry(0.028, 14, 14), M().steel);
-      steamBall.position.set(0.57, 0.4, 0.3);
-      const steamWand = cyl(0.013, 0.013, 0.3, M().steel, 0.565, 0.255, 0.325, 12);
-      steamWand.rotation.x = -0.22;                             // 앞쪽 아래로 기울인 스팀봉
-      const steamNozzle = cyl(0.019, 0.009, 0.055, M().steelDark, 0.562, 0.085, 0.36, 12);
-      steamNozzle.rotation.x = -0.22;
-      // 스팀 밸브 노브: 크롬 베이스 + 검은 그립 + 흰 인디케이터 (앞면에서 돌리는 손잡이)
-      const knobBase = cyl(0.026, 0.026, 0.03, M().steel, 0.46, 0.44, 0.31, 16);
-      knobBase.rotation.x = Math.PI / 2;
-      const knobGrip = cyl(0.036, 0.033, 0.045, M().blackMatte, 0.46, 0.44, 0.345, 18);
-      knobGrip.rotation.x = Math.PI / 2;
-      const knobMark = box(0.005, 0.022, 0.006, M().cupWhite, 0.46, 0.44, 0.37, { cast: false });
-      g.add(steamBall, steamWand, steamNozzle, knobBase, knobGrip, knobMark);
       env.machines.espressoGroup = g;
-      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });            // 상단 장식 증기
-      // 통합 밀크 스티머 잡 (별도 히트박스 id 'steamer'). 스팀봉 증기는 노브 조작/스팀 중에만 분사.
+      env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
       const steamJob = {
-        kind: 'steamer', st, localPos: steamCupPos,
-        wandLocal: new THREE.Vector3(0.562, 0.045, 0.37),   // 스팀봉 노즐 끝(증기 분출 지점)
-        steamT: 0,                                          // >0이면 스팀 분사 중
-        progress: makeProgress(g, 0.6, 0.27, 0.3),   // 스팀 중인 컵 바로 위
+        kind: 'steamer', st, localPos: new THREE.Vector3(0.6, 0.03, 0.3),
+        wandLocal: new THREE.Vector3(0.562, 0.045, 0.37), steamT: 0,
+        progress: makeProgress(g, 0.6, 0.27, 0.3),
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
       env.machines.steamerJobs.push(steamJob);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.85, 0.25);
       g.add(lbl);
-      // 스티머 분리: 스팀봉(피처 데우기) + 노브(스팀 분사) — 각각 따로 조준·하이라이트
-      childHitbox(st, 0.34, 0.42, 0.5, 0.62, 0.2, 0.32, { id: 'steamwand', job: steamJob })
-        .userData.outlineMeshes = [steamBall, steamWand, steamNozzle];
-      childHitbox(st, 0.16, 0.18, 0.18, 0.46, 0.44, 0.34, { id: 'steamknob', job: steamJob })
-        .userData.outlineMeshes = [knobBase, knobGrip, knobMark];
+      // 스티머 분리 히트박스: 스팀봉(피처 데우기) + 노브(스팀 분사) — 시각물은 glb에 포함되어
+      // 외곽선은 전체 머신 폴백으로 처리(개별 메시 참조 불가).
+      childHitbox(st, 0.34, 0.42, 0.5, 0.62, 0.2, 0.32, { id: 'steamwand', job: steamJob });
+      childHitbox(st, 0.16, 0.18, 0.18, 0.46, 0.44, 0.34, { id: 'steamknob', job: steamJob });
       return st;
     }
     buildEspresso('espresso', -3.1, -4.25, true);   // 원래 머신: 2번 슬롯은 듀얼헤드 잠금
@@ -805,10 +857,12 @@ const WORLD = (() => {
       [['waterHot', -0.55, '온수', 0xd9534f], ['waterCold', 0.15, '냉수', 0x5a9adf]].forEach(([id, x, name, dot]) => {
         const st = station(id, name + ' 디스펜서', x, -4.3, 0.32, 0.35);
         const r = st.root;
-        r.add(box(0.22, 0.5, 0.24, M().steel, 0, 0.25, 0));
-        const spout = cyl(0.014, 0.014, 0.14, M().steelDark, 0, 0.32, 0.16, 8);
-        spout.rotation.x = 0.9;
-        r.add(spout);
+        const vis = new THREE.Group(); r.add(vis);
+        decorVisual(vis, 'WaterDispenser', () => {
+          const spout = cyl(0.014, 0.014, 0.14, M().steelDark, 0, 0.32, 0.16, 8);
+          spout.rotation.x = 0.9;
+          return [box(0.22, 0.5, 0.24, M().steel, 0, 0.25, 0), spout];
+        }, 0, 1.0);
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8),
           new THREE.MeshStandardMaterial({ color: dot, emissive: dot, emissiveIntensity: 1.2 }));
         led.position.set(0, 0.42, 0.13);
@@ -817,10 +871,16 @@ const WORLD = (() => {
         lbl.position.set(0, 0.6, 0.15);
         r.add(lbl);
         childHitbox(st, 0.32, 0.7, 0.55, 0, 0.3, 0.1, { id });
+        // 물줄기 — 받는 동안 표시 (스파웃 노즐 → 컵). 컵은 스파웃 바로 아래에 놓임
+        const stream = cyl(0.006, 0.006, 0.11, new THREE.MeshStandardMaterial({
+          color: 0xcfeaff, transparent: true, opacity: 0.6, roughness: 0.15
+        }), 0, 0.18, 0.19, 6, { cast: false });
+        stream.visible = false;
+        r.add(stream);
         env.machines.waterJobs[id] = {
           kind: 'water', waterType: id === 'waterHot' ? 'hot' : 'cold',
-          st, localPos: new THREE.Vector3(0, 0, 0.22),
-          progress: makeProgress(r, 0, 0.24, 0.22),   // 물 받는 컵 바로 위
+          st, localPos: new THREE.Vector3(0, 0, 0.19), stream,
+          progress: makeProgress(r, 0, 0.30, 0.19),   // 물 받는 컵 바로 위
           busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, sound: null
         };
       });
@@ -862,12 +922,17 @@ const WORLD = (() => {
     (function knockbox() {
       const st = station('knockbox', '넉박스', 3.2, -4.3, 0.35, 0.4);
       const r = st.root;
-      // 어두운 무광 통 + 위를 가로지르는 고무 바
-      r.add(box(0.26, 0.22, 0.3, M().blackMatte, 0, 0.11, 0));
-      r.add(cyl(0.13, 0.13, 0.03, M().steelDark, 0, 0.225, 0, 16));        // 상단 림
-      const bar = cyl(0.014, 0.014, 0.26, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }), 0, 0.255, 0, 10);
-      bar.rotation.z = Math.PI / 2;
-      r.add(bar);
+      // 어두운 무광 통 + 위를 가로지르는 고무 바 — glb KnockBox로 교체(로드 시)
+      const vis = new THREE.Group(); r.add(vis);
+      decorVisual(vis, 'KnockBox', () => {
+        const bar = cyl(0.014, 0.014, 0.26, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }), 0, 0.255, 0, 10);
+        bar.rotation.z = Math.PI / 2;
+        return [
+          box(0.26, 0.22, 0.3, M().blackMatte, 0, 0.11, 0),
+          cyl(0.13, 0.13, 0.03, M().steelDark, 0, 0.225, 0, 16),   // 상단 림
+          bar,
+        ];
+      }, 0, 1.8);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.11), textLabel('넉박스', 160, 52, '700 28px "Malgun Gothic"'));
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
@@ -953,28 +1018,28 @@ const WORLD = (() => {
     function buildGrinder(id, x, z) {
       const st = station(id, '그라인더', x, z, 0.45, 0.5);
       const g = st.root;
-      g.add(cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16));      // 받침
-      g.add(box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0));            // 본체
-      g.add(box(0.16, 0.05, 0.18, M().steelDark, 0, 0.415, 0));           // 상단
-      const hopper = cyl(0.1, 0.07, 0.17, new THREE.MeshPhysicalMaterial({
-        color: 0x8a6a48, transparent: true, opacity: 0.55, roughness: 0.1
-      }), 0, 0.53, 0, 14);
-      g.add(hopper);
-      g.add(cyl(0.072, 0.05, 0.1, new THREE.MeshStandardMaterial({ color: 0x3e2814, roughness: 0.95 }), 0, 0.5, 0, 12)); // 호퍼 속 원두
-      g.add(cyl(0.11, 0.11, 0.02, M().blackMatte, 0, 0.625, 0, 14));      // 뚜껑
-      g.add(box(0.05, 0.06, 0.08, M().steelDark, 0, 0.3, 0.13));          // 배출구
-      g.add(box(0.12, 0.02, 0.1, M().steel, 0, 0.12, 0.13));              // 포터필터 받침
+      const vis = new THREE.Group(); g.add(vis);
+      decorVisual(vis, 'CoffeeGrinder', () => [
+        cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16),      // 받침
+        box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0),            // 본체
+        box(0.16, 0.05, 0.18, M().steelDark, 0, 0.415, 0),          // 상단
+        cyl(0.1, 0.07, 0.17, new THREE.MeshPhysicalMaterial({ color: 0x8a6a48, transparent: true, opacity: 0.55, roughness: 0.1 }), 0, 0.53, 0, 14),   // 호퍼
+        cyl(0.072, 0.05, 0.1, new THREE.MeshStandardMaterial({ color: 0x3e2814, roughness: 0.95 }), 0, 0.5, 0, 12),   // 호퍼 속 원두
+        cyl(0.11, 0.11, 0.02, M().blackMatte, 0, 0.625, 0, 14),      // 뚜껑
+        box(0.05, 0.06, 0.08, M().steelDark, 0, 0.3, 0.13),          // 배출구
+        box(0.12, 0.02, 0.1, M().steel, 0, 0.12, 0.13),            // 포터필터 받침
+      ], 0, 1.0);
       const glbl = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.13), textLabel('그라인더', 192, 56, '700 30px "Malgun Gothic"'));
       glbl.position.set(0, 0.78, 0.18);
       g.add(glbl);
       // 삽입된 포터필터가 받침 위에 표시됨 (초기엔 숨김)
       const pfOut = makePortafilterMesh('none');
-      pfOut.position.set(0, 0.145, 0.13);
+      pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
-        progress: makeProgress(g, 0, 0.34, 0.13),   // 분쇄 중인 포터필터 바로 위
+        progress: makeProgress(g, 0, 0.34, 0.15),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
       childHitbox(st, 0.42, 0.85, 0.6, 0, 0.35, 0.05, { id: 'grinder', job });
@@ -1037,22 +1102,56 @@ const WORLD = (() => {
       });
     })();
 
+    /* 정적 데코: 절차적로 먼저 그리고, glb 로드되면 그 자리에서 교체 (surface·collider는 호출부에서 유지) */
+    function decorVisual(parent, glbName, procFn, rotY = 0, scale = 1) {
+      const proc = procFn();
+      proc.forEach(m => parent.add(m));
+      if (window.Assets && window.Assets.ready) {
+        window.Assets.ready.then(() => {
+          const m = window.Assets.spawn(glbName, 0, 0, 0, rotY);
+          if (!m) return;
+          if (scale !== 1) m.scale.multiplyScalar(scale);
+          // 베이스를 부모 원점(카운터 상판/바닥)에 정확히 안착시킨다. glb 원점이
+          // 베이스가 아니어도(스케일·회전 적용 후 측정) 바닥이 카운터에 파묻히거나
+          // 뜨지 않게 함 — 기능 앵커(포터필터·스파웃 등)와 시각물 정렬을 일치시킨다.
+          m.position.set(0, 0, 0);
+          m.updateMatrixWorld(true);
+          const bb = new THREE.Box3().setFromObject(m);
+          if (isFinite(bb.min.y)) m.position.y = -bb.min.y;
+          proc.forEach(pm => parent.remove(pm));
+          parent.add(m);
+        }).catch(() => {});
+      }
+    }
+
     /* ---------- 좌석 (테이블 · 의자 · 소파) ---------- */
     (function seating() {
       function table(x, z) {
-        const top = cyl(0.45, 0.45, 0.04, M().marble, x, 0.78, z, 24);
+        // 배치 표면: 투명 디스크(레이캐스트 전용) — glb 상판 높이(0.75)에 맞춤
+        const top = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.02, 24),
+          new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+        top.position.set(x, 0.74, z); top.castShadow = top.receiveShadow = false;
         scene.add(top); env.surfaces.push(top);
-        scene.add(cyl(0.035, 0.035, 0.76, M().steelDark, x, 0.39, z, 12));
-        scene.add(cyl(0.22, 0.26, 0.03, M().steelDark, x, 0.015, z, 16));
         addCol(x - 0.5, x + 0.5, z - 0.5, z - 0.5 + 1.0);
+        // 비주얼: glb CafeTable(로드 시) 또는 절차적 폴백
+        const vis = new THREE.Group(); vis.position.set(x, 0, z); scene.add(vis);
+        decorVisual(vis, 'CafeTable', () => [
+          cyl(0.45, 0.45, 0.04, M().marble, 0, 0.73, 0, 24),
+          cyl(0.035, 0.035, 0.72, M().steelDark, 0, 0.37, 0, 12),
+          cyl(0.22, 0.26, 0.03, M().steelDark, 0, 0.015, 0, 16),
+        ]);
       }
       function chair(x, z, ry) {
         const g = new THREE.Group();
         g.position.set(x, 0, z); g.rotation.y = ry;
-        g.add(box(0.4, 0.05, 0.4, M().woodMid, 0, 0.46, 0));
-        g.add(box(0.4, 0.5, 0.05, M().woodMid, 0, 0.73, -0.18));
-        [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]].forEach(([lx, lz]) =>
-          g.add(cyl(0.02, 0.02, 0.46, M().woodDark, lx, 0.23, lz, 8)));
+        decorVisual(g, 'CafeChair', () => {
+          const p = [];
+          p.push(box(0.4, 0.05, 0.4, M().woodMid, 0, 0.46, 0));
+          p.push(box(0.4, 0.5, 0.05, M().woodMid, 0, 0.73, -0.18));
+          [[-0.16, -0.16], [0.16, -0.16], [-0.16, 0.16], [0.16, 0.16]].forEach(([lx, lz]) =>
+            p.push(cyl(0.02, 0.02, 0.46, M().woodDark, lx, 0.23, lz, 8)));
+          return p;
+        });
         scene.add(g);
       }
       table(-5.2, 3.2); chair(-5.2, 2.45, 0); chair(-5.2, 3.95, Math.PI);
@@ -1074,16 +1173,20 @@ const WORLD = (() => {
     function plant(x, z, s = 1) {
       const g = new THREE.Group();
       g.position.set(x, 0, z); g.scale.setScalar(s);
-      g.add(cyl(0.2, 0.15, 0.35, M().pot, 0, 0.175, 0, 12));
-      g.add(cyl(0.18, 0.18, 0.04, new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 1 }), 0, 0.36, 0, 12, { cast: false }));
-      const r = TEX.rng((x * 13 + z * 7 + 100) | 0);
-      for (let i = 0; i < 7; i++) {
-        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.1 + r() * 0.08, 0.5 + r() * 0.45, 6), r() > 0.5 ? M().plant : M().plantDark);
-        const a = r() * Math.PI * 2, d = r() * 0.1;
-        leaf.position.set(Math.cos(a) * d, 0.55 + r() * 0.25, Math.sin(a) * d);
-        leaf.rotation.set((r() - 0.5) * 0.7, 0, (r() - 0.5) * 0.7);
-        g.add(leaf);
-      }
+      decorVisual(g, 'PottedPlant', () => {
+        const p = [];
+        p.push(cyl(0.2, 0.15, 0.35, M().pot, 0, 0.175, 0, 12));
+        p.push(cyl(0.18, 0.18, 0.04, new THREE.MeshStandardMaterial({ color: 0x3a2a18, roughness: 1 }), 0, 0.36, 0, 12, { cast: false }));
+        const r = TEX.rng((x * 13 + z * 7 + 100) | 0);
+        for (let i = 0; i < 7; i++) {
+          const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.1 + r() * 0.08, 0.5 + r() * 0.45, 6), r() > 0.5 ? M().plant : M().plantDark);
+          const a = r() * Math.PI * 2, d = r() * 0.1;
+          leaf.position.set(Math.cos(a) * d, 0.55 + r() * 0.25, Math.sin(a) * d);
+          leaf.rotation.set((r() - 0.5) * 0.7, 0, (r() - 0.5) * 0.7);
+          p.push(leaf);
+        }
+        return p;
+      });
       scene.add(g);
       addCol(x - 0.25 * s, x + 0.25 * s, z - 0.25 * s, z + 0.25 * s);
     }
@@ -1170,5 +1273,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
 })();

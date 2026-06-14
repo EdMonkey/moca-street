@@ -33,9 +33,27 @@
     winM.position.set(0, 3, 5.9); winM.rotation.y = Math.PI; es.add(winM);
     const warmM = new THREE.Mesh(new THREE.PlaneGeometry(5, 2), new THREE.MeshBasicMaterial({ color: 0xffd9a8 }));
     warmM.position.set(-5.9, 3, 0); warmM.rotation.y = Math.PI / 2; es.add(warmM);
-    scene.environment = pmrem.fromScene(es, 0.04).texture;
+    scene.environment = pmrem.fromScene(es, 0.04).texture;   // 즉시 폴백(절차적)
     pmrem.dispose();
   })();
+
+  /* ---------- 실내 HDR 환경맵 (index.html 모듈이 RGBELoader 준비 후 호출) ----------
+   * Poly Haven 'lythwood_room'(CC0, 1k)을 PMREM으로 변환해 절차적 폴백을 교체.
+   * 실제 실내 광원(창문·조명)이 담겨 스테인리스/크롬 등 PBR 금속 반사가 살아난다. */
+  window.__applyHDREnv = function (RGBELoaderClass) {
+    try {
+      const pm = new THREE.PMREMGenerator(renderer);
+      pm.compileEquirectangularShader();
+      new RGBELoaderClass().load('assets/hdr/lythwood_room_1k.hdr', (tex) => {
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        const rt = pm.fromEquirectangular(tex);
+        const old = scene.environment;
+        scene.environment = rt.texture;     // 절차적 폴백 → 실내 HDR로 교체
+        if (old && old.dispose) old.dispose();
+        tex.dispose(); pm.dispose();
+      }, undefined, (err) => { console.error('[HDR] 환경맵 로드 실패:', err); pm.dispose(); });
+    } catch (e) { console.error('[HDR] 환경맵 적용 오류:', e); }
+  };
 
   const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 120);
   scene.add(camera);
@@ -44,7 +62,7 @@
   TEX.build();
   // 환경맵 반사 강도: 금속/대리석은 강하게, 무광 표면은 은은하게
   Object.values(TEX.M).forEach(m => { if (m.isMeshStandardMaterial) m.envMapIntensity = 0.45; });
-  TEX.M.steel.envMapIntensity = TEX.M.steelDark.envMapIntensity = 1.3;
+  TEX.M.steel.envMapIntensity = TEX.M.steelDark.envMapIntensity = 0.8;   // HDR 환경맵이 밝아 강도 낮춤(번쩍임 완화)
   TEX.M.marble.envMapIntensity = TEX.M.marbleDark.envMapIntensity = 0.8;
   TEX.M.coffeeLiquid.envMapIntensity = 1.0;
   const env = WORLD.build(scene);

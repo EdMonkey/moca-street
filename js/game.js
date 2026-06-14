@@ -839,9 +839,12 @@ const Game = (() => {
   }
   function updateJobs(dt) {
     machineJobs().forEach(job => {
-      if (!job || !job.busy) return;
+      if (!job) return;
+      if (job.kind === 'water' && job.stream) job.stream.visible = job.busy && !job.done;   // 물 받는 동안 물줄기 표시
+      if (!job.busy) return;
       if (!job.done) {
         job.t += dt;
+        if (job.kind === 'grinder' && job.hasPf) WORLD.setPortafilterFill(job.pfMesh, job.t / job.dur);   // 분쇄 중 가루 차오름
         if (job.t >= job.dur) {
           job.done = true;
           if (job.sound) { job.sound.stop(); job.sound = null; }

@@ -373,6 +373,7 @@
 </div>
 
 <script src="three.min.js"></script>
+<script src="js/assets.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/data.js"></script>
 <script src="js/textures.js"></script>
@@ -387,5 +388,24 @@
 <script src="js/game.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/main.js"></script>
+
+<!-- glTF 에셋 로더: ESM GLTFLoader를 전역 THREE(three.min.js)에 연결 (빌드리스, import map + shim) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three-shim.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+<script type="module">
+  import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
+  import { RGBELoader } from './vendor/jsm/loaders/RGBELoader.js';
+  window.GLTFLoader = GLTFLoader;
+  window.RGBELoader = RGBELoader;
+  if (window.Assets) window.Assets.boot(GLTFLoader);
+  // 실내 HDR 환경맵(PBR 금속 반사) — main.js가 폴백 환경맵을 먼저 깔고, HDR 로드되면 교체
+  if (window.__applyHDREnv) window.__applyHDREnv(RGBELoader);
+</script>
 </body>
 </html>
