@@ -56,6 +56,17 @@
   });
   Editor.init(scene, env, camera);
 
+  /* ---------- glTF 에셋 데모 배치 (B단계: 프로시저럴 → Blender glTF 파이프라인 검증) ---------- */
+  if (window.Assets) window.Assets.ready.then(() => {
+    const place = (n, x, z, ry = 0) => { const o = Assets.spawn(n, x, z, 0, ry); if (o) scene.add(o); };
+    place('PottedPlant', 8.0, 6.4);             // 우측 입구 코너
+    place('PottedPlant', -8.0, 6.4);            // 좌측 입구 코너
+    place('CafeTable', 7.0, 3.0);               // 우측 손님 공간 — 테이블+의자 비네트
+    place('CafeChair', 7.0, 3.8, Math.PI);
+    place('CafeChair', 7.0, 2.2, 0);
+    console.log('[Assets] 데모 프롭 배치 완료 — 라이브러리', Assets.names().length, '종 사용 가능');
+  }).catch((e) => console.error('[Assets] 준비 실패:', e));
+
   /* ---------- 증기 파티클 ---------- */
   const steam = (() => {
     const [c, x] = TEX.canvas(64, 64);

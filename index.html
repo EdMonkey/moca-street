@@ -373,6 +373,7 @@
 </div>
 
 <script src="three.min.js"></script>
+<script src="js/assets.js"></script>
 <script src="js/audio.js"></script>
 <script src="js/data.js"></script>
 <script src="js/textures.js"></script>
@@ -387,5 +388,20 @@
 <script src="js/game.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/main.js"></script>
+
+<!-- glTF 에셋 로더: ESM GLTFLoader를 전역 THREE(three.min.js)에 연결 (빌드리스, import map + shim) -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three-shim.js",
+    "three/addons/": "./vendor/jsm/"
+  }
+}
+</script>
+<script type="module">
+  import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
+  window.GLTFLoader = GLTFLoader;
+  if (window.Assets) window.Assets.boot(GLTFLoader);
+</script>
 </body>
 </html>
