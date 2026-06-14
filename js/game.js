@@ -773,7 +773,9 @@ const Game = (() => {
   }
   function updateJobs(dt) {
     machineJobs().forEach(job => {
-      if (!job || !job.busy) return;
+      if (!job) return;
+      if (job.kind === 'water' && job.stream) job.stream.visible = job.busy && !job.done;   // 물 받는 동안 물줄기 표시
+      if (!job.busy) return;
       if (!job.done) {
         job.t += dt;
         if (job.t >= job.dur) {

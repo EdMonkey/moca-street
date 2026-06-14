@@ -823,10 +823,16 @@ const WORLD = (() => {
         lbl.position.set(0, 0.6, 0.15);
         r.add(lbl);
         childHitbox(st, 0.32, 0.7, 0.55, 0, 0.3, 0.1, { id });
+        // 물줄기 — 받는 동안 표시 (스파웃 노즐 → 컵). 컵은 스파웃 바로 아래에 놓임
+        const stream = cyl(0.006, 0.006, 0.11, new THREE.MeshStandardMaterial({
+          color: 0xcfeaff, transparent: true, opacity: 0.6, roughness: 0.15
+        }), 0, 0.18, 0.19, 6, { cast: false });
+        stream.visible = false;
+        r.add(stream);
         env.machines.waterJobs[id] = {
           kind: 'water', waterType: id === 'waterHot' ? 'hot' : 'cold',
-          st, localPos: new THREE.Vector3(0, 0, 0.22),
-          progress: makeProgress(r, 0, 0.24, 0.22),   // 물 받는 컵 바로 위
+          st, localPos: new THREE.Vector3(0, 0, 0.19), stream,
+          progress: makeProgress(r, 0, 0.30, 0.19),   // 물 받는 컵 바로 위
           busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, sound: null
         };
       });
