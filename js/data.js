@@ -71,9 +71,15 @@ const DATA = (() => {
   const TAMP_PERF_W = 0.10;       // 퍼펙트 존 폭
   const TAMP_PERF_MIN = 0.55, TAMP_PERF_MAX = 0.80; // 퍼펙트 존 시작 위치 랜덤 범위
 
+  // 라떼아트 미니게임 밸런스 (자유 푸어 — 우유를 흔들며 패턴을 만든다)
+  const ART_VOL = 2.6;            // 한 번에 부을 수 있는 우유 양(초). 다 떨어지면 판정.
+  const ART_PERFECT = 0.70, ART_GOOD = 0.42;   // 종합 점수 임계값 (perfect / good)
+  const ART_TIP_PERFECT = 0.15, ART_TIP_GOOD = 0.08;  // 팁 보너스 비율
+
   return {
     RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
     DAY_LEN, SAVE_KEY, RENT_BASE, RENT_PER_DAY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
+    ART_VOL, ART_PERFECT, ART_GOOD, ART_TIP_PERFECT, ART_TIP_GOOD,
   };
 })();

@@ -13,6 +13,7 @@ const Player = (() => {
   let heldMesh = null;
   let bobT = 0;
   let enabled = false;
+  let look = true;           // 시점 조작 허용 — 라떼아트 미니게임 중엔 꺼서 마우스를 피처에 양보
   let kick = 0;              // 손맛용 반동(탬핑 등) — 0으로 감쇠
 
   function init(cam, e) {
@@ -25,7 +26,7 @@ const Player = (() => {
     document.addEventListener('keydown', ev => { keys[ev.code] = true; });
     document.addEventListener('keyup', ev => { keys[ev.code] = false; });
     document.addEventListener('mousemove', ev => {
-      if (!enabled || document.pointerLockElement === null) return;
+      if (!enabled || !look || document.pointerLockElement === null) return;
       yaw -= ev.movementX * 0.0021;
       pitch -= ev.movementY * 0.0021;
       pitch = Math.max(-1.45, Math.min(1.45, pitch));
@@ -117,6 +118,7 @@ const Player = (() => {
 
   return {
     init, update, aim, aimSurface, setHeld, reset, punch,
+    setLook(on) { look = on; },
     get position() { return pos; },
     set enabled(v) { enabled = v; },
     get enabled() { return enabled; },

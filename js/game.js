@@ -11,6 +11,7 @@ const Game = (() => {
     RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
     DAY_LEN, SAVE_KEY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
+    ART_TIP_PERFECT, ART_TIP_GOOD,
   } = DATA;
 
   /* ===== 상태 ===== */
@@ -195,6 +196,30 @@ const Game = (() => {
     rec.mesh = m;
   }
 
+  // 컵에 우유(+거품)를 확정해 붓는다 — 즉시 붓기와 라떼아트 미니게임 완료가 공유.
+  // artTier: 'perfect' | 'good' | 'plain' | null (라떼아트를 거치지 않은 경우)
+  function commitMilkPour(rec, h, artTier) {
+    const d = rec.item.drink;
+    d.milk = 1;
+    addStep(d, 'milk');
+    if (h.foam) { d.foam = 1; addStep(d, 'foam'); }
+    if (h.perfectFoam) d.foamPerfect = 1;            // 퍼펙트 마이크로폼 보너스 인계
+    if (artTier && artTier !== 'plain') d.artTier = artTier;   // 라떼아트 등급 인계
+    refreshPlacedDrink(rec);
+    setHeld({ type: 'pitcher', milk: 0, foam: 0 });  // 피처 비움(재사용)
+    AudioFX.pourWater(0.5);
+    if (artTier === 'perfect') toast('🎨 멋진 라떼아트! 팁 보너스 ✨', 'gold', 2200);
+    else if (artTier === 'good') toast('🎨 라떼아트 완성 — 제법인데요 🥛', 'good');
+    else toast(h.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
+  }
+
+  // 레벨이 오를수록 더 어려운 패턴에 도전 (채점 방식은 동일 — 연출/동기부여용)
+  function artPatternFor() {
+    if (S.level >= 5) return '튤립';
+    if (S.level >= 3) return '로제타';
+    return '하트';
+  }
+
   /* ===== 주문 ===== */
   function generateOrder(customer) {
     // 튜토리얼 중에는 가장 단순한 메뉴(아메리카노)로 고정
@@ -283,14 +308,18 @@ const Game = (() => {
         if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
         if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('우유는 컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
         if (rec.item.drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
-        rec.item.drink.milk = 1;
-        addStep(rec.item.drink, 'milk');
-        if (held.foam) { rec.item.drink.foam = 1; addStep(rec.item.drink, 'foam'); }
-        if (held.perfectFoam) rec.item.drink.foamPerfect = 1;   // 퍼펙트 마이크로폼 보너스 인계
-        refreshPlacedDrink(rec);
-        setHeld({ type: 'pitcher', milk: 0, foam: 0 });   // 피처 비움(재사용)
-        AudioFX.pourWater(0.5);
-        toast(held.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
+        const d = rec.item.drink;
+        // 라떼아트 미니게임은 크레마가 받쳐주는 핫 음료(샷 들어간)에서만 — 그 외엔 즉시 붓기
+        const artEligible = d.cup === 'hot' && d.espresso && !d.foam && held.milk;
+        if (artEligible) {
+          const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam };
+          LatteArt.start({
+            pattern: artPatternFor(),
+            onDone: (tier) => commitMilkPour(rec, h, tier),
+          });
+          return;
+        }
+        commitMilkPour(rec, { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam }, null);
         return;
       }
       if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
@@ -685,19 +714,24 @@ const Game = (() => {
     // 퍼펙트 마이크로폼(스팀 미니게임) 보너스 — 팁 +15%
     const foamPerfect = !!(servedDrink && servedDrink.foamPerfect);
     if (foamPerfect) tip += Math.round(o.total * 0.15 / 100) * 100;
+    // 라떼아트(자유 푸어) 보너스 — perfect +15% / good +8%, perfect는 평판 +1
+    const artTier = servedDrink && servedDrink.artTier;
+    if (artTier === 'perfect') tip += Math.round(o.total * ART_TIP_PERFECT / 100) * 100;
+    else if (artTier === 'good') tip += Math.round(o.total * ART_TIP_GOOD / 100) * 100;
     S.money += o.total + tip;
     dayStats.revenue += o.total;
     dayStats.tips += tip;
     dayStats.served++;
-    S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0));
+    S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0));
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
     Customers.serve(c, null);
-    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect || foamPerfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
+    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect || foamPerfect || artTier === 'perfect' ? ' · 퍼펙트 ✨' : ''}`, 'good');
     if (orderOk) toast('✨ 정확한 제조 순서! 팁 +15% · 평판 +1', 'gold', 2200);
     if (foamPerfect) toast('🥛 퍼펙트 마이크로폼! 팁 +15%', 'gold', 2200);
+    if (artTier === 'perfect') toast('🎨 라떼아트 퍼펙트! 팁 +15% · 평판 +1', 'gold', 2200);
     AudioFX.cash();
     UI.hud();
     Tutorial.event('served');
@@ -1265,6 +1299,17 @@ const Game = (() => {
     updateJobs(dt);
     Effects.update(dt);
 
+    // 라떼아트 미니게임 — 진행 중엔 다른 조준/상호작용을 모두 잠그고 단독 처리
+    if (LatteArt.update(dt, useDown)) {
+      $('prompt').classList.add('hidden');
+      $('crosshair').classList.remove('active');
+      env.placeIndicator.visible = false;
+      barTimer -= dt;
+      if (barTimer <= 0) { UI.ticketBars(); barTimer = 0.25; }
+      Tutorial.update();
+      return;
+    }
+
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시)
     const aimData = Player.aim();
     const tamping = updateTampGame(dt, aimData);
@@ -1313,11 +1358,13 @@ const Game = (() => {
     Tutorial.init({
       orders: () => orders, held: () => held, env: () => env, matchesRecipe, toast,
     });
+    LatteArt.init();
     if (hasSave()) $('btnContinue').classList.remove('hidden');
     UI.recipeBook();
 
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
+      if (LatteArt.active) return;   // 라떼아트 진행 중엔 입력이 푸어(useDown)에만 쓰임
       const aimData = Player.aim();
       if (aimData) { interact(aimData); return; }
       if (held) {
