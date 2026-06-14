@@ -219,28 +219,27 @@ const WORLD = (() => {
     m.position.y = base + 0.008 + fullH * frac / 2;    // 바닥은 고정한 채 위로 차오름
   }
 
-  // 스팀 피처(밀크 저그) — 재사용 도구. milk/foam이면 내용물(데운 우유/거품) 표시
+  // 스팀 피처(밀크 저그) — 재사용 도구. Blender glTF 모델(MilkPitcher)을 쓰고, 미로드 시 절차적 폴백.
+  // milk/foam이면 내용물(데운 우유/거품)을 모델 종류와 무관하게 안쪽에 표시.
   function makePitcherMesh(milk, foam) {
     const g = new THREE.Group();
-    const R = 0.046, H = 0.13;
-    const body = cyl(R, R * 0.8, H, M().steel, 0, H / 2, 0, 20);
-    body.castShadow = false;
-    g.add(body);
-    // 주둥이(스파웃) — 앞쪽 위로 비스듬히
-    const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8);
-    spout.rotation.x = 0.6; spout.castShadow = false;
-    g.add(spout);
-    // 손잡이 — 옆면 고리
-    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel);
-    handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false;
-    g.add(handle);
-    if (milk || foam) {
-      const liq = cyl(R * 0.86, R * 0.72, H * 0.72, M().milkLiquid, 0, H * 0.72 / 2 + 0.006, 0, 18);
-      liq.castShadow = false; g.add(liq);
-      if (foam) {   // 거품 — 윗면 봉긋
-        const fo = cyl(R * 0.5, R * 0.84, 0.02, M().milkLiquid, 0, H * 0.72 + 0.012, 0, 18);
-        fo.castShadow = false; g.add(fo);
+    let usedGlb = false;
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const m = window.Assets.spawn('MilkPitcher', 0, 0, 0);   // 베이스를 y=0에 맞춰 복제
+      if (m) {
+        m.traverse(n => { if (n.isMesh) n.castShadow = false; });  // 손에 든 도구 — 그림자 끔(기존 동작 유지)
+        g.add(m); usedGlb = true;
       }
+    }
+    if (!usedGlb) {   // 폴백: 기존 절차적 피처 (glb 로드 전 짧은 순간)
+      const R = 0.046, H = 0.13;
+      const body = cyl(R, R * 0.8, H, M().steel, 0, H / 2, 0, 20); body.castShadow = false; g.add(body);
+      const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8); spout.rotation.x = 0.6; spout.castShadow = false; g.add(spout);
+      const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel); handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false; g.add(handle);
+    }
+    if (milk || foam) {   // 데운 우유 / 거품 — 피처 안쪽 내용물 (모델 종류 무관)
+      const liq = cyl(0.033, 0.030, 0.07, M().milkLiquid, 0, 0.040, 0.01, 18); liq.castShadow = false; g.add(liq);
+      if (foam) { const fo = cyl(0.022, 0.036, 0.018, M().milkLiquid, 0, 0.082, 0.01, 18); fo.castShadow = false; g.add(fo); }
     }
     return g;
   }
