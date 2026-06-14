@@ -105,10 +105,18 @@ const Player = (() => {
 
   /* 조준 중인 상호작용 대상 */
   let lastAimHit = null;        // 마지막으로 조준한 히트박스 메시 (아웃라인 하이라이트용)
+  const PLACED_PRIORITY = 0.5;  // 표면에 놓인 아이템이 가장 가까운 히트와 이 거리(m) 내면 우선 선택
   function aim() {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
-    const hits = ray.intersectObjects(env.interactables, false);
-    lastAimHit = hits.length ? hits[0].object : null;
+    const hits = ray.intersectObjects(env.interactables, false);   // 거리 오름차순 정렬
+    let chosen = hits.length ? hits[0] : null;
+    // 표면에 내려놓은 컵(placedItem)은 작은 히트박스라 픽업대·계산대 같은 큰 카운터 박스에
+    // 가려진다. 가장 가까운 히트와 거의 겹쳐 있으면 컵을 우선해 외곽선·집기가 컵에 걸리게 한다.
+    if (chosen && (!chosen.object.userData.interact || chosen.object.userData.interact.id !== 'placedItem')) {
+      const pi = hits.find(h => h.object.userData.interact && h.object.userData.interact.id === 'placedItem');
+      if (pi && pi.distance - hits[0].distance < PLACED_PRIORITY) chosen = pi;
+    }
+    lastAimHit = chosen ? chosen.object : null;
     return lastAimHit ? lastAimHit.userData.interact : null;
   }
 

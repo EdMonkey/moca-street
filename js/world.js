@@ -463,10 +463,10 @@ const WORLD = (() => {
       door.position.set(4.72, 0, z - 0.05);    // 경첩축 = 좌측 기둥
       scene.add(door);
       // 문 조준 히트박스(개구부) + 충돌체(닫힘 시 통과 차단) → game.js가 'door'로 여닫음
-      addI(hitbox(1.6, 2.5, 0.6, 5.5, 1.3, z - 0.15, { id: 'door' }));
+      addI(hitbox(1.6, 2.5, 0.6, 5.5, 1.3, z - 0.15, { id: 'door' })).userData.outlineRoot = door;
       const doorCol = addCol(4.7, 6.3, 7.85, 8.55);
       env.door = {
-        group: door, open: true, angle: -1.82, openAngle: -1.82, col: doorCol,   // 바깥으로 ~104° 활짝
+        group: door, open: false, angle: 0, openAngle: -1.82, col: doorCol,   // 영업 전 = 닫힘 (열면 바깥으로 ~104°)
         toggle() { this.open = !this.open; },
         update(dt) {
           const tgt = this.open ? this.openAngle : 0;
@@ -581,21 +581,26 @@ const WORLD = (() => {
     (function register() {
       const g = new THREE.Group();
       g.position.set(2.5, 1.03, -1.0);
-      const body = box(0.4, 0.12, 0.34, M().blackMatte, 0, 0.06, 0);
-      const screen = box(0.36, 0.26, 0.03, M().blackMatte, 0, 0.3, -0.06);
-      screen.rotation.x = -0.25;
-      const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0x9adfff, emissive: 0x3a8aaa, emissiveIntensity: 0.9 }));
-      scr.position.set(0, 0.305, -0.03); scr.rotation.x = -0.25;
-      g.add(body, screen, scr);
       scene.add(g);
+      // POS 단말기 — glb POSDualScreen(큰 화면이 모델 -z를 향함). 계산대는 직원이 z<-1(작업통로)에서
+      // 조작하므로 rotY=0이면 큰 화면이 -z=직원쪽을 본다. 미로드 시 절차적 폴백.
+      decorVisual(g, 'POSDualScreen', () => {
+        const p = [];
+        p.push(box(0.4, 0.12, 0.34, M().blackMatte, 0, 0.06, 0));
+        const screen = box(0.36, 0.26, 0.03, M().blackMatte, 0, 0.3, -0.06); screen.rotation.x = -0.25; p.push(screen);
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.2),
+          new THREE.MeshStandardMaterial({ color: 0x9adfff, emissive: 0x3a8aaa, emissiveIntensity: 0.9 }));
+        scr.position.set(0, 0.305, -0.03); scr.rotation.x = -0.25; p.push(scr);
+        return p;
+      }, 0, 1.0);   // 180°·2배는 glb(POSDualScreen) 지오메트리에 baked됨 → 여기선 중립
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.22), textLabel('ORDER', 256, 70, '700 44px Georgia', '#e8b86d'));
       sign.position.set(2.5, 1.95, -0.9);
       scene.add(sign);
       const cord1 = cyl(0.01, 0.01, 0.6, M().blackMatte, 2.3, 2.36, -0.9, 6, { cast: false });
       const cord2 = cyl(0.01, 0.01, 0.6, M().blackMatte, 2.7, 2.36, -0.9, 6, { cast: false });
       scene.add(cord1, cord2);
-      addI(hitbox(0.9, 0.9, 0.8, 2.5, 1.3, -1.0, { id: 'register' }));
+      // 외곽선은 POS 기기 모델(본체+화면)에 그린다 — 빛나는 화면 평면은 collectOutlineTargets가 제외
+      addI(hitbox(0.9, 0.9, 0.8, 2.5, 1.3, -1.0, { id: 'register' })).userData.outlineRoot = g;
       env.staticBlockers.push({ x: 2.5, z: -1.0, w: 1.0, d: 0.9 });
     })();
 
@@ -608,7 +613,7 @@ const WORLD = (() => {
       scene.add(sign);
       scene.add(cyl(0.01, 0.01, 0.6, M().blackMatte, -1.1, 2.36, -0.9, 6, { cast: false }));
       scene.add(cyl(0.01, 0.01, 0.6, M().blackMatte, -0.1, 2.36, -0.9, 6, { cast: false }));
-      addI(hitbox(1.6, 0.8, 0.7, -0.6, 1.35, -1.0, { id: 'pickup' }));
+      addI(hitbox(1.6, 0.8, 0.7, -0.6, 1.35, -1.0, { id: 'pickup' })).userData.outlineMeshes = [tray];
       env.machines.pickupTrayY = 1.07;
       env.staticBlockers.push({ x: -0.6, z: -1.0, w: 1.8, d: 0.7 });
     })();
@@ -639,7 +644,7 @@ const WORLD = (() => {
         }
         scene.add(slotG);
         env.machines.dessertDisplays[k] = slotG;
-        addI(hitbox(0.55, 0.6, 0.7, dx, 1.35, -1.0, { id: 'dessert', kind: k }));
+        addI(hitbox(0.55, 0.6, 0.7, dx, 1.35, -1.0, { id: 'dessert', kind: k })).userData.outlineRoot = slotG;
       });
       const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.2), textLabel('DESSERT', 256, 64, '700 38px Georgia', '#e8b86d'));
       sign.position.set(cx, 1.85, -0.85);
@@ -763,14 +768,15 @@ const WORLD = (() => {
       const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
         // 포터필터(기본 '빈' 상태) — glb 그룹헤드(z0.30 돌출) 아래 장착, 배출구가 컵 위로
+        // 장착 높이는 그룹헤드 추출구에 맞춤(새 모델은 추출구가 베이스 위 0.225 → 이전 0.175에서 +0.05 상승)
         const pf = makePortafilterMesh('empty');
-        pf.position.set(ox, 0.135, 0.30);
+        pf.position.set(ox, 0.185, 0.30);
         g.add(pf);
-        const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
+        const stream = cyl(0.006, 0.006, 0.15, M().coffeeLiquid, ox, 0.115, 0.3, 6, { cast: false });   // 추출 줄기: 상단을 올라간 추출구(0.185)에 맞춤
         stream.visible = false;
         g.add(stream);
         env.machines.espressoSlots.push({
-          st, localPos: new THREE.Vector3(ox, 0.03, 0.3),
+          st, localPos: new THREE.Vector3(ox, 0.047, 0.3),   // 컵 베이스를 받침판 윗면(0.045) 위에 올림(묻힘 방지)
           progress: makeProgress(g, ox, 0.27, 0.3),
           stream, pf, pfState: 'empty', tampPerfect: false, brewLiquid: null,
           locked: (i === 1 ? !!lockSecond : false),
@@ -784,11 +790,26 @@ const WORLD = (() => {
           new THREE.MeshStandardMaterial({ color: 0xd9534f, emissive: 0xd9534f, emissiveIntensity: 1.3 }));
         brewLed.position.set(ox, 0.46, 0.346);
         g.add(brewBtn, brewLed);
-        // 분리된 상호작용 히트박스 3종 (높이로 구분): 컵 자리(낮음) · 포터필터(중간) · 추출 버튼(위)
-        childHitbox(st, 0.3, 0.18, 0.34, ox, 0.06, 0.33, { id: 'espCup', slot: slotIdx });
-        childHitbox(st, 0.26, 0.2, 0.32, ox, 0.17, 0.30, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [pf];
+        // 분리된 상호작용 히트박스 3종 (높이로 구분, 세로로 안 겹치게): 컵 자리(아래) · 포터필터+그룹헤드(중간) · 추출 버튼(위)
+        // 컵 자리: 받침판 위 컵 영역을 넉넉히(local -0.04~0.18). 컵을 올리고 뺄 때 위 포터필터가 안 잡히게.
+        childHitbox(st, 0.3, 0.22, 0.34, ox, 0.07, 0.33, { id: 'espCup', slot: slotIdx });
+        // 포터필터+그룹헤드(A): 포터필터 베이스(0.185) 위로 올려(local 0.18~0.38) 컵 영역과 분리 — 여기서만 장착/해제.
+        childHitbox(st, 0.26, 0.2, 0.32, ox, 0.28, 0.30, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [pf];
         childHitbox(st, 0.2, 0.16, 0.18, ox, 0.46, 0.33, { id: 'brew', slot: slotIdx }).userData.outlineMeshes = [brewBtn, brewLed];
       });
+      // ---- 좌우 받침판 (glb에 머신 기준 제자리로 분리 모델링됨) ----
+      // 원본 트랜스폼을 유지해 머신 시각 그룹(vis)에 얹고, 좌/우 컵 자리(espCup) 외곽선 대상으로 연결.
+      if (window.Assets && window.Assets.ready) {
+        window.Assets.ready.then(() => {
+          [['EspressoPlateL', 0], ['EspressoPlateR', 1]].forEach(([nm, i]) => {
+            const pl = window.Assets.spawnInPlace(nm);
+            if (!pl) return;
+            vis.add(pl);
+            const slot = env.machines.espressoSlots[slotBase + i];
+            if (slot) slot.plateMesh = pl;   // 컵이 없을 때 받침판에 외곽선 표시
+          });
+        }).catch(() => {});
+      }
       env.machines.espressoGroup = g;
       env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
       const steamJob = {
@@ -978,38 +999,41 @@ const WORLD = (() => {
 
     /* ---------- 쓰레기통 (바닥 기구) ---------- */
     (function trash() {
-      const st = station('trash', '쓰레기통', 3.6, -4.1, 0.55, 0.55, { floor: true });
+      // 백 카운터 우측 끝 '너머' 코너에 배치(이전엔 카운터 캐비닛 안에 박혀 가려졌고,
+      // 그 앞 통로에 두니 동선을 막았다). 카운터는 x≤4.2에서 끝나므로 그 오른쪽(x4.6) 뒷벽쪽에
+      // 두어 잘 보이면서도 작업 동선(aisle z>-3.65)을 막지 않게 한다.
+      const tx = 4.6, tz = -4.4;
+      const st = station('trash', '쓰레기통', tx, tz, 0.55, 0.55, { floor: true });
       const r = st.root;
       r.add(cyl(0.22, 0.18, 0.62, M().steelDark, 0, 0.31, 0, 16));
       r.add(cyl(0.23, 0.23, 0.04, M().blackMatte, 0, 0.64, 0, 16));
       childHitbox(st, 0.5, 0.9, 0.5, 0, 0.45, 0, { id: 'trash' });
-      st.colliderRef = addCol(3.6 - 0.3, 3.6 + 0.3, -4.1 - 0.3, -4.1 + 0.3);
+      st.colliderRef = addCol(tx - 0.3, tx + 0.3, tz - 0.3, tz + 0.3);
     })();
 
     /* ---------- 창고 선반 (재고 보충) ---------- */
     (function storage() {
-      const x = -8.55;
-      scene.add(box(0.7, 2.2, 4.6, M().woodDark, x, 1.1, -1.2));
-      const shelf1 = box(0.75, 0.06, 4.7, M().woodLight, x, 0.7, -1.2, { cast: false });
-      const shelf2 = box(0.75, 0.06, 4.7, M().woodLight, x, 1.5, -1.2, { cast: false });
-      scene.add(shelf1, shelf2);
-      env.surfaces.push(shelf1, shelf2);
-      addCol(x - 0.5, x + 0.5, -3.6, 1.2);
-      const kinds = [['beans', -2.8], ['milk', -1.7], ['cups', -0.6], ['dessert', 0.5]];
-      kinds.forEach(([k, z]) => {
-        const bm = makeBoxMesh(k);
-        bm.position.set(x + 0.12, 0.73, z);
-        bm.rotation.y = Math.PI / 2;
-        scene.add(bm);
-        const bm2 = makeBoxMesh(k);
-        bm2.position.set(x + 0.12, 1.53, z);
-        bm2.rotation.y = Math.PI / 2;
-        bm2.scale.setScalar(0.9);
-        scene.add(bm2);
-        addI(hitbox(0.8, 1.6, 0.9, x, 1.2, z, { id: 'restock', kind: k }));
+      // 창고: ShelvingRack(glb) 4개를 좌측 벽 앞에 나란히. glb 랙은 원점이 형상 중심에서 벗어나
+      // 있어(90° 회전 시 형상중심 = spawn + (-0.2,-0.42)), "형상 중심(Cx,cz)"을 기준으로 잡고
+      // 랙은 spawn(Cx+0.2, cz+0.42)에, 박스/히트박스는 (Cx,cz)에 둬 박스가 랙 중앙에 오게 한다.
+      const Cx = -8.7;                                   // 랙 형상 중심 X(벽 앞)
+      // 형상 중심 Z — 박스를 랙 중앙에 정렬 + 전체를 오른쪽(-z)으로 렉하나(1.1)만큼 민 값
+      const kinds = [['beans', -4.32], ['milk', -3.22], ['cups', -2.12], ['dessert', -1.02]];
+      addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
+      kinds.forEach(([k, cz]) => {
+        // 재고 박스(보급) — 랙 아래(0.65)·중간(1.2) 선반 중앙에 적재. 박스 원점=베이스, 라벨이 +X(작업영역) 향함
+        const bm = makeBoxMesh(k);  bm.position.set(Cx, 0.65, cz);  bm.rotation.y = Math.PI / 2; scene.add(bm);
+        const bm2 = makeBoxMesh(k); bm2.position.set(Cx, 1.20, cz); bm2.rotation.y = Math.PI / 2; bm2.scale.setScalar(0.9); scene.add(bm2);
+        addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k })).userData.outlineMeshes = [bm, bm2];
       });
+      // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
+      if (window.Assets && window.Assets.ready) {
+        window.Assets.ready.then(() => {
+          kinds.forEach(([, cz]) => { const r = window.Assets.spawn('ShelvingRack', Cx + 0.2, cz + 0.42, 0, Math.PI / 2); if (r) scene.add(r); });
+        }).catch(() => {});
+      }
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.25), textLabel('창 고', 256, 64, '700 40px "Malgun Gothic"'));
-      lbl.position.set(x + 0.4, 2.45, -1.2);
+      lbl.position.set(Cx + 0.4, 2.45, -2.6);            // 새 창고 중앙 부근(상단)
       lbl.rotation.y = Math.PI / 2;
       scene.add(lbl);
     })();
