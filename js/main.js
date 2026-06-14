@@ -62,7 +62,7 @@
   TEX.build();
   // 환경맵 반사 강도: 금속/대리석은 강하게, 무광 표면은 은은하게
   Object.values(TEX.M).forEach(m => { if (m.isMeshStandardMaterial) m.envMapIntensity = 0.45; });
-  TEX.M.steel.envMapIntensity = TEX.M.steelDark.envMapIntensity = 1.3;
+  TEX.M.steel.envMapIntensity = TEX.M.steelDark.envMapIntensity = 0.8;   // HDR 환경맵이 밝아 강도 낮춤(번쩍임 완화)
   TEX.M.marble.envMapIntensity = TEX.M.marbleDark.envMapIntensity = 0.8;
   TEX.M.coffeeLiquid.envMapIntensity = 1.0;
   const env = WORLD.build(scene);

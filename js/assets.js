@@ -28,7 +28,23 @@ const Assets = (() => {
     return cache[name];
   }
 
-  // 금속(스테인리스/크롬/다크메탈/브라스) 반사 강화 — 씬 environment를 더 강하게 반사해 은색 광택을 살림.
+  // ---- 금속 표면 디테일용 노멀/러프니스 텍스처 (ambientCG, CC0) ----
+  // 브러시드(이방성) 스테인리스 + 스크래치(상처/때) 노멀. UV 타일링으로 미세 표면을 입혀
+  // 평평한 거울 반사를 깨고 실사용감을 준다. 노멀/러프는 선형 데이터맵(sRGB 아님).
+  const _texLoader = new THREE.TextureLoader();
+  function _loadTex(url, repeat) {
+    const t = _texLoader.load(url);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeat, repeat);
+    t.anisotropy = 4;
+    return t;
+  }
+  const TEX_BRUSHED_N = _loadTex('assets/tex/metal_brushed_nor.jpg', 4);   // 브러시드 스테인리스 노멀
+  const TEX_BRUSHED_R = _loadTex('assets/tex/metal_brushed_rough.jpg', 4); // 〃 러프니스 변화
+  const TEX_SCRATCH_N = _loadTex('assets/tex/metal_scratches_nor.jpg', 2); // 스크래치/때 노멀
+
+  // 금속(스테인리스/크롬/다크메탈/브라스) PBR 보정 — HDR environment 반사가 평평하게 번쩍이지
+  // 않도록 노멀맵으로 미세 굴곡을 주고 러프니스/envMapIntensity를 낮춰 사실감을 살린다.
   // 라이브러리 재질은 clone 인스턴스들이 공유하므로 여기서 한 번만 보정하면 전체 적용됨.
   function tuneMetals(root) {
     const seen = new Set();
@@ -37,11 +53,30 @@ const Assets = (() => {
       const mats = Array.isArray(n.material) ? n.material : [n.material];
       mats.forEach((m) => {
         if (!m || seen.has(m.uuid)) return; seen.add(m.uuid);
-        if (m.isMeshStandardMaterial && m.metalness >= 0.5) {
-          m.envMapIntensity = 1.8;
-          if (m.roughness > 0.35) m.roughness = 0.3;   // 무광 금속만 살짝 광택
-          m.needsUpdate = true;
+        if (!m.isMeshStandardMaterial || m.metalness < 0.5) return;
+        const name = m.name || '';
+        if (/stainless|steel/i.test(name)) {            // 스테인리스: 브러시드(이방성) + 러프 변화, 새틴 마감(번쩍임↓)
+          m.normalMap = TEX_BRUSHED_N; m.normalScale.set(0.75, 0.75);
+          m.roughnessMap = TEX_BRUSHED_R; m.roughness = 1.0;    // 러프니스는 맵에서
+          m.color.multiplyScalar(0.82);                          // 밝은 흰빛 살짝 죽임
+          m.envMapIntensity = 0.55;                              // 환경 반사 강도 낮춰 번쩍임 완화
+        } else if (/dark/i.test(name)) {                // 다크메탈: 스크래치/상처
+          m.normalMap = TEX_SCRATCH_N; m.normalScale.set(0.8, 0.8);
+          m.roughness = Math.max(m.roughness, 0.55);
+          m.envMapIntensity = 0.7;
+        } else if (/chrome/i.test(name)) {              // 크롬: 광택 유지하되 미세 브러시드로 거울감 완화
+          m.normalMap = TEX_BRUSHED_N; m.normalScale.set(0.25, 0.25);
+          m.roughness = Math.max(m.roughness, 0.16);
+          m.envMapIntensity = 0.7;
+        } else if (/brass/i.test(name)) {               // 브라스: 가벼운 스크래치
+          m.normalMap = TEX_SCRATCH_N; m.normalScale.set(0.5, 0.5);
+          m.roughness = Math.max(m.roughness, 0.42);
+          m.envMapIntensity = 0.75;
+        } else {
+          m.roughness = Math.max(m.roughness, 0.45);
+          m.envMapIntensity = 0.8;
         }
+        m.needsUpdate = true;
       });
     });
   }
