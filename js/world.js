@@ -185,8 +185,10 @@ const WORLD = (() => {
       const m = window.Assets.spawn('Portafilter', 0, 0, 0);   // 베이스 y=0
       if (m) {
         m.traverse(n => { if (n.isMesh) n.castShadow = false; });
+        // 림 높이는 부모(머신)에 붙이기 전 = 로컬 기준으로 측정해야 함.
+        // setFromObject는 월드 박스라, 이미 부착된 상태(업그레이드)에서 재면 월드 y로 오염돼 가루가 공중에 뜬다.
+        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.006;   // 가루 둔덕을 림 위로 봉긋(옆/앞/위 어디서나 보이게)
         g.add(m); usedGlb = true;
-        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.008;   // 가루 상단을 림 위로 살짝 봉긋(옆/앞에서도 보이게)
       }
     }
     if (!usedGlb) {   // 폴백: 절차적 포터필터 (glb 로드 전)
@@ -195,11 +197,11 @@ const WORLD = (() => {
       const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
       g.add(basket, handle, spout);
     }
-    const grounds = cyl(0.028, 0.027, 0.024, GROUNDS_MAT.filled, 0, groundsY, 0, 14);   // 바스켓 캐비티를 채우는 커피가루 퍽
+    const grounds = cyl(0.029, 0.031, 0.026, GROUNDS_MAT.filled, 0, groundsY, 0, 16);   // 바스켓을 꽉 채우고 림 위로 봉긋한 커피가루 둔덕
     g.add(grounds);
     g.userData.grounds = grounds;
     g.userData.groundsY = groundsY;
-    g.userData.groundsH = 0.024;
+    g.userData.groundsH = 0.026;
     g.userData.glb = usedGlb;
     setPortafilterState(g, g.userData.state || 'filled');
   }
@@ -219,8 +221,8 @@ const WORLD = (() => {
       // 탬핑된 원두는 눌려 납작하고 윗면이 매끈해짐
       const tamped = state === 'tamped';
       const by = group.userData.groundsY != null ? group.userData.groundsY : 0.028;
-      grounds.scale.y = tamped ? 0.55 : 1;
-      grounds.position.y = tamped ? by - 0.004 : by;
+      grounds.scale.y = tamped ? 0.6 : 1;
+      grounds.position.y = tamped ? by - 0.002 : by;
     }
   }
 
@@ -747,7 +749,7 @@ const WORLD = (() => {
       const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
         const pf = makePortafilterMesh('empty');   // 동적 포터필터(그룹헤드에 장착)
-        pf.position.set(ox, 0.145, 0.26);   // 바스켓 림이 그룹헤드에 맞물리고 가루(봉긋)는 바로 아래로 보이게
+        pf.position.set(ox, 0.135, 0.26);   // 바스켓을 그룹헤드 아래로 더 내려 가루 둔덕이 가려지지 않게
         g.add(pf);
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
         stream.visible = false;
