@@ -55,8 +55,8 @@ const Assets = (() => {
         if (!m || seen.has(m.uuid)) return; seen.add(m.uuid);
         if (!m.isMeshStandardMaterial || m.metalness < 0.5) return;
         const name = m.name || '';
-        if (/stainless|steel/i.test(name)) {            // 스테인리스: 브러시드(이방성)
-          m.normalMap = TEX_BRUSHED_N; m.normalScale.set(0.75, 0.75);
+        if (/stainless|steel/i.test(name)) {            // 스테인리스: 브러시드(이방성) — 결이 잘 보이게 강하게
+          m.normalMap = TEX_BRUSHED_N; m.normalScale.set(1.1, 1.1);
           m.envMapIntensity = 0.55;
         } else if (/dark/i.test(name)) {                // 다크메탈: 스크래치/상처
           m.normalMap = TEX_SCRATCH_N; m.normalScale.set(0.8, 0.8);
