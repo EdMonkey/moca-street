@@ -6,20 +6,32 @@
  *   - 표면을 2D 캔버스로 다룬다: 정적 크레마(갈색) 위에 우유(흰색) 레이어를
  *     얹고, 부을 때마다 이동 방향으로 기존 우유를 살짝 끌어(smear) "흘러드는"
  *     착시를 만든다 — 풀 유체 시뮬 없이 자유 푸어의 감성만 흉내.
- *   - 채점은 "경로"가 아니라 동작/결과: 흔들기(좌우 진동) + 좌우 대칭 + 적정 양.
+ *   - 표면이 고정 템포로 좌우로 출렁(슬로시 메트로놈)이고, 그 박자에 맞춰 마우스를
+ *     흔들면 공명해 출렁임이 커지며 무늬가 살아난다(가로 스트립 변위로 렌더).
+ *   - 채점: 박자 일치도(싱크)를 메인으로, 좌우 대칭 + 적정 양을 보조로.
  * 게임 코어와 독립 — start(opts)로 시작하고, 판정되면 opts.onDone(tier, score) 호출.
  * 전역 LatteArt로 노출.
  * ============================================================ */
 const LatteArt = (() => {
   const SIZE = 240;                 // 시뮬/표시 캔버스 한 변(px)
   const CX = SIZE / 2, CY = SIZE / 2, R = 104;   // 컵 중심·반지름
-  const { ART_VOL, ART_PERFECT, ART_GOOD } = DATA;
+  const { ART_VOL, ART_PERFECT, ART_GOOD, ART_SWAY_F } = DATA;
+  // 표면 출렁임(슬로시) — 고정 템포 메트로놈에 마우스를 맞춰 흔들면 공명해 진폭이 커진다.
+  const OMEGA = Math.PI * 2 * ART_SWAY_F;
+  const BASE_AMP = 3.0;             // 기본 슬로시 진폭(px) — 항상 살짝 출렁여 박자를 보여줌
+  const GAIN_AMP = 13;             // 싱크(공명) 시 추가 진폭(px)
 
   let active = false;
   let onDone = null;                // 판정 콜백(tier, score)
   let disp, dctx;                   // 표시 캔버스(오버레이에 보임)
-  let milk, mctx;                   // 우유 레이어(오프스크린)
+  let milk, mctx;                   // 우유 레이어(오프스크린, 왜곡 없는 원본 — 채점 기준)
+  let surf, sctx;                   // 크레마+우유 합성 버퍼(변위 렌더용)
   let crema;                        // 크레마 텍스처(정적, 시작 시 1회 생성)
+
+  let phase = 0;                    // 슬로시 메트로놈 위상
+  let waveAmp = BASE_AMP;           // 현재 출렁임 진폭(싱크에 따라 증가)
+  let syncLevel = 0;                // 최근 박자 일치도(0~1) — 진폭/연출에 사용
+  let syncSum = 0, syncFrames = 0;  // 붓는 동안 평균 싱크(최종 점수)
 
   let px, py;                       // 피처(우유 줄기) 위치
   let prevPx, prevPy;               // 직전 프레임 위치 — 리본을 잇는 데 사용
@@ -32,9 +44,6 @@ const LatteArt = (() => {
   let patternLabel = '하트';
 
   // 동작 채점 누적값
-  let osc = 0;                      // 좌우 진동(방향 전환) 횟수
-  let lastSign = 0;                 // 직전 수평 이동 방향
-  let runDist = 0;                  // 같은 방향으로 이어진 이동량(작은 떨림 무시용)
   let pourPath = 0;                 // 부으며 이동한 총 거리(너무 가만있으면 감점)
 
   function makeCanvas() {
@@ -88,15 +97,42 @@ const LatteArt = (() => {
     }
   }
 
+  // 표면의 수평 변위(px) — 위(뒤)로 갈수록 슬로시가 크고, 진행파 잔물결을 더한다.
+  function waveOffset(y) {
+    const depth = clamp((CY + R - y) / (2 * R), 0, 1);     // 아래=0, 위=1
+    const slosh = Math.sin(phase) * waveAmp * (0.35 + depth * 0.95);
+    const ripple = Math.sin(y * 0.17 - phase * 1.7) * waveAmp * 0.4;
+    return slosh + ripple;
+  }
+
   function render() {
+    // 1) 크레마+우유를 합성 버퍼에 그림. 크레마는 캔버스를 꽉 채워(원형 클립 X) 두어야
+    //    스트립 변위로 가장자리가 밀려도 빈틈 없이 크레마가 받쳐준다(원형은 표시 단계에서 클립).
+    sctx.clearRect(0, 0, SIZE, SIZE);
+    sctx.drawImage(crema, 0, 0);
+    sctx.drawImage(milk, 0, 0);
+
+    // 2) 가로 스트립마다 수평 변위를 줘 표면이 좌우로 출렁이게 블릿
     dctx.clearRect(0, 0, SIZE, SIZE);
     dctx.save();
     dctx.beginPath();
     dctx.arc(CX, CY, R, 0, Math.PI * 2);
     dctx.clip();
-    dctx.drawImage(crema, 0, 0);
-    dctx.drawImage(milk, 0, 0);
+    const STRIP = 3;
+    for (let y = 0; y < SIZE; y += STRIP) {
+      const off = waveOffset(y + STRIP / 2);
+      dctx.drawImage(surf, 0, y, SIZE, STRIP, off, y, SIZE, STRIP);
+    }
+    // 표면에 흐르는 빛 띠(스펙큘러) — 출렁임에 따라 위아래로 쓸려 액체 윤기를 줌
+    const hy = CY + Math.sin(phase + 0.6) * (R * 0.55);
+    const sg = dctx.createLinearGradient(0, hy - 26, 0, hy + 26);
+    sg.addColorStop(0, 'rgba(255,255,255,0)');
+    sg.addColorStop(0.5, `rgba(255,255,255,${0.05 + syncLevel * 0.07})`);
+    sg.addColorStop(1, 'rgba(255,255,255,0)');
+    dctx.fillStyle = sg;
+    dctx.fillRect(0, hy - 26, SIZE, 52);
     dctx.restore();
+
     // 컵 테두리
     dctx.lineWidth = 9;
     dctx.strokeStyle = '#efe6d2';
@@ -121,6 +157,12 @@ const LatteArt = (() => {
     dctx.beginPath();
     dctx.arc(px, py, 4, 0, Math.PI * 2);
     dctx.fill();
+    // 박자 큐 — 컵 위 작은 추가 좌우로 흔들림(메트로놈). 마우스를 이 추에 맞춰 흔든다.
+    const cueX = CX + Math.sin(phase) * 26;
+    dctx.fillStyle = syncLevel > 0.5 ? '#7fd08a' : 'rgba(232,184,109,0.9)';
+    dctx.beginPath();
+    dctx.arc(cueX, 8, 5, 0, Math.PI * 2);
+    dctx.fill();
     // 남은 우유 양 링
     const frac = vol / ART_VOL;
     dctx.lineWidth = 4;
@@ -140,14 +182,7 @@ const LatteArt = (() => {
     vx = vx * 0.6 + dx * k * 0.4;
     vy = vy * 0.6 + dy * k * 0.4;
     if (!pouring) return;
-    // 좌우 진동 집계 — 일정 거리(6px) 이어진 방향이 뒤집힐 때마다 1회
-    pourPath += Math.hypot(dx, dy) * k;
-    const sign = dx > 0.6 ? 1 : dx < -0.6 ? -1 : 0;
-    if (sign !== 0) {
-      if (lastSign !== 0 && sign !== lastSign && runDist > 6) { osc++; runDist = 0; }
-      if (sign === lastSign) runDist += Math.abs(dx) * k; else runDist = Math.abs(dx) * k;
-      lastSign = sign;
-    }
+    pourPath += Math.hypot(dx, dy) * k;   // 움직임 총량(가만히 부으면 보너스 차단용)
   }
 
   // 우유 양(흰 픽셀) 비율 — 적정 범위(0.3~0.62)에서 만점
@@ -192,19 +227,23 @@ const LatteArt = (() => {
       dctx = disp.getContext('2d');
       milk = makeCanvas();
       mctx = milk.getContext('2d');
+      surf = makeCanvas();
+      sctx = surf.getContext('2d');
     }
     if (!crema) buildCrema();
     mctx.clearRect(0, 0, SIZE, SIZE);
     px = CX; py = CY + R * 0.45;          // 컵 아래쪽에서 시작(앞에서 뒤로 흔들며 빼기)
     prevPx = px; prevPy = py;
     vx = vy = 0; vol = ART_VOL; elapsed = 0; idleT = 0; pouredOnce = false;
-    osc = 0; lastSign = 0; runDist = 0; pourPath = 0;
+    pourPath = 0;
+    phase = Math.random() * Math.PI * 2; waveAmp = BASE_AMP;
+    syncLevel = 0; syncSum = 0; syncFrames = 0;
     pouring = false;
     active = true;
     Player.setLook(false);                // 마우스를 피처 조작에 양보
     const t = $('artTitle'), h = $('artHint');
     if (t) t.innerHTML = `🎨 라떼아트 — <b>${patternLabel}</b>에 도전!`;
-    if (h) h.innerHTML = '<b>[E]/좌클릭</b>을 누른 채 마우스를 <b>좌우로 흔들며 뒤로</b> — 대충 부어도 음료는 완성돼요';
+    if (h) h.innerHTML = '<b>[E]/좌클릭</b>을 누른 채 — 위 <b>초록 점(박자)</b>에 맞춰 마우스를 <b>좌우로 흔들면</b> 표면이 출렁이며 무늬가 살아나요';
     $('artGame').classList.remove('hidden');
     render();
   }
@@ -214,15 +253,25 @@ const LatteArt = (() => {
     if (!active) return false;
     Player.setLook(false);                // 매 프레임 재확인(상태 꼬임 방지)
     elapsed += dt;
+    phase += OMEGA * dt;                   // 슬로시 메트로놈 진행
     pouring = !!pourBtn && vol > 0;
     if (pouring) {
       pouredOnce = true; idleT = 0;
       vol = Math.max(0, vol - dt);
       deposit();
       if (Math.random() < dt * 6) AudioFX.pourWater(0.25);
+      // 박자 일치도 = 상관(마우스 수평속도 × 파동속도). 동상이면 +, 다른 템포면 ≈0(직교), 역상이면 −.
+      // 순간 부호일치가 아니라 상관을 누적해야 "엉뚱한 템포"가 정박처럼 점수를 먹지 않는다.
+      const waveVel = Math.cos(phase);
+      const corr = clamp(vx / 3.2, -1, 1) * waveVel;
+      syncSum += corr; syncFrames++;
+      const target = clamp(corr * 1.6, 0, 1);   // 시각 진폭: 양의 상관일 때만 키움
+      syncLevel = clamp(syncLevel + (target - syncLevel) * Math.min(1, dt * 3.5), 0, 1);
     } else if (pouredOnce) {
       idleT += dt;               // 붓다가 손을 떼고 가만히 있으면 곧 마감
+      syncLevel = clamp(syncLevel - dt * 1.2, 0, 1);
     }
+    waveAmp = BASE_AMP + syncLevel * GAIN_AMP;   // 싱크가 오를수록 출렁임이 커짐(공명)
     prevPx = px; prevPy = py;    // 다음 프레임 리본의 시작점
     // 속도 감쇠(마우스가 멈추면 줄기도 가늘어짐)
     vx *= 0.85; vy *= 0.85;
@@ -238,10 +287,10 @@ const LatteArt = (() => {
     Player.setLook(true);
     const cov = coverageScore();
     const sym = symmetryScore();
-    const wig = Math.min(1, osc / 7);     // 진동 7회면 만점
+    const sync = syncFrames ? clamp((syncSum / syncFrames) / 0.4, 0, 1) : 0;  // 평균 상관 → 0~1
     const moved = pourPath > 60 ? 1 : pourPath / 60;   // 거의 안 움직이면 감점
-    // 흔들지 않고 가만히 부으면(움직임 부족) 대칭·양 점수도 깎아 "그냥 붓기"가 보너스로 이어지지 않게
-    const score = clamp((wig * 0.42 + sym * 0.36 + cov * 0.22) * (0.5 + 0.5 * moved), 0, 1);
+    // 박자(싱크)를 메인 지표로, 대칭·양을 보조로. 가만히 부으면(움직임 부족) 전체를 깎아 보너스 차단.
+    const score = clamp((sync * 0.6 + sym * 0.25 + cov * 0.15) * (0.5 + 0.5 * moved), 0, 1);
     const tier = score >= ART_PERFECT ? 'perfect' : score >= ART_GOOD ? 'good' : 'plain';
     $('artGame').classList.add('hidden');
     const cb = onDone; onDone = null;
