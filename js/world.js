@@ -409,7 +409,7 @@ const WORLD = (() => {
       addI(hitbox(1.6, 2.5, 0.6, 5.5, 1.3, z - 0.15, { id: 'door' }));
       const doorCol = addCol(4.7, 6.3, 7.85, 8.55);
       env.door = {
-        group: door, open: true, angle: -1.3, openAngle: -1.3, col: doorCol,
+        group: door, open: true, angle: -1.82, openAngle: -1.82, col: doorCol,   // 바깥으로 ~104° 활짝
         toggle() { this.open = !this.open; },
         update(dt) {
           const tgt = this.open ? this.openAngle : 0;
@@ -421,12 +421,19 @@ const WORLD = (() => {
         },
       };
       env.door.update(0);   // 시작 상태(열림) 적용
-      // OPEN/CLOSE 팻말 — 영업 상태에 따라 교체 (game.js가 env.doorSign.setOpen 호출)
+      // 출입문 상단 트랜섬 창(좌우 유리창과 동일 룩) — 문 개구부 위쪽을 유리로
+      const txBot = 2.55;
+      const txGlass = new THREE.Mesh(new THREE.PlaneGeometry(1.6 - 0.16, glassTop - txBot - 0.08), M().glass);
+      txGlass.position.set(5.5, (glassTop + txBot) / 2, z - 0.05);
+      scene.add(txGlass);
+      scene.add(box(1.6, 0.1, 0.18, M().woodDark, 5.5, txBot, z, { cast: false }));   // 트랜섬 하단 가로살(문 위 상인방)
+      // OPEN/CLOSE 팻말 — 문 상단(트랜섬)에 매닮, 영업 상태에 따라 교체 (game.js가 env.doorSign.setOpen 호출)
       const openMat  = textLabel('OPEN',  160, 80, '700 44px Georgia', '#7fb069', '#23291f');
       const closeMat = textLabel('CLOSE', 160, 80, '700 40px Georgia', '#e0846c', '#2a1c18');
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.25), closeMat);   // 시작은 영업 전 = CLOSE
-      sign.position.set(5.5, 2.35, z - 0.15); sign.rotation.y = Math.PI;
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.28), closeMat);   // 시작은 영업 전 = CLOSE
+      sign.position.set(5.5, 2.95, z - 0.2); sign.rotation.y = Math.PI;
       scene.add(sign);
+      [5.31, 5.69].forEach(hx => scene.add(cyl(0.006, 0.006, 0.46, M().steelDark, hx, 3.22, z - 0.2, 6, { cast: false })));  // 매다는 줄
       env.doorSign = { mesh: sign, setOpen(b) { sign.material = b ? openMat : closeMat; } };
     })();
 

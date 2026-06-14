@@ -1236,7 +1236,7 @@ const Game = (() => {
     const pr = $('prompt');
     if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); return; }
     const aimData = Player.aim();
-    if (aimData && aimData.id === 'restock') {
+    if (aimData && (aimData.id === 'restock' || aimData.id === 'door')) {   // 준비 단계에도 문 여닫기 안내
       pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
