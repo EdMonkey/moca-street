@@ -167,6 +167,19 @@ const WORLD = (() => {
   // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | tamped | used
   function makePortafilterMesh(state = 'filled') {
     const g = new THREE.Group();
+    g.userData.state = state;
+    buildPortafilter(g);
+    // glb 미준비로 절차적 폴백된 경우, 로드되면 같은 그룹에서 glb로 교체
+    // (머신 장착·그라인더의 정적 포터필터도 자동 갱신 — 참조 유지, 현재 상태 재적용)
+    if (!g.userData.glb && window.Assets && window.Assets.ready) {
+      window.Assets.ready.then(() => { if (window.Assets.isReady() && !g.userData.glb) buildPortafilter(g); }).catch(() => {});
+    }
+    return g;
+  }
+
+  // 포터필터 그룹의 자식을 (재)구성: glb(준비 시) 또는 절차적 + 원두가루. 마지막 상태를 재적용.
+  function buildPortafilter(g) {
+    for (let i = g.children.length - 1; i >= 0; i--) g.remove(g.children[i]);
     let groundsY = 0.028, usedGlb = false;
     if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
       const m = window.Assets.spawn('Portafilter', 0, 0, 0);   // 베이스 y=0
@@ -186,8 +199,8 @@ const WORLD = (() => {
     g.add(grounds);
     g.userData.grounds = grounds;
     g.userData.groundsY = groundsY;
-    setPortafilterState(g, state);
-    return g;
+    g.userData.glb = usedGlb;
+    setPortafilterState(g, g.userData.state || 'filled');
   }
 
   // 포터필터 메시의 상태별 표시 갱신
@@ -195,6 +208,7 @@ const WORLD = (() => {
   //   empty → 보이되 원두가루 숨김
   //   filled/tamped/used → 보이고 가루 색을 상태에 맞게 교체 (tamped는 눌려 납작함)
   function setPortafilterState(group, state) {
+    group.userData.state = state;   // 마지막 상태 기록(로드 후 glb 재구성 시 재적용)
     const grounds = group.userData.grounds;
     if (state === 'none') { group.visible = false; return; }
     group.visible = true;
