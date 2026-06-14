@@ -272,17 +272,94 @@ const AudioFX = (() => {
     tone(2093, 0.25, 'sine', 0.06, 0.17);
   }
 
+  /* ----- 음성(영어 TTS) — 손님 주문을 읽어줌 (브라우저 내장 Web Speech API) ----- */
+  let _enVoices = [];
+  function _loadVoices() {
+    if (!window.speechSynthesis) return;
+    const vs = speechSynthesis.getVoices();
+    // 영어 보이스 모음 — en-US 우선, 없으면 모든 영어. 손님마다 랜덤 선택해 목소리에 변화
+    _enVoices = vs.filter(v => /en[-_]US/i.test(v.lang));
+    if (!_enVoices.length) _enVoices = vs.filter(v => /^en/i.test(v.lang));
+  }
+  if (window.speechSynthesis) {
+    _loadVoices();
+    speechSynthesis.addEventListener('voiceschanged', _loadVoices);
+  }
+  function speak(text, opts = {}) {
+    if (!window.speechSynthesis) return;
+    if (!_enVoices.length) _loadVoices();
+    try {
+      speechSynthesis.cancel();                 // 이전 주문 음성을 끊고 새 주문을 읽음
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'en-US';
+      const v = opts.voice || (_enVoices.length ? _enVoices[Math.floor(Math.random() * _enVoices.length)] : null);
+      if (v) u.voice = v;
+      u.rate = opts.rate != null ? opts.rate : 1;
+      u.pitch = opts.pitch != null ? opts.pitch : 1;
+      u.volume = opts.volume != null ? opts.volume : 1;
+      speechSynthesis.speak(u);
+    } catch (e) { /* TTS 미지원 환경은 조용히 무시 */ }
+  }
+
+  // 생성형 TTS 음성 파일 재생 — 실패(파일 없음 등) 시 브라우저 TTS로 폴백
+  function playVoice(url, vol, fallbackText, fallbackOpts, rate) {
+    const fb = () => { if (fallbackText) speak(fallbackText, fallbackOpts || {}); };
+    try {
+      const el = new Audio(url);
+      el.volume = vol != null ? vol : 1;
+      if (rate != null) { el.preservesPitch = true; el.playbackRate = rate; }   // 피치 유지하며 느리게
+      const p = el.play();
+      if (p && p.catch) p.catch(fb);
+    } catch (e) { fb(); }
+  }
+
+  /* ----- 생성형 효과음(SFX) 계층 — 파일이 있으면 그걸 쓰고, 없으면 합성음으로 폴백 ----- */
+  let SFX_KEYS = new Set();
+  if (typeof fetch === 'function') {
+    fetch('Audio/sfx/manifest.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(m => { if (m && Array.isArray(m.keys)) SFX_KEYS = new Set(m.keys); })
+      .catch(() => {});   // 없으면 합성음 폴백
+  }
+  const hasSfx = k => SFX_KEYS.has(k);
+  function sfxPlay(k, vol) {                         // 단발 재생
+    try { const a = new Audio(`Audio/sfx/${k}.mp3`); a.volume = vol != null ? vol : 1; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+  }
+  function sfxLoop(k, vol, dur) {                    // 지속형: 반복 재생 + dur 후/수동 stop()
+    let a;
+    try { a = new Audio(`Audio/sfx/${k}.mp3`); a.loop = true; a.volume = vol != null ? vol : 1; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    return sustainedHandle(() => { if (a) { try { a.pause(); } catch (e) {} } }, dur || 20);
+  }
+  // 지속형(루프) 래퍼: SFX 있으면 루프, 없으면 합성. one-shot 래퍼: SFX 있으면 단발, 없으면 합성.
+  const L = (name, fn, vol) => (dur) => hasSfx(name) ? sfxLoop(name, vol, dur) : fn(dur);
+  const O = (name, fn, vol) => (...a) => hasSfx(name) ? sfxPlay(name, vol) : fn(...a);
+
   return {
-    ensure,
-    // 신규 사운드
-    cupClink, grind, pourWater, steam, brewing, ice, syrupPump, whipSpray, trashThud, metalClack, knock, serveSuccess, tampHold, tampDone, tampPerfectSfx,
+    ensure, speak, playVoice,
+    // 지속형(생성 효과음 있으면 루프 재생)
+    grind: L('grind', grind, 0.6),
+    pourWater: L('pourWater', pourWater, 0.6),
+    steam: L('steam', steam, 0.6),
+    brewing: L('brewing', brewing, 0.55),
+    tampHold,   // 합성 유지 — 게이지가 차오르는 음 상승이 게임 피드백
+    // 단발(생성 효과음 있으면 그걸 재생)
+    cupClink: O('cupClink', cupClink, 0.8),
+    ice: O('ice', ice, 0.9),
+    syrupPump: O('syrupPump', syrupPump, 0.9),
+    whipSpray: O('whipSpray', whipSpray, 0.9),
+    trashThud: O('trashThud', trashThud, 0.9),
+    metalClack: O('metalClack', metalClack, 0.9),
+    knock: O('knock', knock, 0.9),
+    serveSuccess: O('serveSuccess', serveSuccess, 0.9),
+    tampDone: O('tampDone', tampDone, 0.9),
+    tampPerfectSfx: O('tampPerfectSfx', tampPerfectSfx, 0.9),
     // 기존 UI/이벤트 음
-    ding: () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); },
-    cash: () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); },
-    err: () => tone(150, 0.3, 'sawtooth', 0.1),
-    pick: () => tone(540, 0.08, 'triangle', 0.1),
-    put: () => tone(380, 0.08, 'triangle', 0.1),
-    levelup: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'sine', 0.13, i * 0.1)),
-    bell: () => { tone(1760, 0.4, 'sine', 0.1); tone(2217, 0.5, 'sine', 0.06, 0.02); },
+    ding: O('ding', () => { tone(880, 0.12, 'sine', 0.14); tone(1320, 0.28, 'sine', 0.1, 0.09); }, 0.9),
+    cash: O('cash', () => { tone(1180, 0.06, 'square', 0.06); tone(1568, 0.22, 'sine', 0.13, 0.05); tone(2093, 0.3, 'sine', 0.08, 0.12); }, 0.9),
+    err: O('err', () => tone(150, 0.3, 'sawtooth', 0.1), 0.9),
+    pick: O('pick', () => tone(540, 0.08, 'triangle', 0.1), 0.8),
+    put: O('put', () => tone(380, 0.08, 'triangle', 0.1), 0.8),
+    levelup: O('levelup', () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'sine', 0.13, i * 0.1)), 0.9),
+    bell: O('bell', () => { tone(1760, 0.4, 'sine', 0.1); tone(2217, 0.5, 'sine', 0.06, 0.02); }, 0.9),
   };
 })();

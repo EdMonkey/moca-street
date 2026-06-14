@@ -272,6 +272,44 @@ const Game = (() => {
     return it.type === 'drink' ? RECIPES[it.recipeId].name : DESSERTS[it.kind].name;
   }
 
+  /* 손님 영어 음성 주문 */
+  const EN_NAMES = {
+    espresso: 'espresso', americano: 'americano', iceAmericano: 'iced americano',
+    latte: 'latte', iceLatte: 'iced latte', vanillaLatte: 'vanilla latte',
+    cappuccino: 'cappuccino', mocha: 'mocha', caramelMac: 'caramel macchiato',
+    croissant: 'croissant', muffin: 'chocolate muffin', cake: 'cheesecake',
+  };
+  function englishItemName(it) { return EN_NAMES[it.type === 'drink' ? it.recipeId : it.kind] || 'coffee'; }
+  function orderPhrase(items) {
+    const list = items.map(it => {
+      const n = englishItemName(it);
+      return `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}`;
+    }).join(' and ');
+    const cap = list.charAt(0).toUpperCase() + list.slice(1);
+    const t = [`Can I get ${list}, please?`, `I'll have ${list}, please.`, `${cap}, please.`, `Could I get ${list}?`];
+    return t[Math.floor(Math.random() * t.length)];
+  }
+  const ORDER_RATE = 1.0;   // 재생 속도(피치 유지). 속도는 생성 단계(speed)에 반영됨 — 더 늦추려면 <1.0
+  let ORDER_VOICES = [];   // Audio/voices/manifest.json 에서 로드 (gen-voices.ps1 가 생성)
+  fetch('Audio/voices/manifest.json')
+    .then(r => r.ok ? r.json() : null)
+    .then(m => { if (m && Array.isArray(m.voices)) ORDER_VOICES = m.voices; })
+    .catch(() => {});   // 없으면 브라우저 TTS 폴백
+  function orderVoiceKey(items) {
+    const drink = items.find(i => i.type === 'drink');
+    if (!drink) return null;
+    const dessert = items.find(i => i.type === 'dessert');
+    return dessert ? `${drink.recipeId}__${dessert.kind}` : drink.recipeId;
+  }
+  function speakOrder(items) {
+    const key = orderVoiceKey(items);
+    const fallback = orderPhrase(items);   // 클립이 없으면 브라우저 TTS로 읽음
+    if (!key || !ORDER_VOICES.length) { AudioFX.speak(fallback); return; }
+    const v = ORDER_VOICES[Math.floor(Math.random() * ORDER_VOICES.length)];   // 손님마다 랜덤 보이스
+    AudioFX.playVoice(`Audio/voices/${v}/${key}.mp3`, 1, fallback,
+      { rate: 0.96 + Math.random() * 0.18, pitch: 0.8 + Math.random() * 0.6 }, ORDER_RATE);
+  }
+
   /* ===== 손님 훅 ===== */
   function onAngryLeave(c) {
     const i = orders.findIndex(o => o.customer === c);
@@ -313,6 +351,7 @@ const Game = (() => {
       Customers.takeOrder(c, order);
       UI.addTicket(order);
       AudioFX.ding();
+      speakOrder(order.items);   // 손님이 영어로 주문을 말함
       toast(`주문 #${order.num} — ${order.items.map(itemName).join(', ')}`, 'gold');
       return;
     }
@@ -1125,11 +1164,11 @@ const Game = (() => {
   }
 
   function spawnInterval() {
-    let base = 15 - S.day * 0.6;
+    let base = 20 - S.day * 0.6;
     base *= earlyEaseFactor();      // 초반 적응 구간 완화
     if (S.upgrades.ads) base *= 0.72;
     base *= S.rep >= 70 ? 0.85 : S.rep <= 30 ? 1.3 : 1;
-    base = Math.max(5.5, base);
+    base = Math.max(8, base);
     return base * (0.7 + Math.random() * 0.6);
   }
 
