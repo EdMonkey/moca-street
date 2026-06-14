@@ -71,6 +71,51 @@ const Game = (() => {
   // 컵에 재료를 넣은 순서를 기록 (크레마 표시 + 순서 보너스 판정에 사용)
   function addStep(drink, key) {
     (drink.order || (drink.order = [])).push(key);
+    if (FRESH_KEYS.includes(key)) stampFresh(drink);   // 신선도 시계 시작(첫 액체 추가 시)
+  }
+
+  /* ===== 신선도(spoilage) ===== 받아진 뜨거운 물·에스프레소·얼음·스팀우유는 시간이 지나면 신선도 하락 */
+  const FRESH_KEYS = ['ice', 'water', 'espresso', 'milk', 'foam'];
+  const FRESH_FULL = 30, FRESH_DEAD = 90;   // 30초까지 신선 → 90초에 최저
+  function stampFresh(obj) { if (obj && obj.freshAt == null) obj.freshAt = timeSec; }   // 첫 내용물 시점만 기록(이후 유지)
+  function carryFresh(dst, src) {            // 부을 때 더 오래된(상한) 쪽을 인계
+    if (src && src.freshAt != null) dst.freshAt = (dst.freshAt == null) ? src.freshAt : Math.min(dst.freshAt, src.freshAt);
+  }
+  function freshness01(obj) {                 // 1(신선) ~ 0(최저)
+    if (!obj || obj.freshAt == null) return 1;
+    const age = timeSec - obj.freshAt;
+    if (age <= FRESH_FULL) return 1;
+    if (age >= FRESH_DEAD) return 0;
+    return 1 - (age - FRESH_FULL) / (FRESH_DEAD - FRESH_FULL);
+  }
+  function heldFreshObj() {                   // 들고 있는 것 중 신선도 대상 객체
+    if (!held) return null;
+    if (held.type === 'drink') return held.drink;
+    if (held.type === 'shotglass') return held.filled ? held : null;
+    if (held.type === 'pitcher') return (held.milk || held.foam) ? held : null;
+    return null;
+  }
+  // 뜨거운 음료: 얼음컵이 아니고 에스프레소/온수/데운우유 중 하나가 들어간 것
+  function isHotDrink(d) { return d && d.cup !== 'ice' && (d.espresso || d.water === 'hot' || d.milk || d.foam); }
+  function isSteaming(obj) { return obj && obj.freshAt != null && (timeSec - obj.freshAt) < FRESH_FULL; }   // 30초 내에만 김
+  // 김을 피울 용기들의 월드 위치(컵 위) — 들고 있는 것 + 내려놓은 것 + 머신 컵 + 잡 컵
+  const STEAM_RIM_Y = 0.14;
+  function steamSources() {
+    const out = [];
+    const addMesh = m => { if (m) out.push(m.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, STEAM_RIM_Y, 0))); };
+    const vesselHot = v =>
+      v.type === 'drink' ? (isHotDrink(v.drink) && isSteaming(v.drink))
+        : v.type === 'shotglass' ? (v.filled && isSteaming(v))
+          : v.type === 'pitcher' ? ((v.milk || v.foam) && isSteaming(v)) : false;
+    if (held && vesselHot(held)) { const p = Player.heldWorldPos(); if (p) out.push(p.add(new THREE.Vector3(0, STEAM_RIM_Y, 0))); }
+    placedItems.forEach(rec => { if (vesselHot(rec.item)) addMesh(rec.mesh); });
+    env.machines.espressoSlots.forEach(s => { if (s.cupMesh && isHotDrink(s.drink) && isSteaming(s.drink)) addMesh(s.cupMesh); });
+    machineJobs().forEach(job => {
+      if (!job || !job.cupMesh) return;
+      if (job.drink && isHotDrink(job.drink) && isSteaming(job.drink)) addMesh(job.cupMesh);
+      else if (job.pitcher && (job.pitcher.milk || job.pitcher.foam) && isSteaming(job.pitcher)) addMesh(job.cupMesh);
+    });
+    return out;
   }
   // 레시피의 정답 순서(seq)와 정확히 일치하게 만들었는지
   function correctOrder(drink, recipeId) {
@@ -184,8 +229,8 @@ const Game = (() => {
   // 슬롯/표면에서 손으로 되돌릴 때: 샷잔(cup:'shot')은 도구 타입으로, 일반 컵은 음료로 환원
   function vesselToHand(drink) {
     return drink.cup === 'shot'
-      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect }
-      : { type: 'drink', drink };
+      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect, freshAt: drink.freshAt }
+      : { type: 'drink', drink };   // 일반 컵은 같은 객체 → freshAt 자동 유지
   }
   // 내려놓은 음료 컵의 메시를 현재 내용물로 다시 그림 (샷을 부은 뒤 색/크레마 갱신)
   function refreshPlacedDrink(rec) {
@@ -203,6 +248,7 @@ const Game = (() => {
     drink.milk = 1;
     addStep(drink, 'milk');
     if (h.foam) { drink.foam = 1; addStep(drink, 'foam'); }
+    carryFresh(drink, h);   // 피처가 오래됐으면 컵도 그만큼 상함
     if (h.perfectFoam) drink.foamPerfect = 1;            // 퍼펙트 마이크로폼 보너스 인계
     if (artTier && artTier !== 'plain') drink.artTier = artTier;   // 라떼아트 등급 인계
     refresh();
@@ -226,6 +272,7 @@ const Game = (() => {
       if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
       if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
       drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect;
+      carryFresh(drink, held);   // 샷잔이 오래됐으면 컵도 그만큼 상함
       refresh();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
       AudioFX.pourWater(0.5); toast('샷을 부었어요 ☕');
@@ -234,7 +281,7 @@ const Game = (() => {
     // pitcher
     if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
     if (drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
-    const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam };
+    const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam, freshAt: held.freshAt };
     if (drink.cup === 'hot' && drink.espresso && !drink.foam && held.milk) {   // 라떼아트 가능
       LatteArt.start({ pattern: artPatternFor(), onDone: (tier) => commitMilkPour(drink, refresh, h, tier) });
       return;
@@ -789,11 +836,18 @@ const Game = (() => {
     const artTier = servedDrink && servedDrink.artTier;
     if (artTier === 'perfect') tip += Math.round(o.total * ART_TIP_PERFECT / 100) * 100;
     else if (artTier === 'good') tip += Math.round(o.total * ART_TIP_GOOD / 100) * 100;
+    // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
+    const fresh = freshness01(servedDrink);
+    if (fresh < 1) tip = Math.round(tip * (0.4 + 0.6 * fresh) / 100) * 100;   // 상해도 최소 40%
     S.money += o.total + tip;
     dayStats.revenue += o.total;
     dayStats.tips += tip;
     dayStats.served++;
-    S.rep = Math.min(100, S.rep + (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0));
+    let repDelta = (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0);
+    if (fresh < 0.5) repDelta -= 2;        // 많이 상함: 평판 손해
+    else if (fresh < 1) repDelta -= 1;     // 약간 상함: 평판 이득 감소
+    S.rep = Math.max(0, Math.min(100, S.rep + repDelta));
+    if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁·평판 감소`, 'bad', 2200);
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
@@ -851,6 +905,7 @@ const Game = (() => {
           if (job.kind === 'steamer') {
             // 피처에 데운 우유/거품을 채움 (순서 기록은 컵에 부을 때)
             if (job.makingFoam) job.pitcher.foam = 1; else job.pitcher.milk = 1;
+            stampFresh(job.pitcher);   // 데운 우유 신선도 시계 시작
             swapJobCup(job);
           } else if (job.kind === 'water') {
             job.drink.water = job.waterType;
@@ -1046,6 +1101,7 @@ const Game = (() => {
     S.stocks.milk--;                          // 성공 시 우유 1 소모
     if (steamGame.makingFoam) held.foam = 1; else held.milk = 1;
     held.perfectFoam = perfect;               // 마이크로폼 — 컵에 부을 때 보너스 인계
+    stampFresh(held);                         // 데운 우유 신선도 시계 시작
     setHeld(held);
     toast(msg, cls);
     UI.hud();
@@ -1417,9 +1473,24 @@ const Game = (() => {
     }
   }
 
+  function updateFreshnessHUD() {
+    const el = $('freshness');
+    const obj = heldFreshObj();
+    if (!obj || obj.freshAt == null) { el.classList.add('hidden'); return; }
+    const f = freshness01(obj), pct = Math.round(f * 100);
+    let color, label;
+    if (f >= 0.999) { color = '#7ec98a'; label = '신선함'; }
+    else if (f >= 0.5) { color = '#e8c46d'; label = '신선도 저하'; }
+    else if (f > 0) { color = '#e08a4b'; label = '상하는 중'; }
+    else { color = '#d9534f'; label = '상함'; }
+    el.textContent = `🌡 신선도 ${pct}% · ${label}`;
+    el.style.color = color; el.style.borderColor = color;
+    el.classList.remove('hidden');
+  }
+
   function update(dt) {
     if (mode === 'prep') { updatePrep(); return; }
-    if (mode !== 'playing') { updateAimHighlight(null); return; }
+    if (mode !== 'playing') { updateAimHighlight(null); $('freshness').classList.add('hidden'); return; }
 
     // 시간
     timeSec += dt;
@@ -1448,6 +1519,7 @@ const Game = (() => {
     updateSlots(dt);
     updateJobs(dt);
     Effects.update(dt);
+    updateFreshnessHUD();
 
     // 라떼아트 미니게임 — 진행 중엔 다른 조준/상호작용을 모두 잠그고 단독 처리
     if (LatteArt.update(dt, useDown)) {
@@ -1603,6 +1675,7 @@ const Game = (() => {
       }
     },
     isBrewing: () => env.machines.espressoSlots.some(s => s.busy && !s.done),
+    steamSources,
     _debug: { closeNow() { timeSec = DAY_LEN + 1; open = false; Customers.clear(); orders = []; $('tickets').innerHTML = ''; } },
   };
 })();

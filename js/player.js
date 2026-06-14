@@ -143,8 +143,14 @@ const Player = (() => {
     }
   }
 
+    // 들고 있는 메시의 월드 위치(없으면 null) — 뜨거운 음료 김 연출용
+  function heldWorldPos(out) {
+    if (!heldMesh) return null;
+    return heldMesh.getWorldPosition(out || new THREE.Vector3());
+  }
+
   return {
-    init, update, aim, aimSurface, setHeld, reset, punch,
+    init, update, aim, aimSurface, setHeld, reset, punch, heldWorldPos,
     setLook(on) { look = on; },
     get aimedObject() { return lastAimHit; },
     get position() { return pos; },
