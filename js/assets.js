@@ -39,13 +39,13 @@ const Assets = (() => {
     t.anisotropy = 4;
     return t;
   }
-  const TEX_BRUSHED_N = _loadTex('assets/tex/metal_brushed_nor.jpg', 4);   // 브러시드 스테인리스 노멀
-  const TEX_BRUSHED_R = _loadTex('assets/tex/metal_brushed_rough.jpg', 4); // 〃 러프니스 변화
+  const TEX_BRUSHED_N = _loadTex('assets/tex/metal_brushed_nor.jpg', 4);   // 브러시드(이방성) 노멀
   const TEX_SCRATCH_N = _loadTex('assets/tex/metal_scratches_nor.jpg', 2); // 스크래치/때 노멀
 
-  // 금속(스테인리스/크롬/다크메탈/브라스) PBR 보정 — HDR environment 반사가 평평하게 번쩍이지
-  // 않도록 노멀맵으로 미세 굴곡을 주고 러프니스/envMapIntensity를 낮춰 사실감을 살린다.
+  // 금속 PBR 보정 — metalness/roughness는 glb(Blender 파일)에서 정한 실측 기반 값을 그대로
+  // 사용하고(=단일 출처), 여기선 three 전용 속성만 손댄다: 표면 디테일 노멀맵 + 환경 반사 강도.
   // 라이브러리 재질은 clone 인스턴스들이 공유하므로 여기서 한 번만 보정하면 전체 적용됨.
+  // (Blender 기준값: StainlessSteel m1.0/r0.40, Chrome m1.0/r0.06, DarkMetal m0.9/r0.45, Brass m1.0/r0.30)
   function tuneMetals(root) {
     const seen = new Set();
     root.traverse((n) => {
@@ -55,25 +55,19 @@ const Assets = (() => {
         if (!m || seen.has(m.uuid)) return; seen.add(m.uuid);
         if (!m.isMeshStandardMaterial || m.metalness < 0.5) return;
         const name = m.name || '';
-        if (/stainless|steel/i.test(name)) {            // 스테인리스: 브러시드(이방성) + 러프 변화, 새틴 마감(번쩍임↓)
+        if (/stainless|steel/i.test(name)) {            // 스테인리스: 브러시드(이방성)
           m.normalMap = TEX_BRUSHED_N; m.normalScale.set(0.75, 0.75);
-          m.roughnessMap = TEX_BRUSHED_R; m.roughness = 1.0;    // 러프니스는 맵에서
-          m.color.multiplyScalar(0.82);                          // 밝은 흰빛 살짝 죽임
-          m.envMapIntensity = 0.55;                              // 환경 반사 강도 낮춰 번쩍임 완화
+          m.envMapIntensity = 0.55;
         } else if (/dark/i.test(name)) {                // 다크메탈: 스크래치/상처
           m.normalMap = TEX_SCRATCH_N; m.normalScale.set(0.8, 0.8);
-          m.roughness = Math.max(m.roughness, 0.55);
           m.envMapIntensity = 0.7;
-        } else if (/chrome/i.test(name)) {              // 크롬: 광택 유지하되 미세 브러시드로 거울감 완화
+        } else if (/chrome/i.test(name)) {              // 크롬: 미세 브러시드(거울감 완화)
           m.normalMap = TEX_BRUSHED_N; m.normalScale.set(0.25, 0.25);
-          m.roughness = Math.max(m.roughness, 0.16);
           m.envMapIntensity = 0.7;
         } else if (/brass/i.test(name)) {               // 브라스: 가벼운 스크래치
           m.normalMap = TEX_SCRATCH_N; m.normalScale.set(0.5, 0.5);
-          m.roughness = Math.max(m.roughness, 0.42);
           m.envMapIntensity = 0.75;
         } else {
-          m.roughness = Math.max(m.roughness, 0.45);
           m.envMapIntensity = 0.8;
         }
         m.needsUpdate = true;
