@@ -167,13 +167,25 @@ const WORLD = (() => {
   // 포터필터 (손에 들기 / 머신 장착 / 그라인더 공용) — 상태: empty | filled | tamped | used
   function makePortafilterMesh(state = 'filled') {
     const g = new THREE.Group();
-    const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
-    const grounds = cyl(0.045, 0.045, 0.014, GROUNDS_MAT.filled, 0, 0.028, 0, 12);
-    const handle = cyl(0.017, 0.02, 0.17, M().woodDark, 0, 0, 0.135, 10);
-    handle.rotation.x = Math.PI / 2;
-    const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
-    g.add(basket, grounds, handle, spout);
+    let groundsY = 0.028, usedGlb = false;
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const m = window.Assets.spawn('Portafilter', 0, 0, 0);   // 베이스 y=0
+      if (m) {
+        m.traverse(n => { if (n.isMesh) n.castShadow = false; });
+        g.add(m); usedGlb = true;
+        groundsY = new THREE.Box3().setFromObject(m).max.y - 0.014;   // 바스켓 입구 높이에 가루 안착
+      }
+    }
+    if (!usedGlb) {   // 폴백: 절차적 포터필터 (glb 로드 전)
+      const basket = cyl(0.052, 0.045, 0.05, M().steelDark, 0, 0, 0, 14);
+      const handle = cyl(0.017, 0.02, 0.17, M().woodDark, 0, 0, 0.135, 10); handle.rotation.x = Math.PI / 2;
+      const spout = cyl(0.012, 0.018, 0.045, M().steel, 0, -0.045, 0.04, 8);
+      g.add(basket, handle, spout);
+    }
+    const grounds = cyl(0.032, 0.032, 0.014, GROUNDS_MAT.filled, 0, groundsY, 0, 12);
+    g.add(grounds);
     g.userData.grounds = grounds;
+    g.userData.groundsY = groundsY;
     setPortafilterState(g, state);
     return g;
   }
@@ -191,8 +203,9 @@ const WORLD = (() => {
       grounds.material = GROUNDS_MAT[state === 'used' ? 'used' : state === 'tamped' ? 'tamped' : 'filled'];
       // 탬핑된 원두는 눌려 납작하고 윗면이 매끈해짐
       const tamped = state === 'tamped';
+      const by = group.userData.groundsY != null ? group.userData.groundsY : 0.028;
       grounds.scale.y = tamped ? 0.55 : 1;
-      grounds.position.y = tamped ? 0.024 : 0.028;
+      grounds.position.y = tamped ? by - 0.004 : by;
     }
   }
 
