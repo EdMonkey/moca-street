@@ -80,19 +80,33 @@ const WORLD = (() => {
     const R = isIce ? 0.05 : isEsp ? 0.032 : isShot ? 0.025 : 0.052;
     const base = isEsp ? 0.01 : 0;              // 데미타세는 받침접시 위에 올라감
     const cupMat = (isIce || isShot) ? M().cupClear : M().cupWhite;
-    if (isEsp) { // 받침접시
-      const saucer = cyl(0.052, 0.04, 0.009, M().cupWhite, 0, 0.0045, 0, 18);
-      saucer.castShadow = false;
-      g.add(saucer);
+    // 컵 셸: Blender 중공(안이 파인) glb 모델. 머그/아이스/에스프레소잔은 손잡이·받침까지 포함.
+    // glb 미로드 시점이거나 샷잔은 기존 절차적 실린더로 폴백한다. 재질은 게임 재질로 덮어써
+    // 라이브러리 인스턴스 공유를 깨지 않고(클론별 머티리얼 교체) 기존 음료 룩을 유지한다.
+    const glbCup = isShot ? null : (isIce ? 'GlassTumbler' : isEsp ? 'EspressoCupSaucer' : 'CoffeeMug');
+    let cupShell = null;
+    if (glbCup && window.Assets && window.Assets.isReady()) {
+      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, 0);  // 베이스 y=0 정렬된 클론
+      if (cupShell) {
+        cupShell.traverse((n) => { if (n.isMesh) { n.material = cupMat; n.castShadow = false; } });
+        g.add(cupShell);
+      }
     }
-    const cup = cyl(R, R * 0.78, H, cupMat, 0, base + H / 2, 0, 20);
-    cup.castShadow = false;
-    g.add(cup);
-    if (!isIce && !isShot) { // 손잡이 (머그/데미타세) — 샷잔은 손잡이 없음
-      const handle = new THREE.Mesh(
-        new THREE.TorusGeometry(isEsp ? 0.016 : 0.03, isEsp ? 0.005 : 0.008, 8, 16), M().cupWhite);
-      handle.position.set(R + (isEsp ? 0.007 : 0.012), base + H / 2, 0);
-      g.add(handle);
+    if (!cupShell) {  // ----- 절차적 폴백 (glb 미준비 / 샷잔) -----
+      if (isEsp) { // 받침접시
+        const saucer = cyl(0.052, 0.04, 0.009, M().cupWhite, 0, 0.0045, 0, 18);
+        saucer.castShadow = false;
+        g.add(saucer);
+      }
+      const cup = cyl(R, R * 0.78, H, cupMat, 0, base + H / 2, 0, 20);
+      cup.castShadow = false;
+      g.add(cup);
+      if (!isIce && !isShot) { // 손잡이 (머그/데미타세) — 샷잔은 손잡이 없음
+        const handle = new THREE.Mesh(
+          new THREE.TorusGeometry(isEsp ? 0.016 : 0.03, isEsp ? 0.005 : 0.008, 8, 16), M().cupWhite);
+        handle.position.set(R + (isEsp ? 0.007 : 0.012), base + H / 2, 0);
+        g.add(handle);
+      }
     }
     const filled = drink.espresso || drink.water || drink.milk;
     if (filled) {
