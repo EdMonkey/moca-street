@@ -980,7 +980,7 @@ const WORLD = (() => {
       g.add(glbl);
       // 삽입된 포터필터가 받침 위에 표시됨 (초기엔 숨김)
       const pfOut = makePortafilterMesh('none');
-      pfOut.position.set(0, 0.145, 0.13);
+      pfOut.position.set(0, 0.23, 0.13);   // glb 그라인더 배출구 높이에 맞춰 포터필터(커피가루)를 위로
       g.add(pfOut);
       const job = {
         kind: 'grinder',
