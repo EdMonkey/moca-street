@@ -732,7 +732,7 @@ const WORLD = (() => {
       const slotBase = env.machines.espressoSlots.length;
       [-0.3, 0.3].forEach((ox, i) => {
         const pf = makePortafilterMesh('empty');   // 동적 포터필터(그룹헤드에 장착)
-        pf.position.set(ox, 0.235, 0.26);
+        pf.position.set(ox, 0.16, 0.26);   // glb 포터필터는 원점이 베이스 → 바스켓이 그룹헤드 아래에 오도록 낮춤
         g.add(pf);
         const stream = cyl(0.006, 0.006, 0.12, M().coffeeLiquid, ox, 0.1, 0.3, 6, { cast: false });
         stream.visible = false;

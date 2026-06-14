@@ -26,6 +26,24 @@ const Assets = (() => {
     return cache[name];
   }
 
+  // 금속(스테인리스/크롬/다크메탈/브라스) 반사 강화 — 씬 environment를 더 강하게 반사해 은색 광택을 살림.
+  // 라이브러리 재질은 clone 인스턴스들이 공유하므로 여기서 한 번만 보정하면 전체 적용됨.
+  function tuneMetals(root) {
+    const seen = new Set();
+    root.traverse((n) => {
+      if (!n.isMesh) return;
+      const mats = Array.isArray(n.material) ? n.material : [n.material];
+      mats.forEach((m) => {
+        if (!m || seen.has(m.uuid)) return; seen.add(m.uuid);
+        if (m.isMeshStandardMaterial && m.metalness >= 0.5) {
+          m.envMapIntensity = 1.8;
+          if (m.roughness > 0.35) m.roughness = 0.3;   // 무광 금속만 살짝 광택
+          m.needsUpdate = true;
+        }
+      });
+    });
+  }
+
   // window.GLTFLoader 가 준비된 뒤 호출 — 라이브러리 1회 로드.
   function boot(GLTFLoaderClass) {
     if (booted) return ready;
@@ -33,7 +51,11 @@ const Assets = (() => {
     const loader = new GLTFLoaderClass();
     loader.load(
       LIB_URL,
-      (gltf) => { lib = gltf.scene; lib.updateMatrixWorld(true); _resolve(Assets); },
+      (gltf) => {
+        lib = gltf.scene; lib.updateMatrixWorld(true);
+        tuneMetals(lib);   // 스테인리스/크롬 등 금속 광택(환경맵 반사) 강화
+        _resolve(Assets);
+      },
       undefined,
       (err) => { console.error('[Assets] glb 로드 실패:', LIB_URL, err); _reject(err); }
     );
