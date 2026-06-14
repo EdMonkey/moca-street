@@ -270,7 +270,7 @@ const WORLD = (() => {
       doorPos: new THREE.Vector3(5.5, 0, 8),
       spawnPos: new THREE.Vector3(5.5, 0, 11),
       queueSpots: [[2.5, 0.25], [2.5, 1.5], [2.5, 2.75], [2.5, 4.0], [2.5, 5.2]],
-      pickupSpots: [[-0.6, 0.35], [-1.8, 0.5], [-3.0, 0.4], [-1.2, 1.6]],
+      pickupSpots: [[-0.6, 0.35], [-1.8, 0.5], [-3.0, 0.4], [-1.2, 1.6], [-2.4, 1.6]],
       entryWaypoint: [4.6, 4.5],
     };
     const addI = m => { env.interactables.push(m); scene.add(m); return m; };

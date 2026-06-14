@@ -305,7 +305,7 @@ const Customers = (() => {
     c.order = order;
     c.queueIdx = -1;
     const pi = pickupSpotFree();
-    c.pickupIdx = pi >= 0 ? pi : 0;
+    c.pickupIdx = pi >= 0 ? pi : -2;   // 빈 자리 없으면 유효 인덱스가 아닌 값으로 (스팟 회계 오염 방지)
     const spot = pi >= 0 ? env.pickupSpots[pi] : [-1.5 + Math.random() * 2, 2.2];
     c.state = 'toPickup';
     c.path = [spot];
