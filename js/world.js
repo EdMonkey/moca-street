@@ -785,9 +785,9 @@ const WORLD = (() => {
         brewLed.position.set(ox, 0.46, 0.346);
         g.add(brewBtn, brewLed);
         // 분리된 상호작용 히트박스 3종 (높이로 구분): 컵 자리(낮음) · 포터필터(중간) · 추출 버튼(위)
-        childHitbox(st, 0.3, 0.18, 0.34, ox, 0.06, 0.33, { id: 'espCup', slot: slotIdx });
-        childHitbox(st, 0.26, 0.2, 0.32, ox, 0.17, 0.30, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [pf];
-        childHitbox(st, 0.2, 0.16, 0.18, ox, 0.46, 0.33, { id: 'brew', slot: slotIdx }).userData.outlineMeshes = [brewBtn, brewLed];
+        childHitbox(st, 0.22, 0.15, 0.24, ox, 0.055, 0.33, { id: 'espCup', slot: slotIdx });   // 컵 자리에 맞게 조임
+        childHitbox(st, 0.2, 0.15, 0.22, ox, 0.20, 0.29, { id: 'pfSlot', slot: slotIdx }).userData.outlineMeshes = [pf];   // 컵과 높이 분리
+        childHitbox(st, 0.14, 0.13, 0.14, ox, 0.46, 0.33, { id: 'brew', slot: slotIdx }).userData.outlineMeshes = [brewBtn, brewLed];   // 버튼에 맞게
       });
       env.machines.espressoGroup = g;
       env.steamEmitters.push({ st, local: new THREE.Vector3(0, 0.66, 0) });
@@ -803,8 +803,8 @@ const WORLD = (() => {
       g.add(lbl);
       // 스티머 분리 히트박스: 스팀봉(피처 데우기) + 노브(스팀 분사) — 시각물은 glb에 포함되어
       // 외곽선은 전체 머신 폴백으로 처리(개별 메시 참조 불가).
-      childHitbox(st, 0.34, 0.42, 0.5, 0.62, 0.2, 0.32, { id: 'steamwand', job: steamJob });
-      childHitbox(st, 0.16, 0.18, 0.18, 0.46, 0.44, 0.34, { id: 'steamknob', job: steamJob });
+      childHitbox(st, 0.24, 0.4, 0.3, 0.6, 0.2, 0.34, { id: 'steamwand', job: steamJob });   // 스팀봉에 맞게 조임
+      childHitbox(st, 0.14, 0.16, 0.16, 0.46, 0.44, 0.34, { id: 'steamknob', job: steamJob });
       return st;
     }
     buildEspresso('espresso', -3.1, -4.25, true);   // 원래 머신: 2번 슬롯은 듀얼헤드 잠금
@@ -840,15 +840,12 @@ const WORLD = (() => {
 
     /* ---------- 스팀 피처 거치대 (재사용 무료 도구 — 우유를 데워 컵에 붓는다) ---------- */
     (function pitcherStand() {
-      const x = -1.5, z = -4.3;            // 머신/스티머 우측 근처
+      const x = -2.85, z = -4.05, y = 1.42;   // 에스프레소 머신 갈색 작업 받침대 위 — 우측
       const r = new THREE.Group();
-      r.position.set(x, 0.97, z);
+      r.position.set(x, y, z);
       scene.add(r);
-      r.add(makePitcherMesh(0, 0));        // 데모용 빈 피처
-      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.11), textLabel('스팀 피처', 200, 52, '700 28px "Malgun Gothic"'));
-      lbl.position.set(0, 0.36, 0.05);
-      r.add(lbl);
-      addI(hitbox(0.34, 0.5, 0.42, x, 1.13, z, { id: 'pitcherrack' })).userData.outlineRoot = r;
+      r.add(makePitcherMesh(0, 0));        // 데모용 빈 피처 (머신 상판 위 — 이름표 불필요)
+      addI(hitbox(0.18, 0.22, 0.2, x, y + 0.09, z, { id: 'pitcherrack' })).userData.outlineRoot = r;   // 피처 크기에 맞게
     })();
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
@@ -941,18 +938,15 @@ const WORLD = (() => {
 
     /* ---------- 에스프레소 샷잔 (유리) — 에스프레소 머신 옆, 재사용 무료 도구 ---------- */
     (function shotGlass() {
-      const x = -2.2, z = -4.3;            // 에스프레소 머신(-3.1)과 스티머(-1.7) 사이 빈 공간
+      const x = -3.34, z = -4.05, y = 1.42;   // 에스프레소 머신 갈색 작업 받침대 위 — 좌측
       const r = new THREE.Group();
-      r.position.set(x, 0.97, z);
+      r.position.set(x, y, z);
       scene.add(r);
       // 투명 유리 샷잔 1개 (위가 살짝 넓은 텀블러 형태)
       const glass = cyl(0.03, 0.023, 0.075, M().cupClear, 0, 0.0415, 0, 18, { cast: false });
       r.add(glass);
-      r.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽
-      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.1), textLabel('샷잔', 144, 48, '700 28px "Malgun Gothic"'));
-      lbl.position.set(0, 0.34, 0.04);
-      r.add(lbl);
-      addI(hitbox(0.24, 0.45, 0.34, x, 1.12, z, { id: 'shotrack' })).userData.outlineRoot = r;
+      r.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽 (머신 상판 위 — 이름표 불필요)
+      addI(hitbox(0.13, 0.18, 0.15, x, y + 0.07, z, { id: 'shotrack' })).userData.outlineRoot = r;   // 샷잔 크기에 맞게
     })();
 
     /* ---------- 탬핑 스테이션 (분쇄된 원두를 평평하게 다짐) ---------- */

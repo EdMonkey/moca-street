@@ -105,11 +105,22 @@ const Player = (() => {
 
   /* 조준 중인 상호작용 대상 */
   let lastAimHit = null;        // 마지막으로 조준한 히트박스 메시 (아웃라인 하이라이트용)
+  const _aimO = new THREE.Vector3(), _aimD = new THREE.Vector3(), _aimC = new THREE.Vector3(), _aimV = new THREE.Vector3();
   function aim() {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
     const hits = ray.intersectObjects(env.interactables, false);
-    lastAimHit = hits.length ? hits[0].object : null;
-    return lastAimHit ? lastAimHit.userData.interact : null;
+    // 겹친 박스 중 '점이 가장 정확히 향한' 것 선택 — 박스 중심이 조준선에 가장 가까운 대상
+    let best = null, bestPerp = Infinity;
+    _aimO.copy(ray.ray.origin); _aimD.copy(ray.ray.direction);
+    for (const h of hits) {
+      h.object.getWorldPosition(_aimC);
+      _aimV.copy(_aimC).sub(_aimO);
+      const proj = _aimV.dot(_aimD);
+      const perp2 = Math.max(0, _aimV.lengthSq() - proj * proj);   // 조준선~박스중심 수직거리²
+      if (perp2 < bestPerp) { bestPerp = perp2; best = h.object; }
+    }
+    lastAimHit = best;
+    return best ? best.userData.interact : null;
   }
 
   /* 조준 중인 배치 가능 표면의 윗면 지점 (없으면 null) */
