@@ -1094,6 +1094,13 @@ const WORLD = (() => {
           const m = window.Assets.spawn(glbName, 0, 0, 0, rotY);
           if (!m) return;
           if (scale !== 1) m.scale.multiplyScalar(scale);
+          // 베이스를 부모 원점(카운터 상판/바닥)에 정확히 안착시킨다. glb 원점이
+          // 베이스가 아니어도(스케일·회전 적용 후 측정) 바닥이 카운터에 파묻히거나
+          // 뜨지 않게 함 — 기능 앵커(포터필터·스파웃 등)와 시각물 정렬을 일치시킨다.
+          m.position.set(0, 0, 0);
+          m.updateMatrixWorld(true);
+          const bb = new THREE.Box3().setFromObject(m);
+          if (isFinite(bb.min.y)) m.position.y = -bb.min.y;
           proc.forEach(pm => parent.remove(pm));
           parent.add(m);
         }).catch(() => {});

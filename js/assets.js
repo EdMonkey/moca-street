@@ -22,7 +22,9 @@ const Assets = (() => {
     const obj = lib && lib.getObjectByName(name);
     if (!obj) return null;
     const box = new THREE.Box3().setFromObject(obj);
-    cache[name] = { obj, offsetY: -box.min.y };   // 베이스를 y=0에 맞추는 오프셋
+    // 베이스를 y=0에 맞추는 오프셋. obj.position.y를 빼서 "원점이 베이스가 아닌"
+    // (피벗이 떠 있는) 프롭도 spawn 시 바닥이 baseY에 정확히 앉도록 한다.
+    cache[name] = { obj, offsetY: obj.position.y - box.min.y };
     return cache[name];
   }
 
