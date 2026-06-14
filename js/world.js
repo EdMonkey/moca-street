@@ -632,12 +632,17 @@ const WORLD = (() => {
     (function iceMachine() {
       const st = station('ice', '제빙기', -4.9, -4.3, 0.7, 0.65);
       const r = st.root;
-      r.add(box(0.62, 0.5, 0.55, M().steel, 0, 0.25, 0));
-      r.add(box(0.56, 0.1, 0.46, M().steelDark, 0, 0.52, 0));
-      // 얼음 보이는 개구부
-      r.add(box(0.46, 0.18, 0.06, M().blackMatte, 0, 0.18, 0.28, { cast: false }));
-      for (let i = 0; i < 6; i++)
-        r.add(box(0.05, 0.05, 0.05, M().ice, -0.15 + (i % 3) * 0.15, 0.16 + Math.floor(i / 3) * 0.05, 0.27 + (i % 2) * 0.02, { cast: false }));
+      const vis = new THREE.Group(); r.add(vis);
+      decorVisual(vis, 'IceMachine', () => {
+        const p = [
+          box(0.62, 0.5, 0.55, M().steel, 0, 0.25, 0),
+          box(0.56, 0.1, 0.46, M().steelDark, 0, 0.52, 0),
+          box(0.46, 0.18, 0.06, M().blackMatte, 0, 0.18, 0.28, { cast: false }),   // 얼음 개구부
+        ];
+        for (let i = 0; i < 6; i++)
+          p.push(box(0.05, 0.05, 0.05, M().ice, -0.15 + (i % 3) * 0.15, 0.16 + Math.floor(i / 3) * 0.05, 0.27 + (i % 2) * 0.02, { cast: false }));
+        return p;
+      }, 0, 0.71);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.13), textLabel('얼음', 192, 60, '700 32px "Malgun Gothic"'));
       lbl.position.set(0, 0.68, 0.3);
       r.add(lbl);
@@ -803,10 +808,12 @@ const WORLD = (() => {
       [['waterHot', -0.55, '온수', 0xd9534f], ['waterCold', 0.15, '냉수', 0x5a9adf]].forEach(([id, x, name, dot]) => {
         const st = station(id, name + ' 디스펜서', x, -4.3, 0.32, 0.35);
         const r = st.root;
-        r.add(box(0.22, 0.5, 0.24, M().steel, 0, 0.25, 0));
-        const spout = cyl(0.014, 0.014, 0.14, M().steelDark, 0, 0.32, 0.16, 8);
-        spout.rotation.x = 0.9;
-        r.add(spout);
+        const vis = new THREE.Group(); r.add(vis);
+        decorVisual(vis, 'WaterDispenser', () => {
+          const spout = cyl(0.014, 0.014, 0.14, M().steelDark, 0, 0.32, 0.16, 8);
+          spout.rotation.x = 0.9;
+          return [box(0.22, 0.5, 0.24, M().steel, 0, 0.25, 0), spout];
+        }, 0, 1.0);
         const led = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8),
           new THREE.MeshStandardMaterial({ color: dot, emissive: dot, emissiveIntensity: 1.2 }));
         led.position.set(0, 0.42, 0.13);
@@ -860,12 +867,17 @@ const WORLD = (() => {
     (function knockbox() {
       const st = station('knockbox', '넉박스', 3.2, -4.3, 0.35, 0.4);
       const r = st.root;
-      // 어두운 무광 통 + 위를 가로지르는 고무 바
-      r.add(box(0.26, 0.22, 0.3, M().blackMatte, 0, 0.11, 0));
-      r.add(cyl(0.13, 0.13, 0.03, M().steelDark, 0, 0.225, 0, 16));        // 상단 림
-      const bar = cyl(0.014, 0.014, 0.26, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }), 0, 0.255, 0, 10);
-      bar.rotation.z = Math.PI / 2;
-      r.add(bar);
+      // 어두운 무광 통 + 위를 가로지르는 고무 바 — glb KnockBox로 교체(로드 시)
+      const vis = new THREE.Group(); r.add(vis);
+      decorVisual(vis, 'KnockBox', () => {
+        const bar = cyl(0.014, 0.014, 0.26, new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.9 }), 0, 0.255, 0, 10);
+        bar.rotation.z = Math.PI / 2;
+        return [
+          box(0.26, 0.22, 0.3, M().blackMatte, 0, 0.11, 0),
+          cyl(0.13, 0.13, 0.03, M().steelDark, 0, 0.225, 0, 16),   // 상단 림
+          bar,
+        ];
+      }, 0, 1.8);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.11), textLabel('넉박스', 160, 52, '700 28px "Malgun Gothic"'));
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
@@ -951,17 +963,17 @@ const WORLD = (() => {
     function buildGrinder(id, x, z) {
       const st = station(id, '그라인더', x, z, 0.45, 0.5);
       const g = st.root;
-      g.add(cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16));      // 받침
-      g.add(box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0));            // 본체
-      g.add(box(0.16, 0.05, 0.18, M().steelDark, 0, 0.415, 0));           // 상단
-      const hopper = cyl(0.1, 0.07, 0.17, new THREE.MeshPhysicalMaterial({
-        color: 0x8a6a48, transparent: true, opacity: 0.55, roughness: 0.1
-      }), 0, 0.53, 0, 14);
-      g.add(hopper);
-      g.add(cyl(0.072, 0.05, 0.1, new THREE.MeshStandardMaterial({ color: 0x3e2814, roughness: 0.95 }), 0, 0.5, 0, 12)); // 호퍼 속 원두
-      g.add(cyl(0.11, 0.11, 0.02, M().blackMatte, 0, 0.625, 0, 14));      // 뚜껑
-      g.add(box(0.05, 0.06, 0.08, M().steelDark, 0, 0.3, 0.13));          // 배출구
-      g.add(box(0.12, 0.02, 0.1, M().steel, 0, 0.12, 0.13));              // 포터필터 받침
+      const vis = new THREE.Group(); g.add(vis);
+      decorVisual(vis, 'CoffeeGrinder', () => [
+        cyl(0.13, 0.15, 0.05, M().blackMatte, 0, 0.025, 0, 16),      // 받침
+        box(0.2, 0.34, 0.22, M().blackMatte, 0, 0.22, 0),            // 본체
+        box(0.16, 0.05, 0.18, M().steelDark, 0, 0.415, 0),          // 상단
+        cyl(0.1, 0.07, 0.17, new THREE.MeshPhysicalMaterial({ color: 0x8a6a48, transparent: true, opacity: 0.55, roughness: 0.1 }), 0, 0.53, 0, 14),   // 호퍼
+        cyl(0.072, 0.05, 0.1, new THREE.MeshStandardMaterial({ color: 0x3e2814, roughness: 0.95 }), 0, 0.5, 0, 12),   // 호퍼 속 원두
+        cyl(0.11, 0.11, 0.02, M().blackMatte, 0, 0.625, 0, 14),      // 뚜껑
+        box(0.05, 0.06, 0.08, M().steelDark, 0, 0.3, 0.13),          // 배출구
+        box(0.12, 0.02, 0.1, M().steel, 0, 0.12, 0.13),            // 포터필터 받침
+      ], 0, 1.0);
       const glbl = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.13), textLabel('그라인더', 192, 56, '700 30px "Malgun Gothic"'));
       glbl.position.set(0, 0.78, 0.18);
       g.add(glbl);
