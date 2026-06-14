@@ -22,6 +22,7 @@ const LatteArt = (() => {
   let crema;                        // 크레마 텍스처(정적, 시작 시 1회 생성)
 
   let px, py;                       // 피처(우유 줄기) 위치
+  let prevPx, prevPy;               // 직전 프레임 위치 — 리본을 잇는 데 사용
   let vx = 0, vy = 0;               // 부드럽게 보간한 이동 속도(px/프레임)
   let vol = 0;                      // 남은 우유 양(초)
   let elapsed = 0;
@@ -64,26 +65,27 @@ const LatteArt = (() => {
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-  // 우유 줄기가 표면에 닿으며 흰 거품을 흘리고, 기존 우유를 이동 방향으로 끌어당김(smear)
-  function deposit(dt) {
-    // 끌기(smear) — 우유 레이어를 이동 방향으로 살짝 옮겨 그려 "끌려드는" 자취를 만든다
-    const sx = clamp(vx * 0.5, -3.2, 3.2), sy = clamp(vy * 0.5, -3.2, 3.2);
-    if (Math.abs(sx) > 0.15 || Math.abs(sy) > 0.15) {
-      mctx.globalAlpha = 0.82;
-      mctx.drawImage(milk, sx, sy);
-      mctx.globalAlpha = 1;
+  // 우유 줄기가 표면에 닿으며 흰 거품 리본을 흘린다.
+  //   직전 피처 위치 → 현재 위치를 따라 부드러운 흰 원을 촘촘히 찍어 끊김 없는 리본을 만든다.
+  //   (우유 레이어를 자기 위에 합성하는 피드백 smear는 색 노이즈를 만들어 폐기 — 브러시로 깨끗하게.)
+  function deposit() {
+    const speed = Math.hypot(px - prevPx, py - prevPy);
+    const r = clamp(13 - speed * 0.22, 7, 14);     // 빠를수록 줄기가 가늘어짐
+    const dist = speed;
+    const steps = Math.max(1, Math.ceil(dist / 3));
+    for (let s = 1; s <= steps; s++) {
+      const tt = s / steps;
+      const x = prevPx + (px - prevPx) * tt;
+      const y = prevPy + (py - prevPy) * tt;
+      const g = mctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(248,242,229,0.85)');
+      g.addColorStop(0.7, 'rgba(246,239,224,0.5)');
+      g.addColorStop(1, 'rgba(246,239,224,0)');
+      mctx.fillStyle = g;
+      mctx.beginPath();
+      mctx.arc(x, y, r, 0, Math.PI * 2);
+      mctx.fill();
     }
-    // 흰 우유 거품 떨굼 — 부드러운 원
-    const speed = Math.hypot(vx, vy);
-    const r = clamp(15 - speed * 0.5, 8, 16);     // 빠를수록 줄기가 가늘어짐
-    const g = mctx.createRadialGradient(px, py, 0, px, py, r);
-    g.addColorStop(0, 'rgba(247,241,227,0.96)');
-    g.addColorStop(0.65, 'rgba(245,238,222,0.82)');
-    g.addColorStop(1, 'rgba(245,238,222,0)');
-    mctx.fillStyle = g;
-    mctx.beginPath();
-    mctx.arc(px, py, r, 0, Math.PI * 2);
-    mctx.fill();
   }
 
   function render() {
@@ -194,6 +196,7 @@ const LatteArt = (() => {
     if (!crema) buildCrema();
     mctx.clearRect(0, 0, SIZE, SIZE);
     px = CX; py = CY + R * 0.45;          // 컵 아래쪽에서 시작(앞에서 뒤로 흔들며 빼기)
+    prevPx = px; prevPy = py;
     vx = vy = 0; vol = ART_VOL; elapsed = 0; idleT = 0; pouredOnce = false;
     osc = 0; lastSign = 0; runDist = 0; pourPath = 0;
     pouring = false;
@@ -215,11 +218,12 @@ const LatteArt = (() => {
     if (pouring) {
       pouredOnce = true; idleT = 0;
       vol = Math.max(0, vol - dt);
-      deposit(dt);
+      deposit();
       if (Math.random() < dt * 6) AudioFX.pourWater(0.25);
     } else if (pouredOnce) {
       idleT += dt;               // 붓다가 손을 떼고 가만히 있으면 곧 마감
     }
+    prevPx = px; prevPy = py;    // 다음 프레임 리본의 시작점
     // 속도 감쇠(마우스가 멈추면 줄기도 가늘어짐)
     vx *= 0.85; vy *= 0.85;
     render();
