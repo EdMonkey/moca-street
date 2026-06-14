@@ -888,13 +888,12 @@ const Game = (() => {
     const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
       : (fill >= TAMP_MIN) ? 'good' : 'weak';
     if (result === 'weak') {
-      AudioFX.err(); Player.punch(0.3);
+      AudioFX.err();
       toast('약하게 눌렀어요 — 다시 꾹 눌러 다지세요', 'bad', 1500);
       endTampGame();
     } else {
       pressTamper();
       AudioFX.tampDone();
-      Player.punch(result === 'perfect' ? 1.0 : 0.6);
       if (result === 'perfect') AudioFX.tampPerfectSfx();
       finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', result === 'perfect' ? 'gold' : 'good');
     }
