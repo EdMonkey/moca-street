@@ -29,9 +29,10 @@ const Game = (() => {
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
   let steamGame = null;           // 스팀 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
+  let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
 
-  function freshState() {
-    return {
+  function freshState(starter = true) {
+    const base = {
       money: 20000, day: 1, rep: 50, level: 1, xp: 0,
       stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
       storage: { beans: 0, milk: 0, cups: 0, dessert: 0 },
@@ -40,6 +41,7 @@ const Game = (() => {
       upgrades: {},
       equip: {},          // 구매한 추가 장비 개수 { grinder, espresso, steamer }
     };
+    return starter ? Logistics.initialState(base) : Logistics.ensureState(base);
   }
   function freshDayStats() {
     return { revenue: 0, tips: 0, served: 0, angry: 0, spent: 0 };
@@ -76,10 +78,16 @@ const Game = (() => {
     env.syncDeliveryBoxes(S.deliveryBoxes.filter(b => b.id !== hiddenId));
   }
 
+  function renderStorageBoxes() {
+    if (env && env.syncStorageBoxes) env.syncStorageBoxes(S.storage || {});
+  }
+
   function renderDeliveryOrders() {
     const list = $('deliveryOrderList');
     if (!list) return;
     Logistics.ensureState(S);
+    const money = $('deliveryMoney');
+    if (money) money.innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
     list.innerHTML = '';
     Logistics.KINDS.forEach(kind => {
       const r = RESTOCK[kind];
@@ -132,6 +140,7 @@ const Game = (() => {
     if (!res.ok) { toast('이미 입고된 박스예요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
     setHeld(null);
     renderDeliveryBoxes();
+    renderStorageBoxes();
     UI.hud();
     save();
     toast(`${supplyNames[kind]} 창고 입고 +${res.box.amount}`, 'good');
@@ -147,6 +156,7 @@ const Game = (() => {
       return;
     }
     setHeld({ type: 'supply', kind });
+    renderStorageBoxes();
     UI.hud();
     AudioFX.pick();
   }
@@ -157,6 +167,7 @@ const Game = (() => {
     const res = Logistics.putSupplyToStation(S, kind);
     if (!res.ok) { toast(`${supplyNames[kind]} 사용처 재고가 가득 찼어요`, 'bad'); AudioFX.err(); return true; }
     setHeld(null);
+    renderStorageBoxes();
     UI.hud();
     save();
     AudioFX.put();
@@ -169,11 +180,13 @@ const Game = (() => {
     if (held.type === 'supply') {
       S.storage[held.kind] = (S.storage[held.kind] || 0) + 1;
       setHeld(null);
+      renderStorageBoxes();
       UI.hud();
       if (notify) { save(); toast('창고에 되돌렸어요'); }
       return true;
     }
     setHeld(null);
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     renderDeliveryBoxes();
     if (notify) toast('택배박스를 문앞에 내려놓았어요');
     return true;
@@ -310,6 +323,46 @@ const Game = (() => {
 
   function placeBlocked(point) {
     return placedItems.some(p => p.mesh.position.distanceTo(point) < 0.2);
+  }
+
+  function deliveryPlacePreview() {
+    if (!held || held.type !== 'deliveryBox') {
+      if (env && env.setDeliveryPreview) env.setDeliveryPreview(null);
+      return null;
+    }
+    const pt = Player.aimGround && Player.aimGround();
+    if (!pt) {
+      if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+      return null;
+    }
+    const ok = !env.canPlaceDeliveryBox || env.canPlaceDeliveryBox(pt, held.id);
+    const spec = { x: pt.x, z: pt.z, rot: deliveryPlaceRot, kind: held.kind, ok };
+    if (env.setDeliveryPreview) env.setDeliveryPreview(spec);
+    return spec;
+  }
+
+  function moveHeldDeliveryBox() {
+    if (!held || held.type !== 'deliveryBox') return false;
+    const spec = deliveryPlacePreview();
+    if (!spec) { toast('바닥을 바라보면 박스를 내려놓을 수 있어요'); return true; }
+    if (!spec.ok) { toast('여기엔 박스를 놓을 공간이 없어요', 'bad'); AudioFX.err(); return true; }
+    const res = Logistics.moveDeliveryBox(S, held.id, spec);
+    if (!res.ok) { toast('박스 위치를 찾지 못했어요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
+    setHeld(null);
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+    renderDeliveryBoxes();
+    save();
+    AudioFX.put();
+    toast(`${supplyNames[res.box.kind]} 박스를 내려놓았어요`, 'good');
+    return true;
+  }
+
+  function rotateDeliveryBoxPreview() {
+    if (!held || held.type !== 'deliveryBox') return false;
+    deliveryPlaceRot = (deliveryPlaceRot + Math.PI / 2) % (Math.PI * 2);
+    held.rot = deliveryPlaceRot;
+    deliveryPlacePreview();
+    return true;
   }
 
   function placeItem(point) {
@@ -518,7 +571,8 @@ const Game = (() => {
       if (held) { toast('손이 비어있어야 택배박스를 들 수 있어요'); return; }
       const box = S.deliveryBoxes.find(b => b.id === it.boxId);
       if (!box) { renderDeliveryBoxes(); return; }
-      setHeld({ type: 'deliveryBox', id: box.id, kind: box.kind, amount: box.amount });
+      deliveryPlaceRot = typeof box.rot === 'number' ? box.rot : 0;
+      setHeld({ type: 'deliveryBox', id: box.id, kind: box.kind, amount: box.amount, rot: deliveryPlaceRot });
       renderDeliveryBoxes();
       AudioFX.pick();
       return;
@@ -1277,6 +1331,7 @@ const Game = (() => {
     clearPlacedItems();
     Effects.clear();
     env.placeIndicator.visible = false;
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
@@ -1318,6 +1373,7 @@ const Game = (() => {
       if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
     }
     renderDeliveryBoxes();
+    renderStorageBoxes();
     UI.hud(); UI.clock();
     if (arrivals.length) { save(); toast(`문앞에 택배 ${arrivals.length}개 도착 — 창고에 입고하세요`, 'gold', 4500); }
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
@@ -1615,7 +1671,7 @@ const Game = (() => {
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
-      if (d && d.money !== undefined) { S = Object.assign(freshState(), d); Logistics.ensureState(S); return true; }
+      if (d && d.money !== undefined) { S = Object.assign(freshState(false), d); Logistics.ensureState(S); return true; }
     } catch (e) { /* 손상된 저장 무시 */ }
     return false;
   }
@@ -1692,9 +1748,14 @@ const Game = (() => {
     const aimData = Player.aim();
     const targetKind = aimData && stationTargets[aimData.id];
     const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
+    const dprev = usable ? null : deliveryPlacePreview();
+    if (usable && env.setDeliveryPreview) env.setDeliveryPreview(null);
     updateAimHighlight(usable ? Player.aimedObject : null);
     if (usable) {
       pr.innerHTML = UI.prompt(aimData);
+      pr.classList.remove('hidden'); $('crosshair').classList.add('active');
+    } else if (dprev) {
+      pr.innerHTML = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
       pr.classList.add('hidden'); $('crosshair').classList.remove('active');
@@ -1718,7 +1779,10 @@ const Game = (() => {
 
   function update(dt) {
     if (mode === 'prep' || mode === 'after') { updatePrep(); $('freshness').classList.add('hidden'); return; }
-    if (mode !== 'playing' && mode !== 'closing') { updateAimHighlight(null); $('freshness').classList.add('hidden'); return; }
+    if (mode !== 'playing' && mode !== 'closing') {
+      if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+      updateAimHighlight(null); $('freshness').classList.add('hidden'); return;
+    }
 
     // 시간
     if (mode === 'playing') {
@@ -1781,7 +1845,11 @@ const Game = (() => {
     let p = UI.prompt(aimData);
     if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
-    if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
+    const dprev = !aimData ? deliveryPlacePreview() : null;
+    if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
+    if (dprev) {
+      p = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
+    } else if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
       const pt = Player.aimSurface();
       if (pt) {
         if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
@@ -1832,6 +1900,7 @@ const Game = (() => {
       const aimData = Player.aim();
       if (aimData) { interact(aimData); return; }
       if (held) {
+        if (moveHeldDeliveryBox()) return;
         const pt = Player.aimSurface();
         if (pt && !placeBlocked(pt)) placeItem(pt);
       }
@@ -1859,12 +1928,14 @@ const Game = (() => {
         else if (mode === 'prep' && ev.code === 'KeyO') beginOpen();        // 영업 시작
         else if (mode === 'prep' && ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
         else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); }
+        else if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
         else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
         return;
       }
       // 영업 중 조작
       if (ev.code === 'KeyE') { useDown = true; onUse(); }
       if (ev.code === 'KeyQ') dropOrReturnHeld();
+      if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT') Tutorial.cancel();
     });

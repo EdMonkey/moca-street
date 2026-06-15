@@ -37,6 +37,23 @@ function freshState() {
   };
 }
 
+function testInitialDeliveryStateHasFirstDayBeansOnlyAtDoorRight() {
+  const S = Logistics.initialState({
+    money: 20000,
+    day: 1,
+    stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
+    storage: { beans: 0, milk: 0, cups: 0, dessert: 0 },
+  });
+
+  assert.deepStrictEqual(plain(S.storage), { beans: 0, milk: 0, cups: 0, dessert: 0 });
+  assert.strictEqual(S.deliveryBoxes.length, 1);
+  assert.strictEqual(S.deliveryBoxes[0].kind, 'beans');
+  assert.strictEqual(S.deliveryBoxes[0].amount, DATA.RESTOCK.beans.amount);
+  assert.strictEqual(S.deliveryBoxes[0].x, Logistics.DOOR_RIGHT_SPOT.x);
+  assert.strictEqual(S.deliveryBoxes[0].z, Logistics.DOOR_RIGHT_SPOT.z);
+  assert.strictEqual(S.deliveryBoxes[0].rot, Logistics.DOOR_RIGHT_SPOT.rot);
+}
+
 function testEnsureState() {
   const S = freshState();
   Logistics.ensureState(S);
@@ -59,6 +76,11 @@ function testScheduledDeliveriesMergeByKindOnArrival() {
     plain(S.deliveryBoxes.map(b => [b.kind, b.amount]).sort()),
     [['beans', DATA.RESTOCK.beans.amount * 3], ['milk', DATA.RESTOCK.milk.amount]]
   );
+  S.deliveryBoxes.forEach(b => {
+    assert.strictEqual(typeof b.x, 'number');
+    assert.strictEqual(typeof b.z, 'number');
+    assert.strictEqual(typeof b.rot, 'number');
+  });
   assert.deepStrictEqual(plain(S.pendingDeliveries), []);
 }
 
@@ -93,9 +115,24 @@ function testSingleUnitTransferFromStorageToStation() {
   assert.strictEqual(full.reason, 'full');
 }
 
+function testMoveDeliveryBoxStoresPositionAndQuarterTurns() {
+  const S = freshState();
+  Logistics.ensureState(S);
+  const box = Logistics.addDeliveryBox(S, 'milk', DATA.RESTOCK.milk.amount, 'scheduled');
+
+  const moved = Logistics.moveDeliveryBox(S, box.id, { x: 4.2, z: 8.8, rot: Math.PI / 2 });
+
+  assert.strictEqual(moved.ok, true);
+  assert.strictEqual(box.x, 4.2);
+  assert.strictEqual(box.z, 8.8);
+  assert.strictEqual(box.rot, Math.PI / 2);
+}
+
+testInitialDeliveryStateHasFirstDayBeansOnlyAtDoorRight();
 testEnsureState();
 testScheduledDeliveriesMergeByKindOnArrival();
 testStoreDeliveryBoxMovesToStorage();
 testSingleUnitTransferFromStorageToStation();
+testMoveDeliveryBoxStoresPositionAndQuarterTurns();
 
 console.log('logistics tests passed');

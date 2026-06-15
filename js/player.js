@@ -134,6 +134,15 @@ const Player = (() => {
     return null;
   }
 
+  /* 조준 중인 바닥 지점 (택배박스 배치용, 없으면 null) */
+  function aimGround() {
+    ray.setFromCamera({ x: 0, y: 0 }, camera);
+    if (Math.abs(ray.ray.direction.y) < 0.01) return null;
+    const t = -ray.ray.origin.y / ray.ray.direction.y;
+    if (t < 0 || t > ray.far) return null;
+    return ray.ray.origin.clone().add(ray.ray.direction.clone().multiplyScalar(t));
+  }
+
   /* 손에 든 메시 교체. animate=true면 물건이 있던 위치(조준 대상)에서 손으로 끌려오는 연출 */
   function setHeld(mesh, animate) {
     if (heldMesh) handGroup.remove(heldMesh);
@@ -162,7 +171,7 @@ const Player = (() => {
   }
 
   return {
-    init, update, aim, aimSurface, setHeld, reset, punch, heldWorldPos,
+    init, update, aim, aimSurface, aimGround, setHeld, reset, punch, heldWorldPos,
     setLook(on) { look = on; },
     get aimedObject() { return lastAimHit; },
     get position() { return pos; },

@@ -312,6 +312,8 @@ const WORLD = (() => {
     return g;
   }
 
+  const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
+
   /* ============================================================
    * 월드 빌드
    * ============================================================ */
@@ -321,7 +323,8 @@ const WORLD = (() => {
       surfaces: [],            // 아이템을 내려놓을 수 있는 표면(카운터·테이블·선반)
       stations: [],            // 편집 모드로 이동 가능한 기구들
       staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
-      machines: {}, steamEmitters: [], deliveryViews: [],
+      machines: {}, steamEmitters: [], deliveryViews: [], storageViews: {},
+      deliveryPreview: null, DOOR_RIGHT_SPOT,
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
       doorPos: new THREE.Vector3(5.5, 0, 8),
@@ -1015,11 +1018,32 @@ const WORLD = (() => {
       const kinds = [['beans', -4.32], ['milk', -3.22], ['cups', -2.12], ['dessert', -1.02]];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
       kinds.forEach(([k, cz]) => {
-        // 재고 박스(보급) — 랙 아래(0.65)·중간(1.2) 선반 중앙에 적재. 박스 원점=베이스, 라벨이 +X(작업영역) 향함
-        const bm = makeBoxMesh(k);  bm.position.set(Cx, 0.65, cz);  bm.rotation.y = Math.PI / 2; scene.add(bm);
-        const bm2 = makeBoxMesh(k); bm2.position.set(Cx, 1.20, cz); bm2.rotation.y = Math.PI / 2; bm2.scale.setScalar(0.9); scene.add(bm2);
-        addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k })).userData.outlineMeshes = [bm, bm2];
+        const hb = addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k }));
+        env.storageViews[k] = { cz, hitbox: hb, meshes: [] };
       });
+      env.syncStorageBoxes = function (storage) {
+        Object.keys(env.storageViews).forEach(k => {
+          const v = env.storageViews[k];
+          v.meshes.forEach(m => scene.remove(m));
+          v.meshes = [];
+          const amount = storage && Number(storage[k]) || 0;
+          if (amount <= 0) { v.hitbox.userData.outlineMeshes = null; return; }
+          const bm = makeBoxMesh(k);
+          bm.position.set(Cx, 0.65, v.cz);
+          bm.rotation.y = Math.PI / 2;
+          scene.add(bm);
+          v.meshes.push(bm);
+          if (amount > 1) {
+            const bm2 = makeBoxMesh(k);
+            bm2.position.set(Cx, 1.20, v.cz);
+            bm2.rotation.y = Math.PI / 2;
+            bm2.scale.setScalar(0.9);
+            scene.add(bm2);
+            v.meshes.push(bm2);
+          }
+          v.hitbox.userData.outlineMeshes = v.meshes;
+        });
+      };
       // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
       if (window.Assets && window.Assets.ready) {
         window.Assets.ready.then(() => {
@@ -1102,18 +1126,71 @@ const WORLD = (() => {
     };
     env.syncDeliveryBoxes = function (boxes) {
       env.clearDeliveryBoxes();
-      const spots = [[5.05, 9.35], [5.95, 9.35], [5.05, 10.05], [5.95, 10.05]];
+      const spots = [
+        DOOR_RIGHT_SPOT,
+        { x: 7.05, z: 9.95, rot: Math.PI / 2 },
+        { x: 7.65, z: 9.35, rot: Math.PI / 2 },
+        { x: 7.65, z: 9.95, rot: Math.PI / 2 },
+      ];
       boxes.slice(0, spots.length).forEach((b, i) => {
-        const [x, z] = spots[i];
+        const spot = spots[i];
+        const x = typeof b.x === 'number' ? b.x : spot.x;
+        const z = typeof b.z === 'number' ? b.z : spot.z;
+        const rot = typeof b.rot === 'number' ? b.rot : spot.rot;
         const mesh = makeBoxMesh(b.kind);
         mesh.position.set(x, 0, z);
+        mesh.rotation.y = rot;
         mesh.scale.setScalar(1.25);
         scene.add(mesh);
         const hb = hitbox(0.68, 0.52, 0.55, x, 0.28, z, { id: 'deliveryBox', boxId: b.id });
+        hb.rotation.y = rot;
         hb.userData.outlineRoot = mesh;
         addI(hb);
         env.deliveryViews.push({ id: b.id, mesh, hitbox: hb });
       });
+    };
+    env.canPlaceDeliveryBox = function (point, ignoreId = null) {
+      if (!point) return false;
+      const x = point.x, z = point.z;
+      if (x < ROOM.x0 + 0.45 || x > ROOM.x1 - 0.45 || z < ROOM.z0 + 0.45 || z > 18.2) return false;
+      const pad = 0.24;
+      for (const c of env.colliders) {
+        if (x > c.x0 - pad && x < c.x1 + pad && z > c.z0 - pad && z < c.z1 + pad) return false;
+      }
+      for (const v of env.deliveryViews) {
+        if (v.id === ignoreId) continue;
+        if (Math.hypot(v.mesh.position.x - x, v.mesh.position.z - z) < 0.72) return false;
+      }
+      return true;
+    };
+    env.setDeliveryPreview = function (spec) {
+      if (!env.deliveryPreview) {
+        const g = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0x7fb069, transparent: true, opacity: 0.26, depthWrite: false,
+        });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.42, 0.55), mat);
+        body.position.y = 0.21;
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(0.7, 0.44, 0.57)),
+          new THREE.LineBasicMaterial({ color: 0x9fdc8a, transparent: true, opacity: 0.95, depthTest: false })
+        );
+        edges.position.y = 0.22;
+        g.add(body, edges);
+        g.visible = false;
+        g.renderOrder = 8;
+        scene.add(g);
+        env.deliveryPreview = { root: g, body, edges, mat, lineMat: edges.material };
+      }
+      const p = env.deliveryPreview;
+      if (!spec) { p.root.visible = false; return; }
+      const ok = !!spec.ok;
+      p.root.position.set(spec.x, 0.02, spec.z);
+      p.root.rotation.y = spec.rot || 0;
+      p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
+      p.lineMat.color.setHex(ok ? 0x9fdc8a : 0xff9a94);
+      p.body.material.opacity = ok ? 0.26 : 0.18;
+      p.root.visible = true;
     };
 
     /* ---------- 장식 ---------- */

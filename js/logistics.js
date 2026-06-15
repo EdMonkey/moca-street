@@ -5,6 +5,13 @@ const Logistics = (() => {
   const { RESTOCK } = DATA;
   const KINDS = Object.keys(RESTOCK);
   const CAPACITY = { beans: 30, milk: 20, cups: 40, dessert: 12 };
+  const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
+  const DOOR_SPOTS = [
+    DOOR_RIGHT_SPOT,
+    { x: 7.05, z: 9.55, rot: Math.PI / 2 },
+    { x: 7.65, z: 9.35, rot: Math.PI / 2 },
+    { x: 7.65, z: 9.55, rot: Math.PI / 2 },
+  ];
   let seq = 1;
 
   function emptyBag() {
@@ -22,6 +29,19 @@ const Logistics = (() => {
     S.stocks = normalizeBag(S.stocks);
     S.pendingDeliveries = Array.isArray(S.pendingDeliveries) ? S.pendingDeliveries : [];
     S.deliveryBoxes = Array.isArray(S.deliveryBoxes) ? S.deliveryBoxes : [];
+    S.deliveryBoxes.forEach((b, i) => {
+      const spot = DOOR_SPOTS[i % DOOR_SPOTS.length];
+      if (typeof b.x !== 'number') b.x = spot.x;
+      if (typeof b.z !== 'number') b.z = spot.z;
+      if (typeof b.rot !== 'number') b.rot = spot.rot;
+    });
+    return S;
+  }
+
+  function initialState(base) {
+    const S = ensureState(base || {});
+    S.deliveryBoxes = [];
+    addDeliveryBox(S, 'beans', RESTOCK.beans.amount, 'starter');
     return S;
   }
 
@@ -43,9 +63,20 @@ const Logistics = (() => {
       prev.source = prev.source === source ? source : 'mixed';
       return prev;
     }
-    const box = { id: boxId(kind), kind, amount, source };
+    const spot = DOOR_SPOTS[S.deliveryBoxes.length % DOOR_SPOTS.length];
+    const box = { id: boxId(kind), kind, amount, source, x: spot.x, z: spot.z, rot: spot.rot };
     S.deliveryBoxes.push(box);
     return box;
+  }
+
+  function moveDeliveryBox(S, id, pose) {
+    ensureState(S);
+    const box = S.deliveryBoxes.find(b => b.id === id);
+    if (!box) return { ok: false, reason: 'missing' };
+    box.x = Number(pose.x);
+    box.z = Number(pose.z);
+    box.rot = Number(pose.rot) || 0;
+    return { ok: true, box };
   }
 
   function scheduleDelivery(S, kind, count = 1, day = S.day) {
@@ -88,8 +119,8 @@ const Logistics = (() => {
   }
 
   return {
-    KINDS, CAPACITY,
+    KINDS, CAPACITY, DOOR_RIGHT_SPOT,
     ensureState, deliveryPrice, scheduleDelivery, collectArrivals,
-    addDeliveryBox, storeDeliveryBox, takeSupply, putSupplyToStation,
+    initialState, addDeliveryBox, moveDeliveryBox, storeDeliveryBox, takeSupply, putSupplyToStation,
   };
 })();
