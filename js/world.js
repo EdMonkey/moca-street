@@ -44,6 +44,27 @@ const WORLD = (() => {
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
     return new THREE.MeshStandardMaterial({ map: t, roughness: 0.8 });
   }
+  // 그라인더 분쇄도 다이얼 면 — 숫자 1~7 + 눈금(4가 위, 좌우로 270° 스윕). 실제 그라인더 다이얼 룩.
+  function grindDialTex() {
+    const [c, x] = TEX.canvas(256, 256), cx = 128, cy = 128;
+    x.fillStyle = '#ece7df'; x.beginPath(); x.arc(cx, cy, 122, 0, 7); x.fill();   // 밝은 다이얼 면
+    // (이상 구간 초록 표시는 제거 — 눈금·숫자만 보고 직접 맞춤)
+    x.strokeStyle = '#2a2520'; x.fillStyle = '#2a2520';
+    x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = '800 34px Arial';
+    for (let n = 1; n <= 7; n++) {
+      const th = (4 - n) * Math.PI / 4, dx = Math.sin(th), dy = -Math.cos(th);   // 4=위, n↑ 일수록 반시계
+      x.lineWidth = 5; x.beginPath();
+      x.moveTo(cx + dx * 116, cy + dy * 116); x.lineTo(cx + dx * 100, cy + dy * 100); x.stroke();   // 큰 눈금
+      x.fillText(String(n), cx + dx * 80, cy + dy * 80);                                            // 숫자
+      if (n < 7) for (let k = 1; k <= 4; k++) {                                                     // 작은 눈금 4개
+        const tk = th - (k / 5) * (Math.PI / 4), kx = Math.sin(tk), ky = -Math.cos(tk);
+        x.lineWidth = 2; x.beginPath();
+        x.moveTo(cx + kx * 116, cy + ky * 116); x.lineTo(cx + kx * 108, cy + ky * 108); x.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.MeshBasicMaterial({ map: t, transparent: true });   // 조명 무관 — 항상 또렷
+  }
 
   /* ============================================================
    * 음료 / 디저트 / 보급상자 메시 팩토리
@@ -1235,10 +1256,17 @@ const WORLD = (() => {
       pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
       // 분쇄도 다이얼(노브+눈금) — 본체 좌측 전면. 포터필터 소지와 무관하게 [E]로 조정, 머신에 설정 저장
-      const dialBase = cyl(0.032, 0.032, 0.018, M().steelDark, -0.07, 0.27, 0.11, 16); dialBase.rotation.x = Math.PI / 2;
-      const dialMark = box(0.006, 0.024, 0.008, M().cupWhite, -0.07, 0.27, 0.122, { cast: false });
-      dialMark.rotation.z = -0.9 + 0.5 * 1.8;   // 기본 분쇄도 0.5 위치
-      g.add(dialBase, dialMark);
+      const dcx = -0.07, dcy = 0.27, dz = 0.115, dialR = 0.052;
+      const dRing = new THREE.Mesh(new THREE.RingGeometry(dialR, dialR * 1.2, 44),
+        new THREE.MeshStandardMaterial({ color: 0x17130f, roughness: 0.6 }));
+      dRing.position.set(dcx, dcy, dz);                                   // 어두운 외곽 림
+      const dFace = new THREE.Mesh(new THREE.CircleGeometry(dialR, 44), grindDialTex());
+      dFace.position.set(dcx, dcy, dz + 0.002);                          // 숫자 눈금 면(1~7)
+      const dKnob = cyl(dialR * 0.4, dialR * 0.44, 0.024, M().blackMatte, dcx, dcy, dz + 0.012, 18); dKnob.rotation.x = Math.PI / 2;   // 중앙 노브
+      const dSlot = box(dialR * 0.55, 0.004, 0.006, M().steel, dcx, dcy, dz + 0.026, { cast: false });                                // 노브 슬롯(금속)
+      const dialMark = new THREE.Group(); dialMark.position.set(dcx, dcy, dz + 0.02);   // 회전 바늘(현재 분쇄도 지시), 기본 0.5=위(숫자 4)
+      dialMark.add(box(0.006, 0.044, 0.005, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5 }), 0, 0.02, 0, { cast: false }));
+      g.add(dRing, dFace, dKnob, dSlot, dialMark);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
@@ -1543,8 +1571,8 @@ const WORLD = (() => {
     return env;
   }
 
-  // 분쇄도 다이얼 눈금 회전 (frac 0 가늚 ~ 1 굵음 → ±0.9rad 스윕)
-  function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = -0.9 + frac * 1.8; }
+  // 분쇄도 바늘 회전 (frac 0 가늚=숫자1 ~ 1 굵음=숫자7, 0.5=숫자4 위). ±135° 스윕
+  function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = (6 * frac - 3) * (Math.PI / 4); }
 
   return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makeSupplyMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
 })();

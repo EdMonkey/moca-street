@@ -458,7 +458,7 @@ const Game = (() => {
   // 슬롯/표면에서 손으로 되돌릴 때: 샷잔(cup:'shot')은 도구 타입으로, 일반 컵은 음료로 환원
   function vesselToHand(drink) {
     return drink.cup === 'shot'
-      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect, grindPerfect: !!drink.grindPerfect, freshAt: drink.freshAt }
+      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect, grindPerfect: !!drink.grindPerfect, grindQ: drink.grindQ, freshAt: drink.freshAt }
       : { type: 'drink', drink };   // 일반 컵은 같은 객체 → freshAt 자동 유지
   }
   // 내려놓은 음료 컵의 메시를 현재 내용물로 다시 그림 (샷을 부은 뒤 색/크레마 갱신)
@@ -500,7 +500,7 @@ const Game = (() => {
     if (held.type === 'shotglass') {
       if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
       if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect;
+      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
       carryFresh(drink, held);   // 샷잔이 오래됐으면 컵도 그만큼 상함
       refresh();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
@@ -852,6 +852,7 @@ const Game = (() => {
       const grind = (slot.grind == null) ? (GRIND_IDEAL_MIN + GRIND_IDEAL_MAX) / 2 : slot.grind;
       const idealGrind = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
       slot.grindPerfect = idealGrind && slot.grind != null;
+      slot.grindQ = grindQuality(grind);   // 빗나간 정도(1 이상 ~ 0 최악) — 만족도 비례 감점용
       // 물총(채널링): 탬핑이 완벽하지 않으면 퍽이 고르지 않아 줄기가 비스듬히 튄다(분쇄도와 무관)
       slot.extractMode = !slot.tampPerfect ? 'channel'
         : idealGrind ? 'ideal' : (grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse');
@@ -908,6 +909,7 @@ const Game = (() => {
           addStep(job.drink, 'espresso');
           job.drink.perfect = !!held.perfect;
           job.drink.grindPerfect = !!held.grindPerfect;
+          job.drink.grindQ = held.grindQ;
           swapJobCup(job);                                   // 컵 메시 갱신(크레마 표시)
           setHeld({ type: 'shotglass', filled: false, perfect: false });
           AudioFX.pourWater(0.5);
@@ -1068,6 +1070,13 @@ const Game = (() => {
     AudioFX.err();
   }
 
+  // 분쇄도 품질: 이상 구간이면 1, 멀어질수록 0으로 (만족도 비례 감점)
+  function grindQuality(grind) {
+    if (grind == null) return 1;
+    if (grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX) return 1;
+    const d = grind < GRIND_IDEAL_MIN ? GRIND_IDEAL_MIN - grind : grind - GRIND_IDEAL_MAX;
+    return Math.max(0, 1 - d / 0.40);   // 이상에서 0.40 이상 벗어나면 0
+  }
   function completeOrder(o, servedDrink) {
     const c = o.customer;
     const frac = Math.max(0, c.patience / c.patienceMax);
@@ -1098,7 +1107,8 @@ const Game = (() => {
     let extractQ = 1;
     if (servedDrink && servedDrink.espresso) {
       if (!perfect) extractQ -= 0.2;        // 물총(채널링) — 고르지 않은 추출
-      if (!grindPerfect) extractQ -= 0.15;  // 과/부족 추출 (분쇄도 빗나감)
+      const grindQ = servedDrink.grindQ == null ? 1 : servedDrink.grindQ;
+      extractQ -= (1 - grindQ) * 0.4;       // 분쇄도 빗나간 정도에 비례 (이상=0, 최악=−0.4)
     }
     if (extractQ < 1) tip = Math.round(tip * extractQ / 100) * 100;
     // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
@@ -1229,6 +1239,7 @@ const Game = (() => {
         addStep(slot.drink, 'espresso');
         slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
         slot.drink.grindPerfect = !!slot.grindPerfect;   // 이상 분쇄도 → 추출 품질 보너스
+        slot.drink.grindQ = slot.grindQ;                 // 빗나간 정도 인계(만족도 비례 감점)
         // 추출 완료 — 포터필터는 사용한 가루(used) 상태가 됨
         slot.pfState = 'used';
         WORLD.setPortafilterState(slot.pf, 'used');
@@ -1255,18 +1266,22 @@ const Game = (() => {
           s.position.x = bx - ang * 0.06 + Math.sin(slot.t * 63) * 0.01;             // 추출구(상단) 고정하듯 보정 + 떨림
           s.position.y = 0.115 + Math.sin(slot.t * 44) * 0.008;
         } else if (mode === 'coarse') {
-          // 빠른 추출: 곧게 떨어지되 조금 굵고 빠르게 출렁이는 줄기(부족 추출)
+          // 세찬 분출: 압력으로 굵고 빠르게 뿜어져 나옴 — 좌우로 흔들리며 출렁(부족 추출)
           s.visible = true;
-          s.rotation.set(0, 0, 0); s.position.x = bx;
-          s.scale.set(1.25, 1.1 + Math.sin(slot.t * 38) * 0.14, 1.25);
-          s.position.y = 0.115 + Math.sin(slot.t * 34) * 0.006;
+          s.rotation.z = Math.sin(slot.t * 72) * 0.13;                       // 세찬 분출로 좌우로 휨
+          s.rotation.x = Math.sin(slot.t * 84) * 0.09;
+          s.position.x = bx + Math.sin(slot.t * 95) * 0.007;                 // 빠른 떨림
+          s.scale.set(1.7, 1.35 + Math.sin(slot.t * 58) * 0.25, 1.7);        // 더 굵고 길게, 빠르게 출렁
+          s.position.y = 0.12 + Math.sin(slot.t * 52) * 0.01;
         } else if (mode === 'fine') {
-          // 뚝뚝: 가는 줄기가 주기적으로 끊기며 방울이 떨어짐(과다 추출)
-          const phase = (slot.t * 2.4) % 1;
-          s.visible = phase < 0.42;
+          // 뚝뚝: 작은 물방울이 추출구에서 컵으로 똑…똑 떨어짐(과다 추출)
+          const period = 0.5;                            // 방울 간격(초)
+          const ph = (slot.t % period) / period;
+          s.visible = ph < 0.72;                         // 낙하 후 잠깐 끊김(뚝…뚝)
+          const fall = Math.min(1, ph / 0.72);
           s.rotation.set(0, 0, 0); s.position.x = bx;
-          s.scale.set(0.55, 0.5 + phase * 0.5, 0.55);
-          s.position.y = 0.13 - phase * 0.05;
+          s.scale.set(0.5 + fall * 0.12, 0.34, 0.5 + fall * 0.12);   // 짧고 둥근 방울 (떨어지며 살짝 커짐)
+          s.position.y = 0.142 - fall * 0.092;           // 추출구 → 컵 바닥으로 낙하
         } else {
           // 이상: 꾸준한 줄기 (압력 느낌의 미세한 흔들림)
           s.visible = true;
@@ -1530,45 +1545,74 @@ const Game = (() => {
     return true;
   }
 
-  /* ===== 분쇄도 다이얼 — 그라인더에서 [E]로 분쇄도를 조정(머신에 저장) =====
-   * 포터필터 소지와 무관하게 조정 가능. [E]를 꾹 누르면 게이지가 차오르고(아래=가늚, 위=굵음),
-   * 떼는 위치가 분쇄도 설정이 된다. 이후 빈 포터필터를 들고 [E]로 그 설정대로 분쇄한다. */
+  /* ===== 분쇄도 다이얼 — 그라인더에서 [E] 누른 채 마우스로 다이얼을 직접 돌려 맞춘다 =====
+   * 게이지가 아니라 실제 다이얼 회전. [E]를 누르면 시점이 잠기고 마우스 좌우로 바늘(1~7)을 돌림.
+   * 초록(이상, 숫자 4 부근)에 맞추면 완벽 추출. [E]에서 손을 떼면 그 분쇄도로 확정(머신에 저장). */
   function startGrindGame(job) {
-    grindGame = { fill: 0, locked: null, job };
-    gaugeBottomUp(GRIND_IDEAL_MIN, GRIND_IDEAL_MAX - GRIND_IDEAL_MIN, 'linear-gradient(0deg,#3a241a,#8a5636)');
-    setGaugeText('⚙️ 분쇄도 조정 — <b>[E]</b>를 누르고 있어 굵게',
-      '초록(이상)에서 떼면 완벽 추출 · 가늘면 뚝뚝(과다), 굵으면 분사(부족)');
-    clearHitFx();
-    $('tampGame').classList.remove('hidden');
+    grindGame = { job, set: job.grindSetting };
+    Player.setLook(false);                                  // 시점 잠금 — 마우스를 다이얼 회전에 양보
+    if (job.dialMark) WORLD.setGrinderDial(job.dialMark, grindGame.set);
+    buildGrindTicks();                                      // 눈금·숫자 1회 생성
+    $('grindDial').classList.remove('hidden');              // 중앙 다이얼 비주얼 표시
+    updateGrindDial();
+  }
+  // 다이얼 눈금(마이너/메이저) + 숫자 1~7 생성 (한 번만)
+  function buildGrindTicks() {
+    const g = document.getElementById('gdTicks');
+    if (!g || g.childElementCount) return;
+    const NS = 'http://www.w3.org/2000/svg', cx = 100, cy = 100;
+    const tick = (set, r1, r2, w, col) => {
+      const th = (set - 0.5) * 270 * Math.PI / 180, s = Math.sin(th), c = Math.cos(th);
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', (cx + r1 * s).toFixed(1)); l.setAttribute('y1', (cy - r1 * c).toFixed(1));
+      l.setAttribute('x2', (cx + r2 * s).toFixed(1)); l.setAttribute('y2', (cy - r2 * c).toFixed(1));
+      l.setAttribute('stroke', col); l.setAttribute('stroke-width', w); l.setAttribute('stroke-linecap', 'round');
+      g.appendChild(l);
+    };
+    for (let i = 0; i < 6; i++) tick((i + 0.5) / 6, 90, 84, 2, 'rgba(232,184,109,.3)');   // 마이너 눈금
+    for (let i = 0; i <= 6; i++) {
+      tick(i / 6, 90, 78, 3, 'rgba(232,184,109,.7)');                                     // 메이저 눈금
+      const th = (i / 6 - 0.5) * 270 * Math.PI / 180;
+      const tx = document.createElementNS(NS, 'text');
+      tx.setAttribute('x', (cx + 64 * Math.sin(th)).toFixed(1));
+      tx.setAttribute('y', (cy - 64 * Math.cos(th)).toFixed(1));
+      tx.setAttribute('fill', '#e8d8c0'); tx.setAttribute('font-size', '15'); tx.setAttribute('font-weight', '700');
+      tx.setAttribute('text-anchor', 'middle'); tx.setAttribute('dominant-baseline', 'central');
+      tx.textContent = String(i + 1);
+      g.appendChild(tx);
+    }
+  }
+  function updateGrindDial() {                              // 중앙 다이얼: 바늘 회전 + 분쇄도 읽기
+    if (!grindGame) return;
+    const set = grindGame.set;
+    const needle = document.getElementById('gdNeedle');
+    if (needle) needle.setAttribute('transform', `rotate(${((set - 0.5) * 270).toFixed(1)} 100 100)`);   // 0.5=정중앙(위)
+    $('gdReadout').innerHTML = `분쇄도 <b>${(1 + set * 6).toFixed(1)}</b>`;
+  }
+  function turnGrindDial(dx) {                              // 마우스 좌우 이동 → 다이얼 회전
+    if (!grindGame) return;
+    grindGame.set = Math.max(0, Math.min(1, grindGame.set - dx * 0.0016));
+    if (grindGame.job.dialMark) WORLD.setGrinderDial(grindGame.job.dialMark, grindGame.set);
+    updateGrindDial();
   }
   function endGrindGame() {
     grindGame = null;
-    clearHitFx();
-    $('tampGame').classList.add('hidden');
+    Player.setLook(true);
+    $('grindDial').classList.add('hidden');
   }
-  function lockGrindGame(fill) {
-    if (grindGame.locked) return;
-    grindGame.locked = true;
-    const job = grindGame.job;
-    job.grindSetting = fill;   // 0 가늚 ~ 1 굵음 — 머신에 저장(분쇄 시 포터필터로 인계)
-    if (job.dialMark) WORLD.setGrinderDial(job.dialMark, fill);
-    const ideal = fill >= GRIND_IDEAL_MIN && fill <= GRIND_IDEAL_MAX;
-    if (ideal) { toast('⚙️ 분쇄도 설정: 이상적 — 균형 잡힌 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
-    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라요(부족)', '', 1700); AudioFX.metalClack(); }
+  function confirmGrind() {
+    const set = grindGame.set;
+    grindGame.job.grindSetting = set;   // 머신에 저장(분쇄 시 포터필터로 인계)
+    const ideal = set >= GRIND_IDEAL_MIN && set <= GRIND_IDEAL_MAX;
+    if (ideal) { toast('⚙️ 분쇄도: 이상적 — 균형 잡힌 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
+    else { toast(set < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라요(부족)', '', 1700); AudioFX.metalClack(); }
     endGrindGame();
   }
   function updateGrindGame(dt, aimData) {
     if (!grindGame) return false;
-    // 조정 중엔 그라인더를 계속 보고만 있으면 됨(소지 무관). 단 빈 포터필터를 들면 분쇄 의도로 보고 취소
+    // [E]를 떼거나 그라인더에서 시선/위치가 벗어나면 현재 분쇄도로 확정. (회전은 mousemove에서)
     const ok = aimData && aimData.id === 'grinder' && !(held && held.type === 'portafilter');
-    if (!ok) { endGrindGame(); return false; }
-    if (useDown) {
-      grindGame.fill = Math.min(1, grindGame.fill + dt / GRIND_DUR);
-      $('tgFill').style.height = (grindGame.fill * 100) + '%';
-      if (grindGame.fill >= 1) lockGrindGame(1);
-    } else {
-      lockGrindGame(grindGame.fill);
-    }
+    if (!ok || !useDown) { confirmGrind(); return false; }
     return true;
   }
 
@@ -2228,6 +2272,8 @@ const Game = (() => {
     // 탬핑 홀드 해제: [E]/좌클릭에서 손을 떼면 게이지 판정
     document.addEventListener('keyup', ev => { if (ev.code === 'KeyE') useDown = false; });
     document.addEventListener('mouseup', ev => { if (ev.button === 0) useDown = false; });
+    // 분쇄도 다이얼 회전 — [E] 누른 채 마우스 좌우로 돌림 (시점은 잠겨 있음)
+    document.addEventListener('mousemove', ev => { if (grindGame && useDown) turnGrindDial(ev.movementX); });
     // 포커스/포인터락이 풀리면 keyup·mouseup이 안 와 useDown이 눌린 채로 남는다 → 강제 해제
     window.addEventListener('blur', () => { useDown = false; });
     document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) useDown = false; });

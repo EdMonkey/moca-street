@@ -92,6 +92,23 @@
   #freshness{position:absolute;bottom:46px;left:50%;transform:translateX(-50%);
     padding:3px 12px;font-size:12px;font-weight:700;border-radius:20px;
     background:var(--panel);border:1px solid rgba(232,184,109,.3);white-space:nowrap}
+  /* 분쇄도 다이얼 조정 안내 */
+  #grindHint{position:absolute;bottom:120px;left:50%;transform:translateX(-50%);
+    padding:10px 20px;font-size:16px;font-weight:700;text-align:center;border-radius:10px;
+    background:var(--panel);border:1px solid rgba(232,184,109,.4)}
+  #grindHint b{color:var(--accent2)}
+  #grindHint .sub{font-size:12px;font-weight:400;opacity:.8;margin-top:4px}
+  /* 분쇄도 다이얼 (탬핑 게이지처럼 중앙에) */
+  #grindDial{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    padding:16px 22px 14px;text-align:center;
+    border-color:rgba(217,154,78,.6);box-shadow:0 0 26px rgba(217,154,78,.3)}
+  #grindDial .gdTitle{font-size:14px;margin-bottom:6px}
+  #grindDial .gdTitle b{color:var(--accent2)}
+  #grindDial #gdNeedle{transition:transform .06s linear}
+  #grindDial #gdReadout{font-size:15px;font-weight:700;margin-top:4px}
+  #grindDial #gdReadout .ideal{color:var(--green)}
+  #grindDial .gdSub{font-size:11px;opacity:.72;margin-top:6px;max-width:230px}
+  #grindDial .gdSub b{color:var(--accent2)}
 
   /* 튜토리얼 */
   #tutorial{position:absolute;top:80px;left:50%;transform:translateX(-50%);padding:14px 28px;
@@ -317,6 +334,19 @@
   <div id="prompt" class="hidden"></div>
   <div id="held" class="panel hidden"></div>
   <div id="freshness" class="hidden"></div>
+  <div id="grindHint" class="hidden"></div>
+  <div id="grindDial" class="panel hidden">
+    <div class="gdTitle">⚙️ <b>분쇄도</b> 조절</div>
+    <svg viewBox="0 0 200 200" width="210" height="210">
+      <circle cx="100" cy="100" r="92" fill="rgba(255,255,255,.04)" stroke="rgba(232,184,109,.3)" stroke-width="2"/>
+      <g id="gdTicks"></g>
+      <circle cx="100" cy="100" r="40" fill="rgba(40,30,20,.85)" stroke="rgba(232,184,109,.45)" stroke-width="2"/>
+      <g id="gdNeedle"><line x1="100" y1="100" x2="100" y2="42" stroke="#e8b86d" stroke-width="5" stroke-linecap="round"/></g>
+      <circle cx="100" cy="100" r="6" fill="#e8b86d"/>
+    </svg>
+    <div id="gdReadout"></div>
+    <div class="gdSub">마우스로 다이얼을 돌려 <b>초록(이상)</b>에 맞추고 <b>[E]</b>에서 손 떼기</div>
+  </div>
   <div id="toasts"></div>
   <div id="serveBadge"><span class="chk">✓</span><span>서빙 완료!</span></div>
   <div id="hint">[WASD] 이동 · [E] 상호작용 / 내려놓기 · [Q] 버리기 · [R] 레시피북 · [B] 기구 편집 · [Esc] 일시정지</div>
