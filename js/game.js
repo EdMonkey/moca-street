@@ -1356,7 +1356,7 @@ const Game = (() => {
     renderUpgrades();
     $('prepPanel').classList.remove('hidden');
     Player.enabled = false;
-    document.exitPointerLock && document.exitPointerLock();
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
   }
   function closePrepPanel() {
     prepPanelOpen = false;
@@ -1386,7 +1386,7 @@ const Game = (() => {
     if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
-    document.exitPointerLock && document.exitPointerLock();
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
     const rent = rentFor(S.day);
     S.money -= rent;
@@ -1441,6 +1441,79 @@ const Game = (() => {
     UI.hud();
     UI.clock();
     renderDeliveryBoxes();
+  }
+
+  function clearDebugOverlays() {
+    ['menuScreen', 'pauseScreen', 'prepPanel', 'dayEnd', 'gameOver'].forEach(id => {
+      const el = $(id);
+      if (el) el.classList.add('hidden');
+    });
+    $('hud').classList.remove('hidden');
+    prepPanelOpen = false;
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
+  }
+
+  function goPrep() {
+    if (typeof Editor !== 'undefined' && Editor.active) Editor.toggle();
+    clearDebugOverlays();
+    startPrep();
+    save();
+    toast('디버그: 영업전으로 이동', 'gold');
+  }
+
+  function goOpen() {
+    if (mode !== 'prep') goPrep();
+    beginOpen();
+    save();
+    toast('디버그: 영업중으로 이동', 'gold');
+  }
+
+  function goAfter() {
+    if (typeof Editor !== 'undefined' && Editor.active) Editor.toggle();
+    returnHeldLogistics(false);
+    mode = 'after';
+    open = false;
+    Customers.clear();
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    clearDebugOverlays();
+    $('prepBar').classList.add('hidden');
+    if (env.doorSign) env.doorSign.setOpen(false);
+    if (env.door) env.door.open = false;
+    if (typeof Weather !== 'undefined') Weather.setClock(18);
+    Player.enabled = true;
+    renderDeliveryBoxes();
+    UI.hud(); UI.clock();
+    save();
+    toast('디버그: 영업후로 이동', 'gold');
+  }
+
+  function endDayNow() {
+    if (!dayStats) dayStats = freshDayStats();
+    Customers.clear();
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    if (mode === 'after') {
+      $('hud').classList.add('hidden');
+      $('dayEnd').classList.remove('hidden');
+      Player.enabled = false;
+      return;
+    }
+    endDay();
+  }
+
+  function addMoney(amount) {
+    const n = Math.max(0, Math.round(Number(amount) || 0));
+    if (!n) { toast('추가할 금액을 입력하세요', 'bad'); AudioFX.err(); return; }
+    S.money += n;
+    refreshPrepMoney();
+    UI.hud();
+    save();
+    toast(`디버그: ${fmt(n)} 추가`, 'gold');
+  }
+
+  function debugState() {
+    return { mode, day: S.day, money: S.money, open };
   }
 
   function renderUpgrades() {
@@ -1785,7 +1858,7 @@ const Game = (() => {
         if (ev.code === 'KeyE') onUse();                 // 물류/문
         else if (mode === 'prep' && ev.code === 'KeyO') beginOpen();        // 영업 시작
         else if (mode === 'prep' && ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
-        else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; document.exitPointerLock && document.exitPointerLock(); }
+        else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); }
         else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
         return;
       }
@@ -1852,6 +1925,10 @@ const Game = (() => {
     },
     isBrewing: () => env.machines.espressoSlots.some(s => s.busy && !s.done),
     steamSources,
-    _debug: { closeNow() { timeSec = DAY_LEN + 1; open = false; Customers.clear(); orders = []; $('tickets').innerHTML = ''; } },
+    _debug: {
+      goPrep, goOpen, goAfter, endDayNow, addMoney,
+      state: debugState,
+      closeNow: endDayNow,
+    },
   };
 })();
