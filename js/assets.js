@@ -12,7 +12,9 @@
  * ============================================================ */
 const Assets = (() => {
   const LIB_URL = 'assets/models/cafe_props.glb';
+  const NPC_URL = 'assets/models/npc_character.glb';
   let lib = null;            // gltf.scene (라이브러리 루트)
+  let npc = null;            // { scene, animations } — 손님 NPC(리깅 + idle/walk 애니)
   const cache = {};          // name -> { obj, offsetY }
   let booted = false, _resolve, _reject;
   const ready = new Promise((res, rej) => { _resolve = res; _reject = rej; });
@@ -85,7 +87,17 @@ const Assets = (() => {
       (gltf) => {
         lib = gltf.scene; lib.updateMatrixWorld(true);
         tuneMetals(lib);   // 스테인리스/크롬 등 금속 광택(환경맵 반사) 강화
-        _resolve(Assets);
+        // 카페 프롭 로드 후, 손님 NPC(리깅+애니) 라이브러리도 1회 로드
+        loader.load(
+          NPC_URL,
+          (g2) => {
+            npc = { scene: g2.scene, animations: g2.animations || [] };
+            npc.scene.updateMatrixWorld(true);
+            _resolve(Assets);
+          },
+          undefined,
+          (err) => { console.error('[Assets] NPC glb 로드 실패:', NPC_URL, err); _resolve(Assets); }
+        );
       },
       undefined,
       (err) => { console.error('[Assets] glb 로드 실패:', LIB_URL, err); _reject(err); }
@@ -115,9 +127,37 @@ const Assets = (() => {
     return o;
   }
 
+  // ---- 스킨드 메시 안전 복제 (three SkeletonUtils.clone 최소 구현, 외부 의존성 X) ----
+  // SkinnedMesh는 일반 clone 시 스켈레톤 바인딩이 깨지므로 본을 재매핑해 다시 바인딩한다.
+  function cloneSkinned(source) {
+    const srcLookup = new Map(), cloneLookup = new Map();
+    const root = source.clone(true);
+    (function parallel(a, b) {
+      srcLookup.set(b, a); cloneLookup.set(a, b);
+      for (let i = 0; i < a.children.length; i++) parallel(a.children[i], b.children[i]);
+    })(source, root);
+    root.traverse((node) => {
+      if (!node.isSkinnedMesh) return;
+      const srcMesh = srcLookup.get(node);
+      node.skeleton = srcMesh.skeleton.clone();
+      node.bindMatrix.copy(srcMesh.bindMatrix);
+      node.skeleton.bones = srcMesh.skeleton.bones.map((b) => cloneLookup.get(b));
+      node.bind(node.skeleton, node.bindMatrix);
+    });
+    return root;
+  }
+
+  // 손님 NPC 1개 인스턴스 복제 — { model, animations } 반환. 지오메트리/스켈레톤은 독립,
+  // 머티리얼은 공유되므로(색 틴트는) 호출측에서 clone해 인스턴스별로 바꾼다.
+  function spawnNPC() {
+    if (!npc) return null;
+    return { model: cloneSkinned(npc.scene), animations: npc.animations };
+  }
+  function npcReady() { return !!npc; }
+
   function names() { return lib ? lib.children.map((c) => c.name).filter(Boolean) : []; }
   function isReady() { return !!lib; }
 
-  return { boot, spawn, spawnInPlace, names, isReady, ready };
+  return { boot, spawn, spawnInPlace, spawnNPC, npcReady, names, isReady, ready };
 })();
 window.Assets = Assets;
