@@ -859,6 +859,13 @@ const Game = (() => {
     // 이상 분쇄도 추출 보너스 — +10%
     const grindPerfect = !!(servedDrink && servedDrink.grindPerfect);
     if (grindPerfect) tip += Math.round(o.total * GRIND_TIP_PERFECT / 100) * 100;
+    // 추출 컨디션 → 손님 만족도: 채널링(물총=탬핑 불균일)·과/부족 추출(분쇄도)이면 감점
+    let extractQ = 1;
+    if (servedDrink && servedDrink.espresso) {
+      if (!perfect) extractQ -= 0.2;        // 물총(채널링) — 고르지 않은 추출
+      if (!grindPerfect) extractQ -= 0.15;  // 과/부족 추출 (분쇄도 빗나감)
+    }
+    if (extractQ < 1) tip = Math.round(tip * extractQ / 100) * 100;
     // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
     const fresh = freshness01(servedDrink);
     if (fresh < 1) tip = Math.round(tip * (0.4 + 0.6 * fresh) / 100) * 100;   // 상해도 최소 40%
@@ -867,9 +874,11 @@ const Game = (() => {
     dayStats.tips += tip;
     dayStats.served++;
     let repDelta = (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0);
+    if (extractQ < 0.7) repDelta -= 1;     // 추출 컨디션 나쁨(채널링+분쇄 빗나감): 평판 손해
     if (fresh < 0.5) repDelta -= 2;        // 많이 상함: 평판 손해
     else if (fresh < 1) repDelta -= 1;     // 약간 상함: 평판 이득 감소
     S.rep = Math.max(0, Math.min(100, S.rep + repDelta));
+    if (extractQ <= 0.8) toast('☕ 추출 컨디션 미흡 — 손님 만족도 하락', 'bad', 2000);
     if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁·평판 감소`, 'bad', 2200);
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
