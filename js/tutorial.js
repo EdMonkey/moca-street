@@ -24,7 +24,7 @@ const Tutorial = (() => {
         check: () => orders().length > 0 },
       { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
         check: () => { const h = held(); return (h && h.type === 'portafilter') || env().machines.grinderJobs.some(j => j.busy); } },
-      { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 원두를 분쇄하세요 — 완료 후 <b>[E]</b>로 꺼내기',
+      { text: '<b>그라인더</b>에 포터필터를 가져가 <b>[E]</b>로 분쇄하세요 (분쇄도는 빈손으로 <b>[E]</b>를 꾹 눌러 조정 — 초록=완벽 추출) — 완료 후 <b>[E]</b>로 꺼내기',
         check: () => { const h = held(); return env().machines.grinderJobs.some(j => j.busy) || (h && h.type === 'portafilter' && (h.state === 'filled' || h.state === 'tamped')); } },
       { text: '<b>탬핑 스테이션</b>에서 <b>[E]</b>를 꾹 눌러 게이지를 채워 원두를 다지세요 (퍼펙트 존에서 떼면 보너스)',
         check: () => { const h = held(); return (h && h.type === 'portafilter' && h.state === 'tamped') || env().machines.espressoSlots.some(s => s.pfState === 'tamped' || s.busy); } },

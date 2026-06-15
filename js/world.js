@@ -909,19 +909,26 @@ const WORLD = (() => {
       const st = station('syrup', '시럽 스테이션', 1.47, -4.3, 1.3, 0.45);
       const r = st.root;
       const names = { vanilla: ['바닐라', 0xe8d8a8], caramel: ['카라멜', 0xc08a3e], choco: ['초코', 0x5a3520] };
+      const pumps = {};   // 도징 미니게임에서 펌프 헤드를 눌렀다 떼는 연출용 (kind별)
       Object.keys(names).forEach((k, i) => {
         const lx = -0.42 + i * 0.42;
         const [nm, col] = names[k];
         r.add(cyl(0.055, 0.065, 0.3, new THREE.MeshPhysicalMaterial({
           color: col, transparent: true, opacity: 0.85, roughness: 0.2
         }), lx, 0.15, 0, 14));
-        r.add(cyl(0.02, 0.03, 0.08, M().steelDark, lx, 0.34, 0, 10));
-        r.add(box(0.025, 0.025, 0.1, M().steelDark, lx, 0.4, 0.04));
+        // 펌프(넥+레버)를 한 그룹으로 묶어 통째로 눌렀다 떼는 연출
+        const pump = new THREE.Group();
+        pump.add(cyl(0.02, 0.03, 0.08, M().steelDark, 0, 0.34, 0, 10));
+        pump.add(box(0.025, 0.025, 0.1, M().steelDark, 0, 0.4, 0.04));
+        pump.position.x = lx;
+        r.add(pump);
+        pumps[k] = pump;
         const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.11), textLabel(nm, 128, 52, '700 28px "Malgun Gothic"'));
         lbl.position.set(lx, 0.52, 0.12);
         r.add(lbl);
         childHitbox(st, 0.4, 0.65, 0.55, lx, 0.28, 0.05, { id: 'syrup', kind: k });
       });
+      env.machines.syrup = { pumps };
     })();
 
     /* ---------- 휘핑크림 ---------- */
@@ -929,11 +936,13 @@ const WORLD = (() => {
       const st = station('whip', '휘핑크림', 2.6, -4.3, 0.3, 0.35);
       const r = st.root;
       r.add(cyl(0.05, 0.05, 0.24, new THREE.MeshStandardMaterial({ color: 0xd9534f, roughness: 0.3, metalness: 0.5 }), 0, 0.12, 0, 14));
-      r.add(cyl(0.012, 0.025, 0.07, M().cream, 0, 0.27, 0, 10));
+      const nozzle = cyl(0.012, 0.025, 0.07, M().cream, 0, 0.27, 0, 10);   // 도징 미니게임에서 눌렀다 떼는 분사 노즐
+      r.add(nozzle);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.11), textLabel('휘핑크림', 160, 52, '700 26px "Malgun Gothic"'));
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
       childHitbox(st, 0.4, 0.55, 0.55, 0, 0.22, 0.05, { id: 'whip' });
+      env.machines.whip = { nozzle };
     })();
 
     /* ---------- 넉박스 (사용한 포터필터 가루 비우기) ---------- */
@@ -1054,9 +1063,15 @@ const WORLD = (() => {
       const pfOut = makePortafilterMesh('none');
       pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
+      // 분쇄도 다이얼(노브+눈금) — 본체 좌측 전면. 포터필터 소지와 무관하게 [E]로 조정, 머신에 설정 저장
+      const dialBase = cyl(0.032, 0.032, 0.018, M().steelDark, -0.07, 0.27, 0.11, 16); dialBase.rotation.x = Math.PI / 2;
+      const dialMark = box(0.006, 0.024, 0.008, M().cupWhite, -0.07, 0.27, 0.122, { cast: false });
+      dialMark.rotation.z = -0.9 + 0.5 * 1.8;   // 기본 분쇄도 0.5 위치
+      g.add(dialBase, dialMark);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
+        dialMark, grindSetting: 0.5,                  // 현재 분쇄도 설정(0 가늚 ~ 1 굵음)
         progress: makeProgress(g, 0, 0.34, 0.15),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
@@ -1291,5 +1306,8 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  // 분쇄도 다이얼 눈금 회전 (frac 0 가늚 ~ 1 굵음 → ±0.9rad 스윕)
+  function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = -0.9 + frac * 1.8; }
+
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
 })();

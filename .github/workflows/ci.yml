@@ -1,0 +1,30 @@
+name: CI
+
+# 빌드·번들러·테스트 스위트가 없는 정적 프로젝트라, 최소한의 안전망으로
+# (1) 우리 소스(js/*.js · tools/*.js)의 JS 문법 검사와
+# (2) 밸런스 시뮬 스모크 실행만 수행한다. (vendor/는 서드파티라 제외)
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: JS 문법 검사 (node --check)
+        run: |
+          status=0
+          for f in js/*.js tools/*.js; do
+            echo "--check $f"
+            node --check "$f" || status=1
+          done
+          exit $status
+
+      - name: 밸런스 시뮬 스모크 실행
+        run: node tools/balance-sim.js
