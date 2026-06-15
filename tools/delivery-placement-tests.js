@@ -31,9 +31,25 @@ includesAll(game, [
 includesAll(world, [
   'env.deliveryPreview',
   'setDeliveryPreview',
+  'env.storagePreview',
+  'setStoragePreview',
+  'previewSlot',
   'canPlaceDeliveryBox',
   'DOOR_RIGHT_SPOT',
   'typeof b.rot',
 ], 'delivery placement world API');
+
+const deliveryPreviewBlock = world.slice(
+  world.indexOf('env.setDeliveryPreview = function'),
+  world.indexOf('/* ---------- 장식 ---------- */')
+);
+assert.ok(!deliveryPreviewBlock.includes('EdgesGeometry'), 'delivery preview should not draw wireframe edges');
+assert.ok(!deliveryPreviewBlock.includes('LineSegments'), 'delivery preview should not draw line wireframe');
+
+includesAll(game, [
+  'showStoragePreview',
+  'setStoragePreview',
+  "aimData.id === 'restock'",
+], 'storage shelf preview controls');
 
 console.log('delivery placement tests passed');

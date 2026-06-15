@@ -324,7 +324,7 @@ const WORLD = (() => {
       stations: [],            // 편집 모드로 이동 가능한 기구들
       staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
       machines: {}, steamEmitters: [], deliveryViews: [], storageViews: {},
-      deliveryPreview: null, DOOR_RIGHT_SPOT,
+      deliveryPreview: null, storagePreview: null, DOOR_RIGHT_SPOT,
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
       doorPos: new THREE.Vector3(5.5, 0, 8),
@@ -1019,7 +1019,10 @@ const WORLD = (() => {
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
       kinds.forEach(([k, cz]) => {
         const hb = addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k }));
-        env.storageViews[k] = { cz, hitbox: hb, meshes: [] };
+        env.storageViews[k] = {
+          cz, hitbox: hb, meshes: [],
+          previewSlot: { x: Cx, y: 0.65, z: cz, rot: Math.PI / 2 },
+        };
       });
       env.syncStorageBoxes = function (storage) {
         Object.keys(env.storageViews).forEach(k => {
@@ -1043,6 +1046,30 @@ const WORLD = (() => {
           }
           v.hitbox.userData.outlineMeshes = v.meshes;
         });
+      };
+      env.setStoragePreview = function (kind, ok = true) {
+        if (!env.storagePreview) {
+          const g = new THREE.Group();
+          const mat = new THREE.MeshBasicMaterial({
+            color: 0x7fb069, transparent: true, opacity: 0.3, depthWrite: false,
+          });
+          const body = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.31, 0.34), mat);
+          body.position.y = 0.155;
+          g.add(body);
+          g.visible = false;
+          g.renderOrder = 8;
+          scene.add(g);
+          env.storagePreview = { root: g, body, mat };
+        }
+        const p = env.storagePreview;
+        const v = kind && env.storageViews[kind];
+        if (!v) { p.root.visible = false; return; }
+        const slot = v.previewSlot;
+        p.root.position.set(slot.x, slot.y, slot.z);
+        p.root.rotation.y = slot.rot;
+        p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
+        p.mat.opacity = ok ? 0.3 : 0.2;
+        p.root.visible = true;
       };
       // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
       if (window.Assets && window.Assets.ready) {
@@ -1171,16 +1198,11 @@ const WORLD = (() => {
         });
         const body = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.42, 0.55), mat);
         body.position.y = 0.21;
-        const edges = new THREE.LineSegments(
-          new THREE.EdgesGeometry(new THREE.BoxGeometry(0.7, 0.44, 0.57)),
-          new THREE.LineBasicMaterial({ color: 0x9fdc8a, transparent: true, opacity: 0.95, depthTest: false })
-        );
-        edges.position.y = 0.22;
-        g.add(body, edges);
+        g.add(body);
         g.visible = false;
         g.renderOrder = 8;
         scene.add(g);
-        env.deliveryPreview = { root: g, body, edges, mat, lineMat: edges.material };
+        env.deliveryPreview = { root: g, body, mat };
       }
       const p = env.deliveryPreview;
       if (!spec) { p.root.visible = false; return; }
@@ -1188,7 +1210,6 @@ const WORLD = (() => {
       p.root.position.set(spec.x, 0.02, spec.z);
       p.root.rotation.y = spec.rot || 0;
       p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
-      p.lineMat.color.setHex(ok ? 0x9fdc8a : 0xff9a94);
       p.body.material.opacity = ok ? 0.26 : 0.18;
       p.root.visible = true;
     };

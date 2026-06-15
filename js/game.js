@@ -365,6 +365,17 @@ const Game = (() => {
     return true;
   }
 
+  function showStoragePreview(aimData) {
+    if (!env.setStoragePreview) return false;
+    if (!aimData || aimData.id !== 'restock') {
+      env.setStoragePreview(null);
+      return false;
+    }
+    const ok = !held || held.type !== 'deliveryBox' || held.kind === aimData.kind;
+    env.setStoragePreview(aimData.kind, ok);
+    return true;
+  }
+
   function placeItem(point) {
     const item = held;
     if (item.type === 'deliveryBox' || item.type === 'supply') {
@@ -1332,6 +1343,7 @@ const Game = (() => {
     Effects.clear();
     env.placeIndicator.visible = false;
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+    if (env.setStoragePreview) env.setStoragePreview(null);
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
@@ -1744,13 +1756,19 @@ const Game = (() => {
   function updatePrep() {
     // 준비/영업후: 물류 프롬프트만 표시 (손님·시계 정지)
     const pr = $('prompt');
-    if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); updateAimHighlight(null); return; }
+    if (prepPanelOpen) {
+      pr.classList.add('hidden'); $('crosshair').classList.remove('active');
+      if (env.setStoragePreview) env.setStoragePreview(null);
+      updateAimHighlight(null);
+      return;
+    }
     const aimData = Player.aim();
     const targetKind = aimData && stationTargets[aimData.id];
     const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
-    const dprev = usable ? null : deliveryPlacePreview();
+    const shelfPreview = showStoragePreview(aimData);
+    const dprev = usable || shelfPreview ? null : deliveryPlacePreview();
     if (usable && env.setDeliveryPreview) env.setDeliveryPreview(null);
-    updateAimHighlight(usable ? Player.aimedObject : null);
+    updateAimHighlight(usable && !shelfPreview ? Player.aimedObject : null);
     if (usable) {
       pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
@@ -1781,6 +1799,7 @@ const Game = (() => {
     if (mode === 'prep' || mode === 'after') { updatePrep(); $('freshness').classList.add('hidden'); return; }
     if (mode !== 'playing' && mode !== 'closing') {
       if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+      if (env.setStoragePreview) env.setStoragePreview(null);
       updateAimHighlight(null); $('freshness').classList.add('hidden'); return;
     }
 
@@ -1845,6 +1864,7 @@ const Game = (() => {
     let p = UI.prompt(aimData);
     if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
+    if (env.setStoragePreview) env.setStoragePreview(null);
     const dprev = !aimData ? deliveryPlacePreview() : null;
     if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (dprev) {
