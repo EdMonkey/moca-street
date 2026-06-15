@@ -76,10 +76,17 @@ const DATA = (() => {
   const ART_PERFECT = 0.70, ART_GOOD = 0.42;   // 종합 점수 임계값 (perfect / good)
   const ART_TIP_PERFECT = 0.15, ART_TIP_GOOD = 0.08;  // 팁 보너스 비율
 
+  // 시럽/휘핑 도징 미니게임 (정량 — [E]를 눌러 게이지를 퍼펙트 존에서 멈추면 보너스)
+  // 탬핑·스팀과 같은 게이지를 공유하므로 퍼펙트 존(폭/위치)은 TAMP_PERF_* 를 재사용한다.
+  const DOSE_DUR = 1.6;           // 게이지가 끝까지 차는 시간(초)
+  const DOSE_MIN = 0.30;          // 이보다 적게 넣으면 부족(재시도)
+  const DOSE_TIP_PERFECT = 0.08;  // 퍼펙트 도징 팁 보너스 비율 (시럽/휘핑 각각)
+
   return {
     RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
     DAY_LEN, SAVE_KEY, RENT_BASE, RENT_PER_DAY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
     ART_VOL, ART_PERFECT, ART_GOOD, ART_TIP_PERFECT, ART_TIP_GOOD,
+    DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
   };
 })();

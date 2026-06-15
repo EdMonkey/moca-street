@@ -12,6 +12,7 @@ const Game = (() => {
     DAY_LEN, SAVE_KEY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
     ART_TIP_PERFECT, ART_TIP_GOOD,
+    DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
   } = DATA;
 
   /* ===== 상태 ===== */
@@ -28,6 +29,7 @@ const Game = (() => {
   let indPulse = 0;
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
   let steamGame = null;           // 스팀 미니게임 상태 (비활성 시 null)
+  let doseGame = null;            // 시럽/휘핑 도징 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
 
   function freshState() {
@@ -665,25 +667,19 @@ const Game = (() => {
       return;
     }
 
-    /* --- 시럽 --- */
+    /* --- 시럽: 컵을 들고 [E]를 꾹 눌러 정량 도징 미니게임 --- */
     if (id === 'syrup') {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.syrup) { toast('이미 시럽이 들어있어요'); return; }
-      held.drink.syrup = it.kind;
-      addStep(held.drink, 'syrup');
-      setHeld(held);
-      AudioFX.syrupPump();
+      if (!doseGame) startDoseGame('syrup', it.kind);
       return;
     }
 
-    /* --- 휘핑크림 --- */
+    /* --- 휘핑크림: 컵을 들고 [E]를 꾹 눌러 정량 도징 미니게임 --- */
     if (id === 'whip') {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.whip) { toast('이미 휘핑크림을 올렸어요'); return; }
-      held.drink.whip = 1;
-      addStep(held.drink, 'whip');
-      setHeld(held);
-      AudioFX.whipSpray();
+      if (!doseGame) startDoseGame('whip', null);
       return;
     }
 
@@ -836,6 +832,11 @@ const Game = (() => {
     const artTier = servedDrink && servedDrink.artTier;
     if (artTier === 'perfect') tip += Math.round(o.total * ART_TIP_PERFECT / 100) * 100;
     else if (artTier === 'good') tip += Math.round(o.total * ART_TIP_GOOD / 100) * 100;
+    // 정량 도징(시럽/휘핑 미니게임) 보너스 — 각 +8%
+    const syrupPerfect = !!(servedDrink && servedDrink.syrupPerfect);
+    if (syrupPerfect) tip += Math.round(o.total * DOSE_TIP_PERFECT / 100) * 100;
+    const whipPerfect = !!(servedDrink && servedDrink.whipPerfect);
+    if (whipPerfect) tip += Math.round(o.total * DOSE_TIP_PERFECT / 100) * 100;
     // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
     const fresh = freshness01(servedDrink);
     if (fresh < 1) tip = Math.round(tip * (0.4 + 0.6 * fresh) / 100) * 100;   // 상해도 최소 40%
@@ -853,10 +854,12 @@ const Game = (() => {
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
     Customers.serve(c, null);
-    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect || foamPerfect || artTier === 'perfect' ? ' · 퍼펙트 ✨' : ''}`, 'good');
+    const anyPerfect = perfect || foamPerfect || artTier === 'perfect' || syrupPerfect || whipPerfect;
+    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${anyPerfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
     if (orderOk) toast('✨ 정확한 제조 순서! 팁 +15% · 평판 +1', 'gold', 2200);
     if (foamPerfect) toast('🥛 퍼펙트 마이크로폼! 팁 +15%', 'gold', 2200);
     if (artTier === 'perfect') toast('🎨 라떼아트 퍼펙트! 팁 +15% · 평판 +1', 'gold', 2200);
+    if (syrupPerfect || whipPerfect) toast('✨ 정량 도징! 팁 보너스', 'gold', 2200);
     AudioFX.cash();
     UI.hud();
     Tutorial.event('served');
@@ -1123,6 +1126,78 @@ const Game = (() => {
     return true;
   }
 
+  /* ===== 시럽/휘핑 도징 미니게임 — 탬핑·스팀과 같은 게이지를 공유, 컵을 든 채 진행 =====
+   * 시럽 펌프대/휘핑기를 보며 컵을 들고 [E]로 시작 → [E]를 꾹 눌러 도징 게이지 상승 →
+   * 퍼펙트 존(정량)에서 떼면 팁 보너스, 일반 성공도 재료 추가. 너무 적으면 재시도. */
+  function startDoseGame(kind, syrupKind) {
+    const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
+    // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
+    doseGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], kind, syrupKind,
+      drink: held.drink, field: kind === 'syrup' ? 'syrup' : 'whip', tickT: 0 };
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+    setGaugeText(kind === 'syrup' ? '🍯 시럽 — <b>[E]</b>를 누르고 있어 펌프' : '🍦 휘핑 — <b>[E]</b>를 누르고 있어 짜기',
+      '퍼펙트 존(초록)에서 손을 떼면 정량 도징(팁) 보너스 · 끝까지 눌러도 성공');
+    clearHitFx();
+    $('tampGame').classList.remove('hidden');
+  }
+  function endDoseGame() {
+    doseGame = null;
+    clearHitFx();
+    $('tampGame').classList.add('hidden');
+  }
+  function lockDoseGame(fill) {
+    if (doseGame.locked) return;
+    doseGame.locked = true;
+    const pz = doseGame.perfect;
+    const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
+      : (fill >= DOSE_MIN) ? 'good' : 'weak';
+    if (result === 'weak') {
+      AudioFX.err();
+      toast(doseGame.kind === 'syrup' ? '시럽이 너무 적어요 — 다시 [E]로 펌프하세요' : '휘핑이 부족해요 — 다시 [E]로 짜세요', 'bad', 1500);
+      endDoseGame();
+    } else {
+      finishDose(result === 'perfect');
+    }
+  }
+  function finishDose(perfect) {
+    const d = doseGame.drink;
+    if (doseGame.kind === 'syrup') {
+      d.syrup = doseGame.syrupKind;
+      addStep(d, 'syrup');
+      d.syrupPerfect = perfect;
+      AudioFX.syrupPump();
+    } else {
+      d.whip = 1;
+      addStep(d, 'whip');
+      d.whipPerfect = perfect;
+      AudioFX.whipSpray();
+    }
+    if (perfect) AudioFX.tampPerfectSfx();
+    setHeld(held);   // 컵 메시·라벨 갱신
+    toast(perfect ? (doseGame.kind === 'syrup' ? '✨ 퍼펙트 시럽 도징! (팁 보너스)' : '✨ 완벽한 휘핑! (팁 보너스)')
+      : (doseGame.kind === 'syrup' ? '시럽을 넣었어요' : '휘핑크림을 올렸어요'), perfect ? 'gold' : 'good');
+    endDoseGame();
+  }
+  function updateDoseGame(dt, aimData) {
+    if (!doseGame) return false;
+    const g = doseGame;
+    const ok = aimData && aimData.id === g.kind && held && held.type === 'drink' && !held.drink[g.field];
+    if (!ok) { endDoseGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
+    // 누르는 동안 도징 게이지 상승(펌프/스프레이 사운드 반복), 손 떼면 그 지점으로 즉시 판정·확정
+    if (useDown) {
+      g.fill = Math.min(1, g.fill + dt / DOSE_DUR);
+      $('tgFill').style.height = (g.fill * 100) + '%';
+      g.tickT += dt;
+      if (g.tickT >= 0.22) { g.tickT = 0; (g.kind === 'syrup' ? AudioFX.syrupPump : AudioFX.whipSpray)(); }
+      if (g.fill >= 1) lockDoseGame(1);
+    } else {
+      lockDoseGame(g.fill);
+    }
+    return true;
+  }
+
 
 
 
@@ -1145,10 +1220,11 @@ const Game = (() => {
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
-    // 탬핑/스팀 미니게임 초기화
+    // 탬핑/스팀/도징 미니게임 초기화
     useDown = false;
     endTampGame();
     endSteamGame();
+    endDoseGame();
     if (env.machines.tamp && env.machines.tamp.tamper) env.machines.tamp.tamper.position.y = 0.04;
   }
 
@@ -1535,8 +1611,9 @@ const Game = (() => {
     updateAimHighlight(aimData ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
     const steaming = updateSteamGame(dt, aimData);
+    const dosing = updateDoseGame(dt, aimData);
     let p = UI.prompt(aimData);
-    if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
+    if (tamping || steaming || dosing) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
     if (!aimData && held) {
       const pt = Player.aimSurface();
