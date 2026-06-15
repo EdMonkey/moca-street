@@ -283,9 +283,13 @@ const Game = (() => {
       const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
       Player.setHeld(m, equip);
-    } else if (h.type === 'deliveryBox' || h.type === 'supply') {
+    } else if (h.type === 'deliveryBox') {
       const m = WORLD.makeBoxMesh(h.kind);
-      m.scale.setScalar(h.type === 'deliveryBox' ? 1.35 : 0.85);
+      m.scale.setScalar(1.35);
+      Player.setHeld(m, equip);
+    } else if (h.type === 'supply') {
+      const m = WORLD.makeSupplyMesh(h.kind);
+      m.scale.setScalar(1.05);
       Player.setHeld(m, equip);
     }
     UI.held();

@@ -312,6 +312,73 @@ const WORLD = (() => {
     return g;
   }
 
+  const supplyModels = {
+    beans: ['CoffeeBeanBag'],
+    milk: ['MilkCarton'],
+    cups: ['PaperCupHolder', 'PaperCup'],
+    dessert: [],
+  };
+  const supplyFit = {
+    beans: { w: 0.28, h: 0.28 },
+    milk: { w: 0.18, h: 0.26 },
+    cups: { w: 0.24, h: 0.30 },
+    dessert: { w: 0.28, h: 0.18 },
+  };
+
+  function fitSupplyAsset(root, kind) {
+    const fit = supplyFit[kind] || { w: 0.28, h: 0.28 };
+    root.updateMatrixWorld(true);
+    const before = new THREE.Box3().setFromObject(root);
+    const size = before.getSize(new THREE.Vector3());
+    const width = Math.max(size.x, size.z);
+    const scale = Math.min(
+      fit.w / Math.max(width, 0.001),
+      fit.h / Math.max(size.y, 0.001)
+    );
+    if (Number.isFinite(scale) && scale > 0) root.scale.multiplyScalar(scale);
+    root.updateMatrixWorld(true);
+    const after = new THREE.Box3().setFromObject(root);
+    const center = after.getCenter(new THREE.Vector3());
+    root.position.x -= center.x;
+    root.position.z -= center.z;
+    root.position.y -= after.min.y;
+    return root;
+  }
+
+  function makeSupplyMesh(kind) {
+    const g = new THREE.Group();
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const names = supplyModels[kind] || [];
+      for (const name of names) {
+        const asset = window.Assets.spawn(name, 0, 0, 0, 0);
+        if (asset) {
+          g.add(fitSupplyAsset(asset, kind));
+          return g;
+        }
+      }
+    }
+    if (kind === 'beans') {
+      g.add(box(0.22, 0.26, 0.12, new THREE.MeshStandardMaterial({ color: 0x6a3f24, roughness: 0.9 }), 0, 0.13, 0));
+      g.add(box(0.18, 0.04, 0.10, new THREE.MeshStandardMaterial({ color: 0x3a2416, roughness: 0.85 }), 0, 0.27, 0));
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.08), textLabel('\uc6d0\ub450', 128, 64, '700 30px "Malgun Gothic"', '#f5ead8', '#3a2416'));
+      lbl.position.set(0, 0.14, 0.061);
+      g.add(lbl);
+    } else if (kind === 'milk') {
+      g.add(box(0.14, 0.24, 0.12, new THREE.MeshStandardMaterial({ color: 0xf4f2e8, roughness: 0.7 }), 0, 0.12, 0));
+      g.add(box(0.14, 0.04, 0.12, new THREE.MeshStandardMaterial({ color: 0xa7c7e7, roughness: 0.75 }), 0, 0.26, 0));
+    } else if (kind === 'cups') {
+      for (let i = 0; i < 4; i++) {
+        const cup = cyl(0.055, 0.045, 0.07, M().cupWhite, 0, 0.04 + i * 0.035, 0, 18, { open: true });
+        g.add(cup);
+      }
+    } else {
+      const d = makeDessertMesh('croissant');
+      d.scale.setScalar(0.7);
+      g.add(d);
+    }
+    return g;
+  }
+
   const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
 
   /* ============================================================
@@ -1031,13 +1098,13 @@ const WORLD = (() => {
           v.meshes = [];
           const amount = storage && Number(storage[k]) || 0;
           if (amount <= 0) { v.hitbox.userData.outlineMeshes = null; return; }
-          const bm = makeBoxMesh(k);
+          const bm = makeSupplyMesh(k);
           bm.position.set(Cx, 0.65, v.cz);
           bm.rotation.y = Math.PI / 2;
           scene.add(bm);
           v.meshes.push(bm);
           if (amount > 1) {
-            const bm2 = makeBoxMesh(k);
+            const bm2 = makeSupplyMesh(k);
             bm2.position.set(Cx, 1.20, v.cz);
             bm2.rotation.y = Math.PI / 2;
             bm2.scale.setScalar(0.9);
@@ -1414,5 +1481,5 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makeSupplyMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
 })();
