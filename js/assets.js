@@ -14,7 +14,13 @@ const Assets = (() => {
   const LIB_URL = 'assets/models/cafe_props.glb';
   const NPC_URL = 'assets/models/npc_character.glb';
   let lib = null;            // gltf.scene (라이브러리 루트)
-  let npc = null;            // { scene, animations } — 손님 NPC(리깅 + idle/walk 애니)
+  let npc = null;            // { scene, animations } — 손님 NPC 베이스(리깅 + idle/walk 애니)
+  const NPC_VARIANT_URLS = [ // 손님 외형 변형(베이스와 같은 뼈대 → 베이스 애니 재사용)
+    'assets/models/npc_office.glb', 'assets/models/npc_student.glb',
+    'assets/models/npc_casual.glb', 'assets/models/npc_female.glb',
+    'assets/models/npc_elderly.glb', 'assets/models/npc_fitness.glb',
+  ];
+  let npcVariants = [];      // 손님 외형 풀(베이스 + 변형들) — spawnNPC가 랜덤 선택
   const cache = {};          // name -> { obj, offsetY }
   let booted = false, _resolve, _reject;
   const ready = new Promise((res, rej) => { _resolve = res; _reject = rej; });
@@ -87,17 +93,18 @@ const Assets = (() => {
       (gltf) => {
         lib = gltf.scene; lib.updateMatrixWorld(true);
         tuneMetals(lib);   // 스테인리스/크롬 등 금속 광택(환경맵 반사) 강화
-        // 카페 프롭 로드 후, 손님 NPC(리깅+애니) 라이브러리도 1회 로드
-        loader.load(
-          NPC_URL,
-          (g2) => {
-            npc = { scene: g2.scene, animations: g2.animations || [] };
-            npc.scene.updateMatrixWorld(true);
-            _resolve(Assets);
-          },
-          undefined,
-          (err) => { console.error('[Assets] NPC glb 로드 실패:', NPC_URL, err); _resolve(Assets); }
-        );
+        // 카페 프롭 로드 후, 손님 NPC 베이스(애니 포함) + 외형 변형들 로드
+        loader.loadAsync(NPC_URL).then((g2) => {
+          npc = { scene: g2.scene, animations: g2.animations || [] };
+          npc.scene.updateMatrixWorld(true);
+          npcVariants.push(npc.scene);   // 베이스도 손님 외형 하나로 포함
+          return Promise.all(NPC_VARIANT_URLS.map((u) =>
+            loader.loadAsync(u).then((gv) => {
+              gv.scene.updateMatrixWorld(true); npcVariants.push(gv.scene);
+            }).catch((e) => console.warn('[Assets] 변형 로드 실패:', u, e))
+          ));
+        }).then(() => _resolve(Assets))
+          .catch((err) => { console.error('[Assets] NPC glb 로드 실패:', err); _resolve(Assets); });
       },
       undefined,
       (err) => { console.error('[Assets] glb 로드 실패:', LIB_URL, err); _reject(err); }
@@ -151,7 +158,9 @@ const Assets = (() => {
   // 머티리얼은 공유되므로(색 틴트는) 호출측에서 clone해 인스턴스별로 바꾼다.
   function spawnNPC() {
     if (!npc) return null;
-    return { model: cloneSkinned(npc.scene), animations: npc.animations };
+    const pool = npcVariants.length ? npcVariants : [npc.scene];
+    const src = pool[(Math.random() * pool.length) | 0];   // 손님마다 랜덤 외형
+    return { model: cloneSkinned(src), animations: npc.animations };
   }
   function npcReady() { return !!npc; }
 
