@@ -8,18 +8,22 @@ const Logistics = (() => {
   const STORAGE_RACKS = [0, 1, 2, 3];
   const STORAGE_SLOTS = [0, 1, 2];
   const STORAGE_SLOT_IDS = STORAGE_RACKS.flatMap(r => STORAGE_SLOTS.map(s => `r${r}s${s}`));
-  const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
-  const DOOR_SPOTS = [
-    DOOR_RIGHT_SPOT,
-    { x: 7.05, z: 9.55, rot: Math.PI / 2 },
-    { x: 7.65, z: 9.35, rot: Math.PI / 2 },
-    { x: 7.65, z: 9.55, rot: Math.PI / 2 },
-  ];
+  const DOOR_RIGHT_SPOT = { x: 6.75, z: 9.35, rot: 0 };
+  const DELIVERY_BOX_SPACING = 0.76;
   let seq = 1;
   let storageSeq = 1;
 
   function emptyBag() {
     return { beans: 0, milk: 0, cups: 0, dessert: 0 };
+  }
+
+  function deliverySpot(index = 0) {
+    const i = Math.max(0, Number(index) || 0);
+    return {
+      x: Math.round((DOOR_RIGHT_SPOT.x + DELIVERY_BOX_SPACING * i) * 100) / 100,
+      z: DOOR_RIGHT_SPOT.z,
+      rot: DOOR_RIGHT_SPOT.rot,
+    };
   }
 
   function normalizeBag(bag) {
@@ -127,10 +131,17 @@ const Logistics = (() => {
     S.pendingDeliveries = Array.isArray(S.pendingDeliveries) ? S.pendingDeliveries : [];
     S.deliveryBoxes = Array.isArray(S.deliveryBoxes) ? S.deliveryBoxes : [];
     S.deliveryBoxes.forEach((b, i) => {
-      const spot = DOOR_SPOTS[i % DOOR_SPOTS.length];
-      if (typeof b.x !== 'number') b.x = spot.x;
-      if (typeof b.z !== 'number') b.z = spot.z;
-      if (typeof b.rot !== 'number') b.rot = spot.rot;
+      const spot = deliverySpot(i);
+      if (b.autoSpot !== false) {
+        b.x = spot.x;
+        b.z = spot.z;
+        b.rot = spot.rot;
+        b.autoSpot = true;
+      } else {
+        if (typeof b.x !== 'number') b.x = spot.x;
+        if (typeof b.z !== 'number') b.z = spot.z;
+        if (typeof b.rot !== 'number') b.rot = spot.rot;
+      }
     });
     return S;
   }
@@ -185,8 +196,8 @@ const Logistics = (() => {
       prev.source = prev.source === source ? source : 'mixed';
       return prev;
     }
-    const spot = DOOR_SPOTS[S.deliveryBoxes.length % DOOR_SPOTS.length];
-    const box = { id: boxId(kind), kind, amount, source, x: spot.x, z: spot.z, rot: spot.rot };
+    const spot = deliverySpot(S.deliveryBoxes.length);
+    const box = { id: boxId(kind), kind, amount, source, x: spot.x, z: spot.z, rot: spot.rot, autoSpot: true };
     S.deliveryBoxes.push(box);
     return box;
   }
@@ -198,6 +209,7 @@ const Logistics = (() => {
     box.x = Number(pose.x);
     box.z = Number(pose.z);
     box.rot = Number(pose.rot) || 0;
+    box.autoSpot = false;
     return { ok: true, box };
   }
 
@@ -294,9 +306,9 @@ const Logistics = (() => {
   }
 
   return {
-    KINDS, CAPACITY, STORAGE_RACKS, STORAGE_SLOTS, STORAGE_SLOT_IDS, DOOR_RIGHT_SPOT,
+    KINDS, CAPACITY, STORAGE_RACKS, STORAGE_SLOTS, STORAGE_SLOT_IDS, DOOR_RIGHT_SPOT, DELIVERY_BOX_SPACING,
     ensureState, deliveryPrice, scheduleDelivery, collectArrivals,
-    initialState, addDeliveryBox, moveDeliveryBox, storeDeliveryBox, takeSupply, returnSupply,
+    initialState, addDeliveryBox, deliverySpot, moveDeliveryBox, storeDeliveryBox, takeSupply, returnSupply,
     putSupplyToStation, storageTotal, storageSlotBox, storageSlotAmount, storageSlotOccupied, firstFreeStorageSlot,
   };
 })();

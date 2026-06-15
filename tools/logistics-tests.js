@@ -84,6 +84,34 @@ function testScheduledDeliveriesMergeByKindOnArrival() {
   assert.deepStrictEqual(plain(S.pendingDeliveries), []);
 }
 
+function testDeliverySpotsLineUpAlongDoorRightWall() {
+  const spots = Array.from({ length: 6 }, (_, i) => Logistics.deliverySpot(i));
+
+  assert.strictEqual(spots[0].x, Logistics.DOOR_RIGHT_SPOT.x);
+  assert.strictEqual(spots[0].z, Logistics.DOOR_RIGHT_SPOT.z);
+  spots.forEach((spot, i) => {
+    assert.strictEqual(spot.z, Logistics.DOOR_RIGHT_SPOT.z);
+    assert.strictEqual(spot.rot, 0);
+    if (i > 0) assert.ok(spot.x - spots[i - 1].x >= 0.72, 'delivery boxes should not overlap');
+  });
+  assert.strictEqual(new Set(spots.map(s => `${s.x},${s.z}`)).size, spots.length);
+}
+
+function testAutoDeliveryBoxesUseLineSpots() {
+  const S = freshState();
+  Logistics.ensureState(S);
+  Logistics.KINDS.forEach(kind => Logistics.addDeliveryBox(S, kind, DATA.RESTOCK[kind].amount, 'scheduled'));
+
+  assert.strictEqual(S.deliveryBoxes.length, Logistics.KINDS.length);
+  S.deliveryBoxes.forEach((box, i) => {
+    const spot = Logistics.deliverySpot(i);
+    assert.strictEqual(box.x, spot.x);
+    assert.strictEqual(box.z, spot.z);
+    assert.strictEqual(box.rot, spot.rot);
+    assert.strictEqual(box.autoSpot, true);
+  });
+}
+
 function testStoreDeliveryBoxMovesToStorage() {
   const S = freshState();
   Logistics.ensureState(S);
@@ -210,11 +238,17 @@ function testMoveDeliveryBoxStoresPositionAndQuarterTurns() {
   assert.strictEqual(box.x, 4.2);
   assert.strictEqual(box.z, 8.8);
   assert.strictEqual(box.rot, Math.PI / 2);
+  assert.strictEqual(box.autoSpot, false);
+  Logistics.ensureState(S);
+  assert.strictEqual(box.x, 4.2);
+  assert.strictEqual(box.z, 8.8);
 }
 
 testInitialDeliveryStateHasFirstDayBeansOnlyAtDoorRight();
 testEnsureState();
 testScheduledDeliveriesMergeByKindOnArrival();
+testDeliverySpotsLineUpAlongDoorRightWall();
+testAutoDeliveryBoxesUseLineSpots();
 testStoreDeliveryBoxMovesToStorage();
 testSingleUnitTransferFromStorageToStation();
 testOccupiedShelfSlotRejectsSecondBox();

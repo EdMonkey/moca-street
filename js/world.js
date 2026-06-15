@@ -379,7 +379,12 @@ const WORLD = (() => {
     return g;
   }
 
-  const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
+  const DOOR_RIGHT_SPOT = (typeof Logistics !== 'undefined' && Logistics.DOOR_RIGHT_SPOT)
+    ? Logistics.DOOR_RIGHT_SPOT
+    : { x: 6.75, z: 9.35, rot: 0 };
+  const deliverySpot = (typeof Logistics !== 'undefined' && Logistics.deliverySpot)
+    ? Logistics.deliverySpot
+    : (i = 0) => ({ x: Math.round((DOOR_RIGHT_SPOT.x + 0.76 * Math.max(0, Number(i) || 0)) * 100) / 100, z: DOOR_RIGHT_SPOT.z, rot: DOOR_RIGHT_SPOT.rot });
 
   /* ============================================================
    * 월드 빌드
@@ -1268,14 +1273,8 @@ const WORLD = (() => {
     };
     env.syncDeliveryBoxes = function (boxes) {
       env.clearDeliveryBoxes();
-      const spots = [
-        DOOR_RIGHT_SPOT,
-        { x: 7.05, z: 9.95, rot: Math.PI / 2 },
-        { x: 7.65, z: 9.35, rot: Math.PI / 2 },
-        { x: 7.65, z: 9.95, rot: Math.PI / 2 },
-      ];
-      boxes.slice(0, spots.length).forEach((b, i) => {
-        const spot = spots[i];
+      boxes.forEach((b, i) => {
+        const spot = deliverySpot(i);
         const x = typeof b.x === 'number' ? b.x : spot.x;
         const z = typeof b.z === 'number' ? b.z : spot.z;
         const rot = typeof b.rot === 'number' ? b.rot : spot.rot;

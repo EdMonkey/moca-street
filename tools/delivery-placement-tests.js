@@ -36,8 +36,12 @@ includesAll(world, [
   'previewSlot',
   'canPlaceDeliveryBox',
   'DOOR_RIGHT_SPOT',
+  'deliverySpot',
+  'boxes.forEach((b, i)',
   'typeof b.rot',
 ], 'delivery placement world API');
+
+assert.ok(!world.includes('boxes.slice(0, spots.length)'), 'delivery renderer should not cap visible boxes to fixed spots');
 
 const deliveryPreviewBlock = world.slice(
   world.indexOf('env.setDeliveryPreview = function'),
