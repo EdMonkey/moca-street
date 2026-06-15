@@ -1063,9 +1063,15 @@ const WORLD = (() => {
       const pfOut = makePortafilterMesh('none');
       pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
+      // 분쇄도 다이얼(노브+눈금) — 본체 좌측 전면. 포터필터 소지와 무관하게 [E]로 조정, 머신에 설정 저장
+      const dialBase = cyl(0.032, 0.032, 0.018, M().steelDark, -0.07, 0.27, 0.11, 16); dialBase.rotation.x = Math.PI / 2;
+      const dialMark = box(0.006, 0.024, 0.008, M().cupWhite, -0.07, 0.27, 0.122, { cast: false });
+      dialMark.rotation.z = -0.9 + 0.5 * 1.8;   // 기본 분쇄도 0.5 위치
+      g.add(dialBase, dialMark);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
+        dialMark, grindSetting: 0.5,                  // 현재 분쇄도 설정(0 가늚 ~ 1 굵음)
         progress: makeProgress(g, 0, 0.34, 0.15),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
@@ -1300,5 +1306,8 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  // 분쇄도 다이얼 눈금 회전 (frac 0 가늚 ~ 1 굵음 → ±0.9rad 스윕)
+  function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = -0.9 + frac * 1.8; }
+
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
 })();

@@ -490,14 +490,22 @@ const Game = (() => {
         AudioFX.metalClack();
         return;
       }
-      // 빈손으로 유휴 그라인더 — 더 이상 무에서 포터필터 생성 금지
-      if (!held) { toast('머신에서 포터필터를 분리해 가져오세요', 'bad'); AudioFX.err(); return; }
-      if (held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
-      if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
-      if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
-      if (held.state === 'tamped') { toast('이미 탬핑된 포터필터예요 — 머신에 장착하세요'); return; }
-      if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      // 빈 포터필터 → 분쇄도 다이얼 미니게임 (떼는 위치 = 분쇄도, 추출에 영향)
+      // 빈 포터필터를 들고 있으면 → 현재 설정된 분쇄도로 즉시 분쇄 시작
+      if (held && held.type === 'portafilter') {
+        if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
+        if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
+        if (held.state === 'tamped') { toast('이미 탬핑된 포터필터예요 — 머신에 장착하세요'); return; }
+        if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+        S.stocks.beans--;
+        setHeld(null);
+        job.busy = true; job.done = false; job.t = 0; job.dur = 1.6; job.hasPf = true; job.grind = job.grindSetting;
+        WORLD.setPortafilterState(job.pfMesh, 'empty');
+        job.sound = AudioFX.grind(job.dur);
+        AudioFX.metalClack();
+        UI.hud();
+        return;
+      }
+      // 포터필터를 들지 않았으면 → 분쇄도 다이얼 조정 (소지 여부와 무관하게 가능)
       if (!grindGame) startGrindGame(job);
       return;
     }
@@ -1258,14 +1266,14 @@ const Game = (() => {
     return true;
   }
 
-  /* ===== 분쇄도 다이얼 미니게임 — 빈 포터필터를 들고 그라인더에서 [E]로 시작 =====
-   * [E]를 꾹 누르면 게이지가 차오르고(아래=가늚, 위=굵음), 떼는 위치가 분쇄도가 된다.
-   * 초록(이상 구간)에서 떼면 완벽 추출(꾸준한 줄기). 떼면 곧바로 비동기 분쇄가 시작된다. */
+  /* ===== 분쇄도 다이얼 — 그라인더에서 [E]로 분쇄도를 조정(머신에 저장) =====
+   * 포터필터 소지와 무관하게 조정 가능. [E]를 꾹 누르면 게이지가 차오르고(아래=가늚, 위=굵음),
+   * 떼는 위치가 분쇄도 설정이 된다. 이후 빈 포터필터를 들고 [E]로 그 설정대로 분쇄한다. */
   function startGrindGame(job) {
     grindGame = { fill: 0, locked: null, job };
     gaugeBottomUp(GRIND_IDEAL_MIN, GRIND_IDEAL_MAX - GRIND_IDEAL_MIN, 'linear-gradient(0deg,#3a241a,#8a5636)');
-    setGaugeText('⚙️ 분쇄도 — <b>[E]</b>를 누르고 있어 굵게',
-      '초록(이상 분쇄도)에서 손을 떼면 완벽 추출 · 가늘면 뚝뚝(과다), 굵으면 분사(부족)');
+    setGaugeText('⚙️ 분쇄도 조정 — <b>[E]</b>를 누르고 있어 굵게',
+      '초록(이상)에서 떼면 완벽 추출 · 가늘면 뚝뚝(과다), 굵으면 분사(부족)');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
   }
@@ -1278,24 +1286,18 @@ const Game = (() => {
     if (grindGame.locked) return;
     grindGame.locked = true;
     const job = grindGame.job;
-    const grind = fill;   // 0 가늚 ~ 1 굵음
-    // 원두 소모 + 빈손 + 비동기 분쇄 시작 (분쇄도를 잡에 기록 → 꺼낼 때 포터필터로 인계)
-    S.stocks.beans--;
-    setHeld(null);
-    job.busy = true; job.done = false; job.t = 0; job.dur = 1.6; job.hasPf = true; job.grind = grind;
-    WORLD.setPortafilterState(job.pfMesh, 'empty');
-    job.sound = AudioFX.grind(job.dur);
-    AudioFX.metalClack();
-    const ideal = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
-    if (ideal) { toast('⚙️ 이상적인 분쇄도! 분쇄 시작', 'good', 1500); AudioFX.tampPerfectSfx(); }
-    else toast(grind < GRIND_IDEAL_MIN ? '분쇄가 가늘어요 — 추출이 느려 뚝뚝 떨어져요' : '분쇄가 굵어요 — 추출이 빨라 분사돼요', '', 1700);
-    UI.hud();
+    job.grindSetting = fill;   // 0 가늚 ~ 1 굵음 — 머신에 저장(분쇄 시 포터필터로 인계)
+    if (job.dialMark) WORLD.setGrinderDial(job.dialMark, fill);
+    const ideal = fill >= GRIND_IDEAL_MIN && fill <= GRIND_IDEAL_MAX;
+    if (ideal) { toast('⚙️ 분쇄도 설정: 이상적 — 완벽 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
+    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라 분사(부족)', '', 1700); AudioFX.metalClack(); }
     endGrindGame();
   }
   function updateGrindGame(dt, aimData) {
     if (!grindGame) return false;
-    const ok = aimData && aimData.id === 'grinder' && held && held.type === 'portafilter' && held.state === 'empty';
-    if (!ok) { endGrindGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소(원두 미소모)
+    // 조정 중엔 그라인더를 계속 보고만 있으면 됨(소지 무관). 단 빈 포터필터를 들면 분쇄 의도로 보고 취소
+    const ok = aimData && aimData.id === 'grinder' && !(held && held.type === 'portafilter');
+    if (!ok) { endGrindGame(); return false; }
     if (useDown) {
       grindGame.fill = Math.min(1, grindGame.fill + dt / GRIND_DUR);
       $('tgFill').style.height = (grindGame.fill * 100) + '%';
