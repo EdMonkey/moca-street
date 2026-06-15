@@ -94,7 +94,7 @@
   Game.init(scene, env);
   Weather.init(scene, env);   // 실외 날씨(하늘·안개·햇빛·비) — 하루마다 game.js가 갱신
   Customers.init(scene, env, {
-    onAngryLeave: c => { if (Game.mode === 'playing') Game.onAngryLeave(c); },
+    onAngryLeave: c => { if (Game.mode === 'playing' || Game.mode === 'closing') Game.onAngryLeave(c); },
   });
   Editor.init(scene, env, camera);
 
@@ -149,7 +149,7 @@
             emit(j.st.root.localToWorld(j.wandLocal.clone()), true);
         });
         // 뜨거운 음료(컵/샷잔/피처)에서 김 — 제조 후 30초 내(신선)에만, 30초 지나면 사라짐
-        if (Game.mode === 'playing' && Game.steamSources)
+        if ((Game.mode === 'playing' || Game.mode === 'closing') && Game.steamSources)
           Game.steamSources().forEach(p => { if (Math.random() < 0.6) emit(p, false); });
       }
       pool.forEach(s => {
@@ -190,6 +190,12 @@
     paused = false;
     lockPointer();
   };
+  $('btnCloseDayEnd').onclick = () => {   // 정산창 → 영업후 정리 계속
+    AudioFX.ensure();
+    Game.closeDayEndPanel();
+    paused = false;
+    lockPointer();
+  };
   $('btnStartService').onclick = () => {  // 준비 패널 → 영업 시작
     AudioFX.ensure();
     Game.beginOpen();
@@ -206,19 +212,21 @@
   $('btnRestart').onclick = () => location.reload();   // 폐업 → 새로 시작(저장은 이미 초기화됨)
 
   canvas.addEventListener('click', () => {
-    if ((Game.mode === 'playing' || Game.mode === 'prep') && !document.pointerLockElement
-      && !Game.prepPanelOpen) lockPointer();
+    if ((Game.mode === 'playing' || Game.mode === 'closing' || Game.mode === 'prep' || Game.mode === 'after') && !document.pointerLockElement
+      && !Game.prepPanelOpen && $('dayEnd').classList.contains('hidden')) lockPointer();
   });
 
   document.addEventListener('pointerlockchange', () => {
     const locked = !!document.pointerLockElement;
-    if (Game.mode !== 'playing' && Game.mode !== 'prep') return;
+    if (Game.mode !== 'playing' && Game.mode !== 'closing' && Game.mode !== 'prep' && Game.mode !== 'after') return;
     if (locked) {
       paused = false;
       Player.enabled = true;
       $('pauseScreen').classList.add('hidden');
     } else if (Game.mode === 'prep' && Game.prepPanelOpen) {
       Player.enabled = false;   // 관리 패널이 마우스를 잡음 — 일시정지 아님
+    } else if (Game.mode === 'after' && !$('dayEnd').classList.contains('hidden')) {
+      Player.enabled = false;   // 정산창이 열려 있으면 일시정지 화면을 띄우지 않음
     } else {
       paused = true;
       Player.enabled = false;

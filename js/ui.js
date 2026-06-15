@@ -39,6 +39,12 @@ const UI = (() => {
     } else if (h.type === 'pitcher') {
       const info = h.foam ? '우유+거품 — 컵에 부으세요' : h.milk ? '데운 우유 — 컵에 부으세요' : '비어 있음 — 스티머에서 데우세요';
       el.innerHTML = `<b style="color:var(--accent2)">스팀 피처</b><div class="ing">${info}</div>`;
+    } else if (h.type === 'deliveryBox') {
+      const r = RESTOCK[h.kind];
+      el.innerHTML = `<b style="color:var(--accent2)">${r.name} 택배박스</b><div class="ing">창고 ${r.name} 칸에 넣기 · ${h.amount}개</div>`;
+    } else if (h.type === 'supply') {
+      const r = RESTOCK[h.kind];
+      el.innerHTML = `<b style="color:var(--accent2)">${r.name} 1개</b><div class="ing">사용처에 보충하세요</div>`;
     } else {
       el.innerHTML = `<b style="color:var(--accent2)">${DESSERTS[h.kind].name}</b>`;
     }
@@ -80,7 +86,17 @@ const UI = (() => {
     const held = ctx.held(), env = ctx.env(), S = ctx.S(), fmt = ctx.fmt, itemLabel = ctx.itemLabel;
     if (!it) return null;
     const E = '<b>[E]</b> ';
+    const target = { grinder: 'beans', pitcherrack: 'milk', cupHot: 'cups', cupIce: 'cups', cupEsp: 'cups', dessert: 'dessert' }[it.id];
+    if (held && held.type === 'supply' && target) {
+      const r = RESTOCK[target];
+      return held.kind === target ? E + `${r.name} 사용처 보충` : `${RESTOCK[held.kind].name}은(는) 여기 보충할 수 없어요`;
+    }
     switch (it.id) {
+      case 'deliveryBox': {
+        const box = S.deliveryBoxes.find(b => b.id === it.boxId);
+        if (!box) return null;
+        return held ? '손을 비우면 택배박스를 들 수 있어요' : E + `${RESTOCK[box.kind].name} 택배박스 들기 (${box.amount}개)`;
+      }
       case 'register': return Customers.frontCustomer() ? E + '주문 받기' : '대기 중인 손님이 없습니다';
       case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
       case 'door': return E + (env.door && env.door.open ? '문 닫기' : '문 열기');
@@ -207,8 +223,20 @@ const UI = (() => {
         return E + '버리기';
       }
       case 'restock': {
-        const r = RESTOCK[it.kind];
-        return E + `${r.name} 보충 +${r.amount} (${fmt(r.price)})`;
+        const box = Logistics.storageSlotBox(S, it.slotId);
+        const slotLabel = typeof it.slot === 'number' ? `선반 ${it.rack + 1} · 아래서 ${it.slot + 1}번째 칸` : '창고칸';
+        if (held && held.type === 'deliveryBox') {
+          const r = RESTOCK[held.kind];
+          if (box) return `${slotLabel}에는 이미 박스가 있어요`;
+          return E + `${r.name} 박스 ${slotLabel} 입고 +${held.amount}`;
+        }
+        if (held) return '손을 비우면 창고에서 꺼낼 수 있어요';
+        if (box) {
+          const r = RESTOCK[box.kind];
+          const total = Logistics.storageTotal(S, box.kind);
+          return E + `${r.name} 1개 꺼내기 (${slotLabel} ${box.amount} · 창고 ${total})`;
+        }
+        if (!box) return null;
       }
     }
     return null;
@@ -232,11 +260,17 @@ const UI = (() => {
       $('xpTxt').textContent = `${S.xp}/${next} XP`;
     }
     const st = S.stocks;
+    const wh = {
+      beans: Logistics.storageTotal(S, 'beans'),
+      milk: Logistics.storageTotal(S, 'milk'),
+      cups: Logistics.storageTotal(S, 'cups'),
+      dessert: Logistics.storageTotal(S, 'dessert'),
+    };
     $('stocks').innerHTML =
-      `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span><br>` +
-      `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span><br>` +
-      `<span class="${st.cups <= 6 ? 'low' : ''}">🥤 컵 <span class="val">${st.cups}</span></span><br>` +
-      `<span class="${st.dessert <= 2 ? 'low' : ''}">🍰 디저트 <span class="val">${st.dessert}</span></span>`;
+      `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span> <span style="opacity:.55">창고 ${wh.beans || 0}</span><br>` +
+      `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span> <span style="opacity:.55">창고 ${wh.milk || 0}</span><br>` +
+      `<span class="${st.cups <= 6 ? 'low' : ''}">🥤 컵 <span class="val">${st.cups}</span></span> <span style="opacity:.55">창고 ${wh.cups || 0}</span><br>` +
+      `<span class="${st.dessert <= 2 ? 'low' : ''}">🍰 디저트 <span class="val">${st.dessert}</span></span> <span style="opacity:.55">창고 ${wh.dessert || 0}</span>`;
   }
 
   function clock() {
@@ -244,6 +278,11 @@ const UI = (() => {
     if (ctx.mode() === 'prep') {
       $('clock').textContent = '08:00';
       os.textContent = '● 영업 준비 중'; os.className = 'closed';
+      return;
+    }
+    if (ctx.mode() === 'after') {
+      $('clock').textContent = '18:00';
+      os.textContent = '● 영업후 정리'; os.className = 'closed';
       return;
     }
     const h = 9 + (ctx.timeSec() / DAY_LEN) * 9;
