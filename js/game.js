@@ -987,14 +987,34 @@ const Game = (() => {
     if (t) t.innerHTML = title;
     if (h) h.textContent = hint;
   }
+  // 게이지(#tampGame) 채움 방향/색 설정 — 탬핑·스팀은 아래→위(기본 앰버), 도징은 위→아래(재료색)
+  function gaugeBottomUp(lo) {
+    $('tampGame').classList.remove('dose');
+    $('tgFill').style.background = '';   // CSS 기본 앰버 그라데이션으로 복귀
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.top = 'auto'; band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+  }
+  function gaugeTopDown(lo, fillBg) {
+    $('tampGame').classList.add('dose');
+    $('tgFill').style.background = fillBg;
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.bottom = 'auto'; band.style.top = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+  }
+  // 시럽/휘핑 게이지 색 (위가 밝고 아래가 진하게 — 부어 넣는 느낌)
+  function doseFillColor(kind, syrupKind) {
+    if (kind === 'whip') return 'linear-gradient(180deg,#ffffff,#e7e3d6)';
+    const c = ({ vanilla: ['#f6ecc4', '#e3c97e'], caramel: ['#d59a55', '#a5662a'], choco: ['#7c4c30', '#492a18'] })[syrupKind]
+      || ['#e6cd84', '#c08a3e'];
+    return `linear-gradient(180deg,${c[0]},${c[1]})`;
+  }
   function startTampGame() {
     // 퍼펙트 존 시작 위치를 매번 살짝 랜덤화 (외워지지 않도록)
     const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
     // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
     tampGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: AudioFX.tampHold(TAMP_DUR) };
-    const band = document.querySelector('#tampGame .tgPerfect');
-    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
-    $('tgFill').style.height = '0%';
+    gaugeBottomUp(lo);
     setGaugeText('🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기', '퍼펙트 존(초록)에서 손을 떼면 크레마(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
@@ -1065,9 +1085,7 @@ const Game = (() => {
     const dur = S.upgrades.fastSteam ? 1.4 : 2.4;
     // 누르는 즉시 채워지는 press-and-hold (탬핑식 armed/ready 2단계 없음)
     steamGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], job, makingFoam, dur, sound: AudioFX.steam(dur) };
-    const band = document.querySelector('#tampGame .tgPerfect');
-    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
-    $('tgFill').style.height = '0%';
+    gaugeBottomUp(lo);
     setGaugeText('🥛 스티밍 — <b>[E]</b>를 누르고 있어 ' + (makingFoam ? '우유 거품 만들기' : '우유 데우기'),
       '퍼펙트 존(초록)에서 손을 떼면 마이크로폼(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
@@ -1131,20 +1149,33 @@ const Game = (() => {
    * 퍼펙트 존(정량)에서 떼면 팁 보너스, 일반 성공도 재료 추가. 너무 적으면 재시도. */
   function startDoseGame(kind, syrupKind) {
     const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
+    const part = kind === 'syrup'
+      ? (env.machines.syrup && env.machines.syrup.pumps[syrupKind])
+      : (env.machines.whip && env.machines.whip.nozzle);
     // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
     doseGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], kind, syrupKind,
-      drink: held.drink, field: kind === 'syrup' ? 'syrup' : 'whip', tickT: 0 };
-    const band = document.querySelector('#tampGame .tgPerfect');
-    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
-    $('tgFill').style.height = '0%';
+      drink: held.drink, field: kind === 'syrup' ? 'syrup' : 'whip', tickT: 0,
+      part, partBaseY: part ? part.position.y : 0 };
+    gaugeTopDown(lo, doseFillColor(kind, syrupKind));   // 위→아래로 차오르는 재료색 게이지
     setGaugeText(kind === 'syrup' ? '🍯 시럽 — <b>[E]</b>를 누르고 있어 펌프' : '🍦 휘핑 — <b>[E]</b>를 누르고 있어 짜기',
       '퍼펙트 존(초록)에서 손을 떼면 정량 도징(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
   }
+  // 펌프 헤드/노즐을 살짝 눌렀다 떼는 연출 (펌프질·분사 반복)
+  function pulseDosePart() {
+    const g = doseGame;
+    if (!g || !g.part) return;
+    const part = g.part, base = g.partBaseY;
+    part.position.y = base - 0.03;
+    setTimeout(() => { part.position.y = base; }, 120);
+  }
   function endDoseGame() {
+    if (doseGame && doseGame.part) doseGame.part.position.y = doseGame.partBaseY;   // 진행 중 종료 시 원위치
     doseGame = null;
     clearHitFx();
+    $('tampGame').classList.remove('dose');
+    $('tgFill').style.background = '';
     $('tampGame').classList.add('hidden');
   }
   function lockDoseGame(fill) {
@@ -1190,7 +1221,7 @@ const Game = (() => {
       g.fill = Math.min(1, g.fill + dt / DOSE_DUR);
       $('tgFill').style.height = (g.fill * 100) + '%';
       g.tickT += dt;
-      if (g.tickT >= 0.22) { g.tickT = 0; (g.kind === 'syrup' ? AudioFX.syrupPump : AudioFX.whipSpray)(); }
+      if (g.tickT >= 0.22) { g.tickT = 0; (g.kind === 'syrup' ? AudioFX.syrupPump : AudioFX.whipSpray)(); pulseDosePart(); }
       if (g.fill >= 1) lockDoseGame(1);
     } else {
       lockDoseGame(g.fill);
