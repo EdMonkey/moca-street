@@ -89,13 +89,13 @@ function testStoreDeliveryBoxMovesToStorage() {
   Logistics.ensureState(S);
   const box = Logistics.addDeliveryBox(S, 'cups', 40, 'scheduled');
 
-  const result = Logistics.storeDeliveryBox(S, box.id, 2);
+  const result = Logistics.storeDeliveryBox(S, box.id, 'r1s2');
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(S.storage.cups, 40);
   assert.strictEqual(Logistics.storageTotal(S, 'cups'), 40);
   assert.strictEqual(S.storageBoxes.cups.length, 1);
-  assert.strictEqual(S.storageBoxes.cups[0].slot, 2);
+  assert.strictEqual(S.storageBoxes.cups[0].slotId, 'r1s2');
   assert.strictEqual(S.storageBoxes.cups[0].amount, 40);
   assert.deepStrictEqual(plain(S.deliveryBoxes), []);
 }
@@ -104,13 +104,13 @@ function testSingleUnitTransferFromStorageToStation() {
   const S = freshState();
   Logistics.ensureState(S);
   const box = Logistics.addDeliveryBox(S, 'beans', 2, 'scheduled');
-  Logistics.storeDeliveryBox(S, box.id, 1);
+  Logistics.storeDeliveryBox(S, box.id, 'r3s1');
   S.stocks.beans = 29;
 
-  const take = Logistics.takeSupply(S, 'beans', 1);
+  const take = Logistics.takeSupply(S, 'beans', 'r3s1');
   assert.strictEqual(take.ok, true);
   assert.strictEqual(take.kind, 'beans');
-  assert.strictEqual(take.slot, 1);
+  assert.strictEqual(take.slotId, 'r3s1');
   assert.strictEqual(S.storage.beans, 1);
   assert.strictEqual(S.storageBoxes.beans[0].amount, 1);
 
@@ -127,30 +127,31 @@ function testOccupiedShelfSlotRejectsSecondBox() {
   const S = freshState();
   Logistics.ensureState(S);
   const first = Logistics.addDeliveryBox(S, 'milk', 20, 'scheduled');
-  Logistics.storeDeliveryBox(S, first.id, 1);
-  const second = Logistics.addDeliveryBox(S, 'milk', 20, 'scheduled');
+  Logistics.storeDeliveryBox(S, first.id, 'r0s1');
+  const second = Logistics.addDeliveryBox(S, 'beans', 30, 'scheduled');
 
-  const result = Logistics.storeDeliveryBox(S, second.id, 1);
+  const result = Logistics.storeDeliveryBox(S, second.id, 'r0s1');
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.reason, 'occupied');
   assert.strictEqual(S.deliveryBoxes.length, 1);
   assert.strictEqual(S.storageBoxes.milk.length, 1);
   assert.strictEqual(S.storage.milk, 20);
+  assert.strictEqual(S.storage.beans, 0);
 }
 
 function testEmptyShelfSlotDoesNotDrainAnotherShelf() {
   const S = freshState();
   Logistics.ensureState(S);
   const box = Logistics.addDeliveryBox(S, 'beans', 2, 'scheduled');
-  Logistics.storeDeliveryBox(S, box.id, 1);
+  Logistics.storeDeliveryBox(S, box.id, 'r0s1');
 
-  const result = Logistics.takeSupply(S, 'beans', 2);
+  const result = Logistics.takeSupply(S, 'beans', 'r0s2');
 
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.reason, 'empty_slot');
   assert.strictEqual(S.storage.beans, 2);
-  assert.strictEqual(S.storageBoxes.beans[0].slot, 1);
+  assert.strictEqual(S.storageBoxes.beans[0].slotId, 'r0s1');
   assert.strictEqual(S.storageBoxes.beans[0].amount, 2);
 }
 
@@ -158,15 +159,32 @@ function testShelfBoxDisappearsWhenAmountIsZero() {
   const S = freshState();
   Logistics.ensureState(S);
   const box = Logistics.addDeliveryBox(S, 'beans', 2, 'scheduled');
-  Logistics.storeDeliveryBox(S, box.id, 2);
+  Logistics.storeDeliveryBox(S, box.id, 'r2s2');
 
-  Logistics.takeSupply(S, 'beans', 2);
-  const result = Logistics.takeSupply(S, 'beans', 2);
+  Logistics.takeSupply(S, 'beans', 'r2s2');
+  const result = Logistics.takeSupply(S, 'beans', 'r2s2');
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.remaining, 0);
   assert.strictEqual(S.storage.beans, 0);
   assert.deepStrictEqual(plain(S.storageBoxes.beans), []);
+}
+
+function testAnyShelfCanStoreAnyKind() {
+  const S = freshState();
+  Logistics.ensureState(S);
+  const beans = Logistics.addDeliveryBox(S, 'beans', 30, 'scheduled');
+  const milk = Logistics.addDeliveryBox(S, 'milk', 20, 'scheduled');
+
+  const beansResult = Logistics.storeDeliveryBox(S, beans.id, 'r3s0');
+  const milkResult = Logistics.storeDeliveryBox(S, milk.id, 'r0s2');
+
+  assert.strictEqual(beansResult.ok, true);
+  assert.strictEqual(beansResult.box.slotId, 'r3s0');
+  assert.strictEqual(milkResult.ok, true);
+  assert.strictEqual(milkResult.box.slotId, 'r0s2');
+  assert.strictEqual(Logistics.storageSlotBox(S, 'r3s0').kind, 'beans');
+  assert.strictEqual(Logistics.storageSlotBox(S, 'r0s2').kind, 'milk');
 }
 
 function testLegacyStorageTotalsMigrateToShelfBox() {
@@ -177,7 +195,7 @@ function testLegacyStorageTotalsMigrateToShelfBox() {
 
   assert.strictEqual(S.storage.beans, 5);
   assert.strictEqual(S.storageBoxes.beans.length, 1);
-  assert.strictEqual(S.storageBoxes.beans[0].slot, 0);
+  assert.strictEqual(S.storageBoxes.beans[0].slotId, 'r0s0');
   assert.strictEqual(S.storageBoxes.beans[0].amount, 5);
 }
 
@@ -202,6 +220,7 @@ testSingleUnitTransferFromStorageToStation();
 testOccupiedShelfSlotRejectsSecondBox();
 testEmptyShelfSlotDoesNotDrainAnotherShelf();
 testShelfBoxDisappearsWhenAmountIsZero();
+testAnyShelfCanStoreAnyKind();
 testLegacyStorageTotalsMigrateToShelfBox();
 testMoveDeliveryBoxStoresPositionAndQuarterTurns();
 

@@ -135,10 +135,9 @@ const Game = (() => {
     save();
   }
 
-  function storeHeldDelivery(kind, slot) {
+  function storeHeldDelivery(slotId) {
     if (!held || held.type !== 'deliveryBox') return false;
-    if (held.kind !== kind) { toast(`${supplyNames[held.kind]} 박스는 해당 창고칸에 넣으세요`, 'bad'); AudioFX.err(); return true; }
-    const res = Logistics.storeDeliveryBox(S, held.id, slot);
+    const res = Logistics.storeDeliveryBox(S, held.id, slotId);
     if (!res.ok) {
       const msg = res.reason === 'occupied' ? '이 선반칸에는 이미 박스가 있어요'
         : res.reason === 'full' ? '이 창고칸 선반이 가득 찼어요'
@@ -152,20 +151,22 @@ const Game = (() => {
     renderStorageBoxes();
     UI.hud();
     save();
-    toast(`${supplyNames[kind]} 창고 입고 +${res.box.amount}`, 'good');
+    toast(`${supplyNames[res.box.kind]} 창고 입고 +${res.box.amount}`, 'good');
     AudioFX.put();
     return true;
   }
 
-  function takeStorageSupply(kind, slot) {
-    const res = Logistics.takeSupply(S, kind, slot);
+  function takeStorageSupply(slotId) {
+    const box = Logistics.storageSlotBox(S, slotId);
+    if (!box) { toast('이 선반칸은 비어있어요'); return; }
+    const res = Logistics.takeSupply(S, box.kind, slotId);
     if (!res.ok) {
       if (res.reason === 'empty_slot') { toast('이 선반칸은 비어있어요'); return; }
-      if (mode === 'playing' || mode === 'closing') orderQuickDelivery(kind);
-      else { toast(`창고에 ${supplyNames[kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
+      if (mode === 'playing' || mode === 'closing') orderQuickDelivery(box.kind);
+      else { toast(`창고에 ${supplyNames[box.kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
       return;
     }
-    setHeld({ type: 'supply', kind, storageBoxId: res.boxId, slot: res.slot });
+    setHeld({ type: 'supply', kind: res.kind, storageBoxId: res.boxId, slotId: res.slotId });
     renderStorageBoxes();
     UI.hud();
     AudioFX.pick();
@@ -188,7 +189,7 @@ const Game = (() => {
   function returnHeldLogistics(notify = false) {
     if (!held || (held.type !== 'supply' && held.type !== 'deliveryBox')) return false;
     if (held.type === 'supply') {
-      const res = Logistics.returnSupply(S, held.kind, held.storageBoxId, held.slot);
+      const res = Logistics.returnSupply(S, held.kind, held.storageBoxId, held.slotId);
       if (!res.ok) { toast('창고 선반이 가득 찼어요', 'bad'); AudioFX.err(); return true; }
       setHeld(null);
       renderStorageBoxes();
@@ -386,9 +387,9 @@ const Game = (() => {
       env.setStoragePreview(null);
       return false;
     }
-    const occupied = Logistics.storageSlotOccupied(S, aimData.kind, aimData.slot);
-    const ok = !held || held.type !== 'deliveryBox' || (held.kind === aimData.kind && !occupied);
-    env.setStoragePreview(aimData.kind, aimData.slot, ok);
+    const occupied = Logistics.storageSlotOccupied(S, aimData.slotId);
+    const ok = !held || held.type !== 'deliveryBox' || !occupied;
+    env.setStoragePreview(aimData.slotId, ok);
     return true;
   }
 
@@ -612,9 +613,9 @@ const Game = (() => {
     }
 
     if (id === 'restock') {
-      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.kind, it.slot); return; }
+      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.slotId); return; }
       if (held) { toast('손을 비우면 창고에서 꺼낼 수 있어요'); return; }
-      takeStorageSupply(it.kind, it.slot);
+      takeStorageSupply(it.slotId);
       return;
     }
 

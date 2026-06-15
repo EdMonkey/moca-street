@@ -223,21 +223,20 @@ const UI = (() => {
         return E + '버리기';
       }
       case 'restock': {
-        const r = RESTOCK[it.kind];
-        const slotLabel = typeof it.slot === 'number' ? `아래서 ${it.slot + 1}번째 칸` : '창고칸';
-        const slotAmount = Logistics.storageSlotAmount(S, it.kind, it.slot);
-        const total = Logistics.storageTotal(S, it.kind);
+        const box = Logistics.storageSlotBox(S, it.slotId);
+        const slotLabel = typeof it.slot === 'number' ? `선반 ${it.rack + 1} · 아래서 ${it.slot + 1}번째 칸` : '창고칸';
         if (held && held.type === 'deliveryBox') {
-          if (held.kind !== it.kind) return `${RESTOCK[held.kind].name} 박스는 해당 창고칸에 넣으세요`;
-          if (slotAmount > 0) return `${slotLabel}에는 이미 박스가 있어요`;
+          const r = RESTOCK[held.kind];
+          if (box) return `${slotLabel}에는 이미 박스가 있어요`;
           return E + `${r.name} 박스 ${slotLabel} 입고 +${held.amount}`;
         }
         if (held) return '손을 비우면 창고에서 꺼낼 수 있어요';
-        if (slotAmount > 0) return E + `${r.name} 1개 꺼내기 (${slotLabel} ${slotAmount} · 창고 ${total})`;
-        if (total > 0) return `${slotLabel}은 비어있어요`;
-        return ctx.mode() === 'playing' || ctx.mode() === 'closing'
-          ? E + `${r.name} 퀵 배송 (${fmt(Math.round(r.price * 1.8 / 100) * 100)})`
-          : `창고에 ${r.name} 재고가 없어요`;
+        if (box) {
+          const r = RESTOCK[box.kind];
+          const total = Logistics.storageTotal(S, box.kind);
+          return E + `${r.name} 1개 꺼내기 (${slotLabel} ${box.amount} · 창고 ${total})`;
+        }
+        return `${slotLabel}은 비어있어요`;
       }
     }
     return null;

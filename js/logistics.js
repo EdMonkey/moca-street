@@ -5,7 +5,9 @@ const Logistics = (() => {
   const { RESTOCK } = DATA;
   const KINDS = Object.keys(RESTOCK);
   const CAPACITY = { beans: 30, milk: 20, cups: 40, dessert: 12 };
+  const STORAGE_RACKS = [0, 1, 2, 3];
   const STORAGE_SLOTS = [0, 1, 2];
+  const STORAGE_SLOT_IDS = STORAGE_RACKS.flatMap(r => STORAGE_SLOTS.map(s => `r${r}s${s}`));
   const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
   const DOOR_SPOTS = [
     DOOR_RIGHT_SPOT,
@@ -39,35 +41,72 @@ const Logistics = (() => {
     return STORAGE_SLOTS.includes(n) ? n : null;
   }
 
-  function firstFreeStorageSlot(S, kind) {
+  function legacySlotId(kind, slot) {
+    const s = clampSlot(slot);
+    if (s == null) return null;
+    const rack = Math.max(0, KINDS.indexOf(kind));
+    return `r${rack}s${s}`;
+  }
+
+  function normalizeSlotId(slotRef, kind = null) {
+    if (typeof slotRef === 'string' && STORAGE_SLOT_IDS.includes(slotRef)) return slotRef;
+    if (kind) return legacySlotId(kind, slotRef);
+    return null;
+  }
+
+  function splitSlotId(slotId) {
+    const m = /^r(\d+)s(\d+)$/.exec(slotId || '');
+    return m ? { rack: Number(m[1]), slot: Number(m[2]) } : { rack: 0, slot: 0 };
+  }
+
+  function firstFreeSlotIdFromUsed(used) {
+    return STORAGE_SLOT_IDS.find(id => !used.has(id)) || null;
+  }
+
+  function usedStorageSlotIds(S) {
+    const used = new Set();
+    KINDS.forEach(kind => {
+      (S.storageBoxes[kind] || []).forEach(b => { if (b.slotId) used.add(b.slotId); });
+    });
+    return used;
+  }
+
+  function firstFreeStorageSlot(S) {
     ensureState(S);
-    const used = new Set(S.storageBoxes[kind].map(b => b.slot));
-    return STORAGE_SLOTS.find(s => !used.has(s));
+    return firstFreeSlotIdFromUsed(usedStorageSlotIds(S));
   }
 
   function normalizeStorageBoxes(boxes, totals) {
     const out = emptyStorageBoxes();
+    const used = new Set();
     KINDS.forEach(kind => {
-      const used = new Set();
       const raw = boxes && Array.isArray(boxes[kind]) ? boxes[kind] : [];
       raw.forEach(b => {
         const amount = Math.max(0, Number(b && b.amount) || 0);
         if (amount <= 0) return;
-        let slot = clampSlot(b.slot);
-        if (slot == null || used.has(slot)) slot = STORAGE_SLOTS.find(s => !used.has(s));
-        if (slot == null) return;
-        used.add(slot);
+        let slotId = normalizeSlotId(b.slotId) || normalizeSlotId(b.slot, kind);
+        if (!slotId || used.has(slotId)) slotId = firstFreeSlotIdFromUsed(used);
+        if (!slotId) return;
+        used.add(slotId);
+        const pos = splitSlotId(slotId);
         out[kind].push({
           id: b.id || storageId(kind),
           kind,
           amount,
-          slot,
+          slotId,
+          rack: pos.rack,
+          slot: pos.slot,
           source: b.source || 'stored',
         });
       });
       const total = Math.max(0, Number(totals && totals[kind]) || 0);
       if (!out[kind].length && total > 0) {
-        out[kind].push({ id: storageId(kind), kind, amount: total, slot: 0, source: 'legacy' });
+        const slotId = firstFreeSlotIdFromUsed(used);
+        if (slotId) {
+          used.add(slotId);
+          const pos = splitSlotId(slotId);
+          out[kind].push({ id: storageId(kind), kind, amount: total, slotId, rack: pos.rack, slot: pos.slot, source: 'legacy' });
+        }
       }
     });
     return out;
@@ -101,20 +140,24 @@ const Logistics = (() => {
     return S.storage[kind] || 0;
   }
 
-  function storageSlotBox(S, kind, slot) {
+  function storageSlotBox(S, slotRef, legacySlot = undefined) {
     ensureState(S);
-    const s = clampSlot(slot);
-    if (s == null) return null;
-    return S.storageBoxes[kind].find(b => b.slot === s) || null;
+    const slotId = legacySlot === undefined ? normalizeSlotId(slotRef) : normalizeSlotId(legacySlot, slotRef);
+    if (!slotId) return null;
+    for (const kind of KINDS) {
+      const box = S.storageBoxes[kind].find(b => b.slotId === slotId);
+      if (box) return box;
+    }
+    return null;
   }
 
-  function storageSlotAmount(S, kind, slot) {
-    const box = storageSlotBox(S, kind, slot);
+  function storageSlotAmount(S, slotRef, legacySlot = undefined) {
+    const box = storageSlotBox(S, slotRef, legacySlot);
     return box ? box.amount : 0;
   }
 
-  function storageSlotOccupied(S, kind, slot) {
-    return !!storageSlotBox(S, kind, slot);
+  function storageSlotOccupied(S, slotRef, legacySlot = undefined) {
+    return !!storageSlotBox(S, slotRef, legacySlot);
   }
 
   function initialState(base) {
@@ -174,21 +217,24 @@ const Logistics = (() => {
     return Object.keys(byKind).map(kind => addDeliveryBox(S, kind, byKind[kind], 'scheduled'));
   }
 
-  function storeDeliveryBox(S, id, slot = null) {
+  function storeDeliveryBox(S, id, slotRef = null) {
     ensureState(S);
     const idx = S.deliveryBoxes.findIndex(b => b.id === id);
     if (idx < 0) return { ok: false, reason: 'missing' };
     const deliveryBox = S.deliveryBoxes[idx];
-    const targetSlot = clampSlot(slot);
-    const freeSlot = targetSlot == null ? firstFreeStorageSlot(S, deliveryBox.kind) : targetSlot;
-    if (freeSlot == null) return { ok: false, reason: 'full' };
-    if (storageSlotOccupied(S, deliveryBox.kind, freeSlot)) return { ok: false, reason: 'occupied' };
+    const targetSlotId = normalizeSlotId(slotRef, deliveryBox.kind);
+    const freeSlotId = targetSlotId || firstFreeStorageSlot(S);
+    if (!freeSlotId) return { ok: false, reason: 'full' };
+    if (storageSlotOccupied(S, freeSlotId)) return { ok: false, reason: 'occupied' };
     S.deliveryBoxes.splice(idx, 1);
+    const pos = splitSlotId(freeSlotId);
     const box = {
       id: storageId(deliveryBox.kind),
       kind: deliveryBox.kind,
       amount: deliveryBox.amount,
-      slot: freeSlot,
+      slotId: freeSlotId,
+      rack: pos.rack,
+      slot: pos.slot,
       source: deliveryBox.source || 'stored',
     };
     S.storageBoxes[box.kind].push(box);
@@ -196,44 +242,48 @@ const Logistics = (() => {
     return { ok: true, box, deliveryBox };
   }
 
-  function takeSupply(S, kind, slot = null) {
+  function takeSupply(S, kind, slotRef = null) {
     ensureState(S);
-    const targetSlot = clampSlot(slot);
+    const targetSlotId = normalizeSlotId(slotRef, kind);
     let box = null;
-    if (targetSlot == null) {
+    if (!targetSlotId) {
       box = S.storageBoxes[kind].find(b => b.amount > 0) || null;
     } else {
-      box = storageSlotBox(S, kind, targetSlot);
-      if (!box && storageTotal(S, kind) > 0) return { ok: false, reason: 'empty_slot', kind, slot: targetSlot };
+      box = storageSlotBox(S, targetSlotId);
+      if (box && box.kind !== kind) return { ok: false, reason: 'wrong_kind', kind, slotId: targetSlotId, box };
+      if (!box && storageTotal(S, kind) > 0) return { ok: false, reason: 'empty_slot', kind, slotId: targetSlotId };
     }
     if (!box) return { ok: false, reason: 'empty', kind };
     box.amount--;
     const remaining = box.amount;
     const boxId = box.id;
     const usedSlot = box.slot;
+    const usedSlotId = box.slotId;
     if (box.amount <= 0) S.storageBoxes[kind] = S.storageBoxes[kind].filter(b => b.id !== boxId);
     syncStorageTotals(S);
-    return { ok: true, kind, boxId, slot: usedSlot, remaining };
+    return { ok: true, kind, boxId, slot: usedSlot, slotId: usedSlotId, remaining };
   }
 
-  function returnSupply(S, kind, preferredBoxId = null, preferredSlot = null) {
+  function returnSupply(S, kind, preferredBoxId = null, preferredSlotRef = null) {
     ensureState(S);
     let box = preferredBoxId && S.storageBoxes[kind].find(b => b.id === preferredBoxId);
-    const targetSlot = clampSlot(preferredSlot);
-    if (!box && targetSlot != null && !storageSlotOccupied(S, kind, targetSlot)) {
-      box = { id: storageId(kind), kind, amount: 0, slot: targetSlot, source: 'returned' };
+    const targetSlotId = normalizeSlotId(preferredSlotRef, kind);
+    if (!box && targetSlotId && !storageSlotOccupied(S, targetSlotId)) {
+      const pos = splitSlotId(targetSlotId);
+      box = { id: storageId(kind), kind, amount: 0, slotId: targetSlotId, rack: pos.rack, slot: pos.slot, source: 'returned' };
       S.storageBoxes[kind].push(box);
     }
     if (!box) box = S.storageBoxes[kind].find(b => b.amount > 0) || null;
     if (!box) {
-      const freeSlot = firstFreeStorageSlot(S, kind);
-      if (freeSlot == null) return { ok: false, reason: 'full' };
-      box = { id: storageId(kind), kind, amount: 0, slot: freeSlot, source: 'returned' };
+      const freeSlotId = firstFreeStorageSlot(S);
+      if (!freeSlotId) return { ok: false, reason: 'full' };
+      const pos = splitSlotId(freeSlotId);
+      box = { id: storageId(kind), kind, amount: 0, slotId: freeSlotId, rack: pos.rack, slot: pos.slot, source: 'returned' };
       S.storageBoxes[kind].push(box);
     }
     box.amount++;
     syncStorageTotals(S);
-    return { ok: true, kind, boxId: box.id, slot: box.slot, amount: box.amount };
+    return { ok: true, kind, boxId: box.id, slot: box.slot, slotId: box.slotId, amount: box.amount };
   }
 
   function putSupplyToStation(S, kind) {
@@ -244,7 +294,7 @@ const Logistics = (() => {
   }
 
   return {
-    KINDS, CAPACITY, STORAGE_SLOTS, DOOR_RIGHT_SPOT,
+    KINDS, CAPACITY, STORAGE_RACKS, STORAGE_SLOTS, STORAGE_SLOT_IDS, DOOR_RIGHT_SPOT,
     ensureState, deliveryPrice, scheduleDelivery, collectArrivals,
     initialState, addDeliveryBox, moveDeliveryBox, storeDeliveryBox, takeSupply, returnSupply,
     putSupplyToStation, storageTotal, storageSlotBox, storageSlotAmount, storageSlotOccupied, firstFreeStorageSlot,

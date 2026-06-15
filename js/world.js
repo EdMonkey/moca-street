@@ -1083,32 +1083,43 @@ const WORLD = (() => {
       const Cx = -8.7;                                   // 랙 형상 중심 X(벽 앞)
       // 형상 중심 Z — 박스를 랙 중앙에 정렬 + 전체를 오른쪽(-z)으로 렉하나(1.1)만큼 민 값
       const STORAGE_SLOT_LEVELS = [
-        { slot: 0, y: 0.36 },
-        { slot: 1, y: 0.92 },
-        { slot: 2, y: 1.48 },
+        { slot: 0, y: 0.56 },
+        { slot: 1, y: 1.12 },
+        { slot: 2, y: 1.68 },
       ];
-      const kinds = [['beans', -4.32], ['milk', -3.22], ['cups', -2.12], ['dessert', -1.02]];
+      const STORAGE_RACKS = [
+        { rack: 0, z: -4.32 },
+        { rack: 1, z: -3.22 },
+        { rack: 2, z: -2.12 },
+        { rack: 3, z: -1.02 },
+      ];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
-      kinds.forEach(([k, cz]) => {
+      env.storageSlots = {};
+      env.storageViews.all = { slots: [], meshes: [], previewSlot: null };
+      STORAGE_RACKS.forEach(r => {
         const slots = STORAGE_SLOT_LEVELS.map(s => {
-          const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, cz, { id: 'restock', kind: k, slot: s.slot }));
-          return { slot: s.slot, x: Cx, y: s.y, z: cz, rot: Math.PI / 2, hitbox: hb };
+          const slotId = `r${r.rack}s${s.slot}`;
+          const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, r.z, { id: 'restock', rack: r.rack, slot: s.slot, slotId }));
+          const slot = { slot: s.slot, rack: r.rack, slotId, x: Cx, y: s.y, z: r.z, rot: Math.PI / 2, hitbox: hb };
+          env.storageSlots[slotId] = slot;
+          env.storageViews.all.slots.push(slot);
+          return slot;
         });
-        env.storageViews[k] = {
-          cz, slots, hitbox: slots[0].hitbox, meshes: [],
-          previewSlot: slots[0],
-        };
+        env.storageViews[`rack${r.rack}`] = { rack: r.rack, slots, hitbox: slots[0].hitbox, meshes: [], previewSlot: slots[0] };
       });
+      env.storageViews.all.previewSlot = env.storageViews.all.slots[0];
       env.syncStorageBoxes = function (storage) {
         Object.keys(env.storageViews).forEach(k => {
           const v = env.storageViews[k];
           v.meshes.forEach(m => scene.remove(m));
           v.meshes = [];
-          v.slots.forEach(s => { s.hitbox.userData.outlineMeshes = null; });
-          const boxes = storage && Array.isArray(storage[k]) ? storage[k] : [];
+        });
+        Object.values(env.storageSlots).forEach(s => { s.hitbox.userData.outlineMeshes = null; });
+        Object.keys(storage || {}).forEach(k => {
+          const boxes = Array.isArray(storage[k]) ? storage[k] : [];
           boxes.forEach(box => {
             if (!box || box.amount <= 0) return;
-            const slot = v.slots.find(s => s.slot === box.slot);
+            const slot = env.storageSlots[box.slotId] || env.storageSlots[`r${box.rack || 0}s${box.slot || 0}`];
             if (!slot) return;
             const bm = makeBoxMesh(box.kind);
             bm.position.set(slot.x, slot.y, slot.z);
@@ -1120,12 +1131,12 @@ const WORLD = (() => {
             count.position.set(0, 0.34, 0.17);
             bm.add(count);
             scene.add(bm);
-            v.meshes.push(bm);
+            env.storageViews.all.meshes.push(bm);
             slot.hitbox.userData.outlineMeshes = [bm];
           });
         });
       };
-      env.setStoragePreview = function (kind, slotNo = 0, ok = true) {
+      env.setStoragePreview = function (slotId, ok = true) {
         if (!env.storagePreview) {
           const g = new THREE.Group();
           const mat = new THREE.MeshBasicMaterial({
@@ -1140,9 +1151,8 @@ const WORLD = (() => {
           env.storagePreview = { root: g, body, mat };
         }
         const p = env.storagePreview;
-        const v = kind && env.storageViews[kind];
-        if (!v) { p.root.visible = false; return; }
-        const slot = v.slots.find(s => s.slot === slotNo) || v.previewSlot;
+        const slot = env.storageSlots[slotId];
+        if (!slot) { p.root.visible = false; return; }
         p.root.position.set(slot.x, slot.y, slot.z);
         p.root.rotation.y = slot.rot;
         p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
@@ -1152,7 +1162,7 @@ const WORLD = (() => {
       // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
       if (window.Assets && window.Assets.ready) {
         window.Assets.ready.then(() => {
-          kinds.forEach(([, cz]) => { const r = window.Assets.spawn('ShelvingRack', Cx + 0.2, cz + 0.42, 0, Math.PI / 2); if (r) scene.add(r); });
+          STORAGE_RACKS.forEach(({ z }) => { const r = window.Assets.spawn('ShelvingRack', Cx + 0.2, z + 0.42, 0, Math.PI / 2); if (r) scene.add(r); });
         }).catch(() => {});
       }
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.25), textLabel('창 고', 256, 64, '700 40px "Malgun Gothic"'));
