@@ -598,14 +598,16 @@ const Game = (() => {
         AudioFX.err();
         return;
       }
-      // 분쇄도 → 추출 모드/시간. 가늘면 막혀서 느린 드립(과다), 굵으면 빨라 분사(부족)
+      // 분쇄도 → 추출 속도(시간), 탬핑 → 채널링(물총). 둘 다 추출 줄기 비주얼에 반영
       const grind = (slot.grind == null) ? (GRIND_IDEAL_MIN + GRIND_IDEAL_MAX) / 2 : slot.grind;
-      const ideal = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
-      slot.extractMode = ideal ? 'ideal' : (grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse');
-      slot.grindPerfect = ideal && slot.grind != null;
+      const idealGrind = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
+      slot.grindPerfect = idealGrind && slot.grind != null;
+      // 물총(채널링): 탬핑이 완벽하지 않으면 퍽이 고르지 않아 줄기가 비스듬히 튄다(분쇄도와 무관)
+      slot.extractMode = !slot.tampPerfect ? 'channel'
+        : idealGrind ? 'ideal' : (grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse');
       let dur = S.upgrades.fastShot ? 2.0 : 3.4;
-      if (slot.extractMode === 'fine') dur *= 1 + (GRIND_IDEAL_MIN - grind) * 1.5;     // 막힘: 추출 지연
-      else if (slot.extractMode === 'coarse') dur *= 1 - (grind - GRIND_IDEAL_MAX) * 0.8;  // 분출: 추출 단축
+      if (grind < GRIND_IDEAL_MIN) dur *= 1 + (GRIND_IDEAL_MIN - grind) * 1.5;     // 가늚: 추출 지연(과다)
+      else if (grind > GRIND_IDEAL_MAX) dur *= 1 - (grind - GRIND_IDEAL_MAX) * 0.8;  // 굵음: 추출 단축(부족)
       slot.busy = true; slot.done = false; slot.t = 0;
       slot.dur = dur;
       slot.stream.visible = true;
@@ -991,11 +993,11 @@ const Game = (() => {
         slot.cupMesh = cm;
         AudioFX.bell();
       } else {
-        // 커피 줄기 애니메이션 — 분쇄도에 따라 물총(굵음)/꾸준(이상)/뚝뚝(가늚)
+        // 커피 줄기 — 탬핑 불균일이면 물총(channel), 분쇄도로 빠름(coarse)/꾸준(ideal)/뚝뚝(fine)
         const s = slot.stream;
         const mode = slot.extractMode || 'ideal';
         const bx = slot.localPos.x;
-        if (mode === 'coarse') {
+        if (mode === 'channel') {
           // 물총(스프릿징): 채널링으로 가는 줄기가 비스듬히 사방으로 튐 — 각도/위치가 들쭉날쭉
           s.visible = true;
           const ang = Math.sin(slot.t * 57) * 0.5 + Math.sin(slot.t * 31) * 0.22;   // 좌우로 휘는 분출 각
@@ -1004,8 +1006,14 @@ const Game = (() => {
           s.rotation.x = Math.sin(slot.t * 46) * 0.28;
           s.position.x = bx - ang * 0.06 + Math.sin(slot.t * 63) * 0.01;             // 추출구(상단) 고정하듯 보정 + 떨림
           s.position.y = 0.115 + Math.sin(slot.t * 44) * 0.008;
+        } else if (mode === 'coarse') {
+          // 빠른 추출: 곧게 떨어지되 조금 굵고 빠르게 출렁이는 줄기(부족 추출)
+          s.visible = true;
+          s.rotation.set(0, 0, 0); s.position.x = bx;
+          s.scale.set(1.25, 1.1 + Math.sin(slot.t * 38) * 0.14, 1.25);
+          s.position.y = 0.115 + Math.sin(slot.t * 34) * 0.006;
         } else if (mode === 'fine') {
-          // 뚝뚝: 가는 줄기가 주기적으로 끊기며 방울이 떨어짐
+          // 뚝뚝: 가는 줄기가 주기적으로 끊기며 방울이 떨어짐(과다 추출)
           const phase = (slot.t * 2.4) % 1;
           s.visible = phase < 0.42;
           s.rotation.set(0, 0, 0); s.position.x = bx;
@@ -1096,7 +1104,7 @@ const Game = (() => {
       pressTamper();
       AudioFX.tampDone();
       if (result === 'perfect') AudioFX.tampPerfectSfx();
-      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', result === 'perfect' ? 'gold' : 'good');
+      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공 — 약간 불균일(추출 시 물총 주의)', result === 'perfect' ? 'gold' : 'good');
     }
   }
   function finishTamp(perfect, msg, cls) {
@@ -1297,8 +1305,8 @@ const Game = (() => {
     job.grindSetting = fill;   // 0 가늚 ~ 1 굵음 — 머신에 저장(분쇄 시 포터필터로 인계)
     if (job.dialMark) WORLD.setGrinderDial(job.dialMark, fill);
     const ideal = fill >= GRIND_IDEAL_MIN && fill <= GRIND_IDEAL_MAX;
-    if (ideal) { toast('⚙️ 분쇄도 설정: 이상적 — 완벽 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
-    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라 물총처럼 튐(부족)', '', 1700); AudioFX.metalClack(); }
+    if (ideal) { toast('⚙️ 분쇄도 설정: 이상적 — 균형 잡힌 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
+    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라요(부족)', '', 1700); AudioFX.metalClack(); }
     endGrindGame();
   }
   function updateGrindGame(dt, aimData) {
