@@ -1087,6 +1087,7 @@ const WORLD = (() => {
         { slot: 1, y: 1.12 },
         { slot: 2, y: 1.68 },
       ];
+      const STORAGE_BOX_Y_OFFSET = 0.06;
       const STORAGE_RACKS = [
         { rack: 0, z: -4.32 },
         { rack: 1, z: -3.22 },
@@ -1136,7 +1137,8 @@ const WORLD = (() => {
             if (!slot) return;
             slot.occupied = true;
             const bm = makeBoxMesh(box.kind);
-            bm.position.set(slot.x, slot.y, slot.z);
+            const storageBoxY = slot.y + STORAGE_BOX_Y_OFFSET;
+            bm.position.set(slot.x, storageBoxY, slot.z);
             bm.rotation.y = slot.rot;
             const count = new THREE.Mesh(
               new THREE.PlaneGeometry(0.22, 0.09),
@@ -1145,7 +1147,7 @@ const WORLD = (() => {
             count.position.set(0, 0.34, 0.17);
             bm.add(count);
             scene.add(bm);
-            const boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, slot.y + 0.17, slot.z, { id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true });
+            const boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, storageBoxY + 0.17, slot.z, { id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true });
             boxHitbox.rotation.y = slot.rot;
             boxHitbox.userData.outlineMeshes = [bm];
             boxHitbox.userData.storageBoxHitbox = true;
@@ -1178,7 +1180,7 @@ const WORLD = (() => {
         const p = env.storagePreview;
         const slot = env.storageSlots[slotId];
         if (!slot) { p.root.visible = false; return; }
-        p.root.position.set(slot.x, slot.y, slot.z);
+        p.root.position.set(slot.x, slot.y + STORAGE_BOX_Y_OFFSET, slot.z);
         p.root.rotation.y = slot.rot;
         p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
         p.mat.opacity = ok ? 0.3 : 0.2;
