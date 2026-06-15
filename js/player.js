@@ -114,6 +114,7 @@ const Player = (() => {
     let best = null, bestPerp = Infinity;
     _aimO.copy(ray.ray.origin); _aimD.copy(ray.ray.direction);
     for (const h of hits) {
+      if (!h.object.userData.interact || h.object.userData.interactDisabled) continue;
       h.object.getWorldPosition(_aimC);
       _aimV.copy(_aimC).sub(_aimO);
       const proj = _aimV.dot(_aimD);

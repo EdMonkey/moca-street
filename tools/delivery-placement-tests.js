@@ -49,7 +49,8 @@ assert.ok(!deliveryPreviewBlock.includes('LineSegments'), 'delivery preview shou
 includesAll(game, [
   'showStoragePreview',
   'setStoragePreview',
-  "aimData.id === 'restock'",
+  "aimData.id !== 'restock'",
+  "held.type !== 'deliveryBox'",
 ], 'storage shelf preview controls');
 
 console.log('delivery placement tests passed');

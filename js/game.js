@@ -387,10 +387,24 @@ const Game = (() => {
       env.setStoragePreview(null);
       return false;
     }
+    if (!held || held.type !== 'deliveryBox') {
+      env.setStoragePreview(null);
+      return false;
+    }
+    if (aimData.box) {
+      env.setStoragePreview(null);
+      return false;
+    }
     const occupied = Logistics.storageSlotOccupied(S, aimData.slotId);
-    const ok = !held || held.type !== 'deliveryBox' || !occupied;
-    env.setStoragePreview(aimData.slotId, ok);
+    env.setStoragePreview(aimData.slotId, !occupied);
     return true;
+  }
+
+  function storageAimUsable(aimData) {
+    if (!aimData || aimData.id !== 'restock') return false;
+    if (held && held.type === 'deliveryBox') return true;
+    if (held) return false;
+    return !!aimData.box && !!Logistics.storageSlotBox(S, aimData.slotId);
   }
 
   function placeItem(point) {
@@ -1743,6 +1757,7 @@ const Game = (() => {
       return null;
     }
     // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들 — 후처리 외곽선은 작은 버튼도 잘 보임)
+    if (it && it.id === 'restock' && it.box && aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes, storageBoxOutline: true, color: 0x4ade80, hiddenColor: 0x14532d };
     if (aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes };
     if (aimMesh.userData.station) return { key: aimMesh.userData.station.root, srcList: [aimMesh.userData.station.root] };
     if (aimMesh.userData.outlineRoot) return { key: aimMesh.userData.outlineRoot, srcList: [aimMesh.userData.outlineRoot] };
@@ -1754,6 +1769,8 @@ const Game = (() => {
     const spec = aimOutlineSpec(aimMesh);
     if (spec && _outlinePass) {             // 모델 메시 → 후처리 외곽선
       if (box) box.visible = false;
+      _outlinePass.visibleEdgeColor.setHex(spec.color || 0xffa000);
+      _outlinePass.hiddenEdgeColor.setHex(spec.hiddenColor || 0x6b4200);
       if (_outlineSrc !== spec.key) { _outlinePass.selectedObjects = collectOutlineTargets(spec.srcList); _outlineSrc = spec.key; }
       return;
     }
@@ -1764,6 +1781,7 @@ const Game = (() => {
       aimMesh.updateWorldMatrix(true, false);
       aimMesh.matrixWorld.decompose(box.position, box.quaternion, box.scale);
       box.scale.set(box.scale.x * g.width, box.scale.y * g.height, box.scale.z * g.depth).multiplyScalar(1.04);
+      box.material.color.setHex((spec && spec.color) || 0xffffff);
       box.visible = true;
     } else {
       box.visible = false;
@@ -1779,9 +1797,10 @@ const Game = (() => {
       updateAimHighlight(null);
       return;
     }
+    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
     const targetKind = aimData && stationTargets[aimData.id];
-    const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
+    const usable = aimData && (storageAimUsable(aimData) || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
     const shelfPreview = showStoragePreview(aimData);
     const dprev = usable || shelfPreview ? null : deliveryPlacePreview();
     if (usable && env.setDeliveryPreview) env.setDeliveryPreview(null);
@@ -1874,6 +1893,7 @@ const Game = (() => {
     }
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
+    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
     const shelfPreview = showStoragePreview(aimData);
     updateAimHighlight(aimData && !shelfPreview ? Player.aimedObject : null);
@@ -1935,6 +1955,7 @@ const Game = (() => {
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
       if (LatteArt.active) return;   // 라떼아트 진행 중엔 입력이 푸어(useDown)에만 쓰임
+      if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
       const aimData = Player.aim();
       if (aimData) { interact(aimData); return; }
       if (held) {

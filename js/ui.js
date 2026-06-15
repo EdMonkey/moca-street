@@ -236,7 +236,7 @@ const UI = (() => {
           const total = Logistics.storageTotal(S, box.kind);
           return E + `${r.name} 1개 꺼내기 (${slotLabel} ${box.amount} · 창고 ${total})`;
         }
-        return `${slotLabel}은 비어있어요`;
+        if (!box) return null;
       }
     }
     return null;

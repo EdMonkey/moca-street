@@ -1095,12 +1095,14 @@ const WORLD = (() => {
       ];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
       env.storageSlots = {};
-      env.storageViews.all = { slots: [], meshes: [], previewSlot: null };
+      env.storageViews.all = { slots: [], meshes: [], hitboxes: [], previewSlot: null };
       STORAGE_RACKS.forEach(r => {
         const slots = STORAGE_SLOT_LEVELS.map(s => {
           const slotId = `r${r.rack}s${s.slot}`;
           const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, r.z, { id: 'restock', rack: r.rack, slot: s.slot, slotId }));
           const slot = { slot: s.slot, rack: r.rack, slotId, x: Cx, y: s.y, z: r.z, rot: Math.PI / 2, hitbox: hb };
+          slot.hitbox.userData.storagePlaceSlot = true;
+          slot.hitbox.userData.interactDisabled = true;
           env.storageSlots[slotId] = slot;
           env.storageViews.all.slots.push(slot);
           return slot;
@@ -1113,14 +1115,26 @@ const WORLD = (() => {
           const v = env.storageViews[k];
           v.meshes.forEach(m => scene.remove(m));
           v.meshes = [];
+          if (v.hitboxes) {
+            v.hitboxes.forEach(hb => {
+              scene.remove(hb);
+              const idx = env.interactables.indexOf(hb);
+              if (idx !== -1) env.interactables.splice(idx, 1);
+            });
+            v.hitboxes = [];
+          }
         });
-        Object.values(env.storageSlots).forEach(s => { s.hitbox.userData.outlineMeshes = null; });
+        Object.values(env.storageSlots).forEach(s => {
+          s.occupied = false;
+          s.hitbox.userData.outlineMeshes = null;
+        });
         Object.keys(storage || {}).forEach(k => {
           const boxes = Array.isArray(storage[k]) ? storage[k] : [];
           boxes.forEach(box => {
             if (!box || box.amount <= 0) return;
             const slot = env.storageSlots[box.slotId] || env.storageSlots[`r${box.rack || 0}s${box.slot || 0}`];
             if (!slot) return;
+            slot.occupied = true;
             const bm = makeBoxMesh(box.kind);
             bm.position.set(slot.x, slot.y, slot.z);
             bm.rotation.y = slot.rot;
@@ -1131,9 +1145,20 @@ const WORLD = (() => {
             count.position.set(0, 0.34, 0.17);
             bm.add(count);
             scene.add(bm);
+            const boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, slot.y + 0.17, slot.z, { id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true });
+            boxHitbox.rotation.y = slot.rot;
+            boxHitbox.userData.outlineMeshes = [bm];
+            boxHitbox.userData.storageBoxHitbox = true;
+            scene.add(boxHitbox);
+            env.interactables.push(boxHitbox);
             env.storageViews.all.meshes.push(bm);
-            slot.hitbox.userData.outlineMeshes = [bm];
+            env.storageViews.all.hitboxes.push(boxHitbox);
           });
+        });
+      };
+      env.setStoragePlacementMode = function (active) {
+        Object.values(env.storageSlots).forEach(slot => {
+          slot.hitbox.userData.interactDisabled = !active || !!slot.occupied;
         });
       };
       env.setStoragePreview = function (slotId, ok = true) {
