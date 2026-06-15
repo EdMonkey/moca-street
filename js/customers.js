@@ -67,6 +67,78 @@ const Customers = (() => {
     return { group: g, legL, legR, armL, armR, head, mouth, browL, browR };
   }
 
+  /* ---------- 리깅 glTF 손님 모델 (idle/walk 애니 내장) ---------- */
+  const MODEL_FWD_OFFSET = 0;  // 모델 정면 보정(필요 시 Math.PI) — 인게임에서 확인 후 조정
+
+  // 인스턴스별 색 틴트: 머티리얼 이름(NPC_Skin/Shirt/Jeans/Hair…)으로 구분해 복제·채색.
+  function tintGLTF(model, r) {
+    const skin = new THREE.Color(SKIN[(r() * SKIN.length) | 0]);
+    const shirt = new THREE.Color(SHIRT[(r() * SHIRT.length) | 0]);
+    const pants = new THREE.Color(PANTS[(r() * PANTS.length) | 0]);
+    const hair = new THREE.Color(HAIR[(r() * HAIR.length) | 0]);
+    const map = new Map();
+    model.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const arr = Array.isArray(o.material) ? o.material : [o.material];
+      const out = arr.map((m) => {
+        if (!m) return m;
+        let cm = map.get(m);
+        if (!cm) {
+          cm = m.clone();
+          const n = (m.name || '').toLowerCase();
+          if (n.includes('skin')) cm.color.copy(skin);
+          else if (n.includes('shirt')) cm.color.copy(shirt);
+          else if (n.includes('jean') || n.includes('pant')) cm.color.copy(pants);
+          else if (n.includes('hair')) cm.color.copy(hair);
+          // 신발/눈은 원본 색 유지
+          map.set(m, cm);
+        }
+        return cm;
+      });
+      o.material = out.length === 1 ? out[0] : out;
+    });
+  }
+
+  function buildGLTFModel(seedRand) {
+    const data = window.Assets && Assets.spawnNPC && Assets.spawnNPC();
+    if (!data) return null;
+    const model = data.model;
+    model.rotation.y = MODEL_FWD_OFFSET;
+    model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+    tintGLTF(model, seedRand);
+    const group = new THREE.Group();
+    group.add(model);
+    const mixer = new THREE.AnimationMixer(model);
+    const clips = data.animations || [];
+    const idleClip = THREE.AnimationClip.findByName(clips, 'Idle') || clips[0];
+    const walkClip = THREE.AnimationClip.findByName(clips, 'Walk') || clips[1] || clips[0];
+    const idle = idleClip ? mixer.clipAction(idleClip) : null;
+    const walk = walkClip ? mixer.clipAction(walkClip) : null;
+    if (idle) idle.play();
+    if (walk) { walk.play(); walk.setEffectiveWeight(0); walk.setEffectiveTimeScale(1.3); }
+    return { group, parts: null, mixer, idle, walk, anim: 'idle' };
+  }
+
+  // glTF 로드 시 리깅 모델, 아니면 프리미티브 폴백
+  function buildCustomer(seedRand) {
+    if (window.Assets && Assets.npcReady && Assets.npcReady()) {
+      const m = buildGLTFModel(seedRand);
+      if (m) return m;
+    }
+    const parts = buildModel(seedRand);
+    return { group: parts.group, parts, mixer: null };
+  }
+
+  // idle/walk 크로스페이드
+  function setAnim(c, name) {
+    if (!c.mixer || c.anim === name || !c.idle || !c.walk) return;
+    const to = name === 'walk' ? c.walk : c.idle;
+    const from = name === 'walk' ? c.idle : c.walk;
+    to.enabled = true; to.setEffectiveWeight(1); to.reset(); to.play();
+    to.crossFadeFrom(from, 0.2, false);
+    c.anim = name;
+  }
+
   /* ---------- 서빙/이탈 시 손님 반응 (이모지 + 한마디) ---------- */
   const REACT = {
     great: { emoji: '😍', texts: ['완벽해요!', '최고예요!', '맛있어요!', '단골 될게요!'] },
@@ -135,6 +207,7 @@ const Customers = (() => {
   }
 
   function setFace(c, mood) {
+    if (!c.parts) return;   // glTF 모델은 표정 지오메트리가 없음(말풍선 이모지로 대체)
     if (mood === 'happy') {
       c.parts.mouth.rotation.z = Math.PI;
       c.parts.browL.visible = c.parts.browR.visible = false;
@@ -173,10 +246,11 @@ const Customers = (() => {
     const qi = queueIndexFree();
     if (qi < 0) return null; // 줄이 꽉 참
     const seed = TEX.rng((Math.random() * 1e9) | 0);
-    const parts = buildModel(seed);
+    const built = buildCustomer(seed);
     const c = {
       id: nextId++,
-      parts, group: parts.group,
+      parts: built.parts, group: built.group,
+      mixer: built.mixer || null, idle: built.idle, walk: built.walk, anim: built.anim,
       state: 'enter',
       path: [
         [env.spawnPos.x, env.spawnPos.z],
@@ -212,11 +286,15 @@ const Customers = (() => {
     p.x += dx / dist * step;
     p.z += dz / dist * step;
     // 걷기 애니메이션
-    c.walkT += dt * 9;
-    const sw = Math.sin(c.walkT) * 0.45;
-    c.parts.legL.rotation.x = sw; c.parts.legR.rotation.x = -sw;
-    c.parts.armL.rotation.x = -sw * 0.7; c.parts.armR.rotation.x = sw * 0.7;
-    c.group.position.y = Math.abs(Math.sin(c.walkT)) * 0.035;
+    if (c.mixer) {
+      setAnim(c, 'walk');
+    } else {
+      c.walkT += dt * 9;
+      const sw = Math.sin(c.walkT) * 0.45;
+      c.parts.legL.rotation.x = sw; c.parts.legR.rotation.x = -sw;
+      c.parts.armL.rotation.x = -sw * 0.7; c.parts.armR.rotation.x = sw * 0.7;
+      c.group.position.y = Math.abs(Math.sin(c.walkT)) * 0.035;
+    }
     // 진행 방향으로 회전
     const targetYaw = Math.atan2(dx, dz);
     let dy = targetYaw - c.yaw;
@@ -228,9 +306,13 @@ const Customers = (() => {
   }
 
   function standStill(c, faceZ = -1) {
-    c.parts.legL.rotation.x = c.parts.legR.rotation.x = 0;
-    c.parts.armL.rotation.x = c.parts.armR.rotation.x = 0;
-    c.group.position.y = 0;
+    if (c.mixer) {
+      setAnim(c, 'idle');
+    } else {
+      c.parts.legL.rotation.x = c.parts.legR.rotation.x = 0;
+      c.parts.armL.rotation.x = c.parts.armR.rotation.x = 0;
+      c.group.position.y = 0;
+    }
     // 카운터(−z) 방향 바라보기
     const targetYaw = faceZ < 0 ? Math.PI : 0;
     let dy = targetYaw - c.yaw;
@@ -244,6 +326,7 @@ const Customers = (() => {
   function update(dt) {
     for (let i = list.length - 1; i >= 0; i--) {
       const c = list[i];
+      if (c.mixer) c.mixer.update(dt);
       c.bbTimer -= dt;
 
       switch (c.state) {
