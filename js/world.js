@@ -44,6 +44,27 @@ const WORLD = (() => {
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
     return new THREE.MeshStandardMaterial({ map: t, roughness: 0.8 });
   }
+  // 그라인더 분쇄도 다이얼 면 — 숫자 1~7 + 눈금(4가 위, 좌우로 270° 스윕). 실제 그라인더 다이얼 룩.
+  function grindDialTex() {
+    const [c, x] = TEX.canvas(256, 256), cx = 128, cy = 128;
+    x.fillStyle = '#ece7df'; x.beginPath(); x.arc(cx, cy, 122, 0, 7); x.fill();   // 밝은 다이얼 면
+    // (이상 구간 초록 표시는 제거 — 눈금·숫자만 보고 직접 맞춤)
+    x.strokeStyle = '#2a2520'; x.fillStyle = '#2a2520';
+    x.textAlign = 'center'; x.textBaseline = 'middle'; x.font = '800 34px Arial';
+    for (let n = 1; n <= 7; n++) {
+      const th = (4 - n) * Math.PI / 4, dx = Math.sin(th), dy = -Math.cos(th);   // 4=위, n↑ 일수록 반시계
+      x.lineWidth = 5; x.beginPath();
+      x.moveTo(cx + dx * 116, cy + dy * 116); x.lineTo(cx + dx * 100, cy + dy * 100); x.stroke();   // 큰 눈금
+      x.fillText(String(n), cx + dx * 80, cy + dy * 80);                                            // 숫자
+      if (n < 7) for (let k = 1; k <= 4; k++) {                                                     // 작은 눈금 4개
+        const tk = th - (k / 5) * (Math.PI / 4), kx = Math.sin(tk), ky = -Math.cos(tk);
+        x.lineWidth = 2; x.beginPath();
+        x.moveTo(cx + kx * 116, cy + ky * 116); x.lineTo(cx + kx * 108, cy + ky * 108); x.stroke();
+      }
+    }
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+    return new THREE.MeshBasicMaterial({ map: t, transparent: true });   // 조명 무관 — 항상 또렷
+  }
 
   /* ============================================================
    * 음료 / 디저트 / 보급상자 메시 팩토리
@@ -312,6 +333,80 @@ const WORLD = (() => {
     return g;
   }
 
+  const supplyModels = {
+    beans: ['CoffeeBeanBag'],
+    milk: ['MilkCarton'],
+    cups: ['PaperCupHolder', 'PaperCup'],
+    dessert: [],
+  };
+  const supplyFit = {
+    beans: { w: 0.28, h: 0.28 },
+    milk: { w: 0.18, h: 0.26 },
+    cups: { w: 0.24, h: 0.30 },
+    dessert: { w: 0.28, h: 0.18 },
+  };
+
+  function fitSupplyAsset(root, kind) {
+    const fit = supplyFit[kind] || { w: 0.28, h: 0.28 };
+    root.updateMatrixWorld(true);
+    const before = new THREE.Box3().setFromObject(root);
+    const size = before.getSize(new THREE.Vector3());
+    const width = Math.max(size.x, size.z);
+    const scale = Math.min(
+      fit.w / Math.max(width, 0.001),
+      fit.h / Math.max(size.y, 0.001)
+    );
+    if (Number.isFinite(scale) && scale > 0) root.scale.multiplyScalar(scale);
+    root.updateMatrixWorld(true);
+    const after = new THREE.Box3().setFromObject(root);
+    const center = after.getCenter(new THREE.Vector3());
+    root.position.x -= center.x;
+    root.position.z -= center.z;
+    root.position.y -= after.min.y;
+    return root;
+  }
+
+  function makeSupplyMesh(kind) {
+    const g = new THREE.Group();
+    if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+      const names = supplyModels[kind] || [];
+      for (const name of names) {
+        const asset = window.Assets.spawn(name, 0, 0, 0, 0);
+        if (asset) {
+          g.add(fitSupplyAsset(asset, kind));
+          return g;
+        }
+      }
+    }
+    if (kind === 'beans') {
+      g.add(box(0.22, 0.26, 0.12, new THREE.MeshStandardMaterial({ color: 0x6a3f24, roughness: 0.9 }), 0, 0.13, 0));
+      g.add(box(0.18, 0.04, 0.10, new THREE.MeshStandardMaterial({ color: 0x3a2416, roughness: 0.85 }), 0, 0.27, 0));
+      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.08), textLabel('\uc6d0\ub450', 128, 64, '700 30px "Malgun Gothic"', '#f5ead8', '#3a2416'));
+      lbl.position.set(0, 0.14, 0.061);
+      g.add(lbl);
+    } else if (kind === 'milk') {
+      g.add(box(0.14, 0.24, 0.12, new THREE.MeshStandardMaterial({ color: 0xf4f2e8, roughness: 0.7 }), 0, 0.12, 0));
+      g.add(box(0.14, 0.04, 0.12, new THREE.MeshStandardMaterial({ color: 0xa7c7e7, roughness: 0.75 }), 0, 0.26, 0));
+    } else if (kind === 'cups') {
+      for (let i = 0; i < 4; i++) {
+        const cup = cyl(0.055, 0.045, 0.07, M().cupWhite, 0, 0.04 + i * 0.035, 0, 18, { open: true });
+        g.add(cup);
+      }
+    } else {
+      const d = makeDessertMesh('croissant');
+      d.scale.setScalar(0.7);
+      g.add(d);
+    }
+    return g;
+  }
+
+  const DOOR_RIGHT_SPOT = (typeof Logistics !== 'undefined' && Logistics.DOOR_RIGHT_SPOT)
+    ? Logistics.DOOR_RIGHT_SPOT
+    : { x: 6.75, z: 9.35, rot: 0 };
+  const deliverySpot = (typeof Logistics !== 'undefined' && Logistics.deliverySpot)
+    ? Logistics.deliverySpot
+    : (i = 0) => ({ x: Math.round((DOOR_RIGHT_SPOT.x + 0.76 * Math.max(0, Number(i) || 0)) * 100) / 100, z: DOOR_RIGHT_SPOT.z, rot: DOOR_RIGHT_SPOT.rot });
+
   /* ============================================================
    * 월드 빌드
    * ============================================================ */
@@ -321,7 +416,8 @@ const WORLD = (() => {
       surfaces: [],            // 아이템을 내려놓을 수 있는 표면(카운터·테이블·선반)
       stations: [],            // 편집 모드로 이동 가능한 기구들
       staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
-      machines: {}, steamEmitters: [],
+      machines: {}, steamEmitters: [], deliveryViews: [], storageViews: {},
+      deliveryPreview: null, storagePreview: null, DOOR_RIGHT_SPOT,
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
       doorPos: new THREE.Vector3(5.5, 0, 8),
@@ -909,19 +1005,26 @@ const WORLD = (() => {
       const st = station('syrup', '시럽 스테이션', 1.47, -4.3, 1.3, 0.45);
       const r = st.root;
       const names = { vanilla: ['바닐라', 0xe8d8a8], caramel: ['카라멜', 0xc08a3e], choco: ['초코', 0x5a3520] };
+      const pumps = {};   // 도징 미니게임에서 펌프 헤드를 눌렀다 떼는 연출용 (kind별)
       Object.keys(names).forEach((k, i) => {
         const lx = -0.42 + i * 0.42;
         const [nm, col] = names[k];
         r.add(cyl(0.055, 0.065, 0.3, new THREE.MeshPhysicalMaterial({
           color: col, transparent: true, opacity: 0.85, roughness: 0.2
         }), lx, 0.15, 0, 14));
-        r.add(cyl(0.02, 0.03, 0.08, M().steelDark, lx, 0.34, 0, 10));
-        r.add(box(0.025, 0.025, 0.1, M().steelDark, lx, 0.4, 0.04));
+        // 펌프(넥+레버)를 한 그룹으로 묶어 통째로 눌렀다 떼는 연출
+        const pump = new THREE.Group();
+        pump.add(cyl(0.02, 0.03, 0.08, M().steelDark, 0, 0.34, 0, 10));
+        pump.add(box(0.025, 0.025, 0.1, M().steelDark, 0, 0.4, 0.04));
+        pump.position.x = lx;
+        r.add(pump);
+        pumps[k] = pump;
         const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.11), textLabel(nm, 128, 52, '700 28px "Malgun Gothic"'));
         lbl.position.set(lx, 0.52, 0.12);
         r.add(lbl);
         childHitbox(st, 0.4, 0.65, 0.55, lx, 0.28, 0.05, { id: 'syrup', kind: k });
       });
+      env.machines.syrup = { pumps };
     })();
 
     /* ---------- 휘핑크림 ---------- */
@@ -929,11 +1032,13 @@ const WORLD = (() => {
       const st = station('whip', '휘핑크림', 2.6, -4.3, 0.3, 0.35);
       const r = st.root;
       r.add(cyl(0.05, 0.05, 0.24, new THREE.MeshStandardMaterial({ color: 0xd9534f, roughness: 0.3, metalness: 0.5 }), 0, 0.12, 0, 14));
-      r.add(cyl(0.012, 0.025, 0.07, M().cream, 0, 0.27, 0, 10));
+      const nozzle = cyl(0.012, 0.025, 0.07, M().cream, 0, 0.27, 0, 10);   // 도징 미니게임에서 눌렀다 떼는 분사 노즐
+      r.add(nozzle);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.11), textLabel('휘핑크림', 160, 52, '700 26px "Malgun Gothic"'));
       lbl.position.set(0, 0.42, 0.12);
       r.add(lbl);
       childHitbox(st, 0.4, 0.55, 0.55, 0, 0.22, 0.05, { id: 'whip' });
+      env.machines.whip = { nozzle };
     })();
 
     /* ---------- 넉박스 (사용한 포터필터 가루 비우기) ---------- */
@@ -1012,18 +1117,114 @@ const WORLD = (() => {
       // 랙은 spawn(Cx+0.2, cz+0.42)에, 박스/히트박스는 (Cx,cz)에 둬 박스가 랙 중앙에 오게 한다.
       const Cx = -8.7;                                   // 랙 형상 중심 X(벽 앞)
       // 형상 중심 Z — 박스를 랙 중앙에 정렬 + 전체를 오른쪽(-z)으로 렉하나(1.1)만큼 민 값
-      const kinds = [['beans', -4.32], ['milk', -3.22], ['cups', -2.12], ['dessert', -1.02]];
+      const STORAGE_SLOT_LEVELS = [
+        { slot: 0, y: 0.56 },
+        { slot: 1, y: 1.12 },
+        { slot: 2, y: 1.68 },
+      ];
+      const STORAGE_BOX_Y_OFFSET = 0.06;
+      const STORAGE_RACKS = [
+        { rack: 0, z: -4.32 },
+        { rack: 1, z: -3.22 },
+        { rack: 2, z: -2.12 },
+        { rack: 3, z: -1.02 },
+      ];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
-      kinds.forEach(([k, cz]) => {
-        // 재고 박스(보급) — 랙 아래(0.65)·중간(1.2) 선반 중앙에 적재. 박스 원점=베이스, 라벨이 +X(작업영역) 향함
-        const bm = makeBoxMesh(k);  bm.position.set(Cx, 0.65, cz);  bm.rotation.y = Math.PI / 2; scene.add(bm);
-        const bm2 = makeBoxMesh(k); bm2.position.set(Cx, 1.20, cz); bm2.rotation.y = Math.PI / 2; bm2.scale.setScalar(0.9); scene.add(bm2);
-        addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k })).userData.outlineMeshes = [bm, bm2];
+      env.storageSlots = {};
+      env.storageViews.all = { slots: [], meshes: [], hitboxes: [], previewSlot: null };
+      STORAGE_RACKS.forEach(r => {
+        const slots = STORAGE_SLOT_LEVELS.map(s => {
+          const slotId = `r${r.rack}s${s.slot}`;
+          const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, r.z, { id: 'restock', rack: r.rack, slot: s.slot, slotId }));
+          const slot = { slot: s.slot, rack: r.rack, slotId, x: Cx, y: s.y, z: r.z, rot: Math.PI / 2, hitbox: hb };
+          slot.hitbox.userData.storagePlaceSlot = true;
+          slot.hitbox.userData.interactDisabled = true;
+          env.storageSlots[slotId] = slot;
+          env.storageViews.all.slots.push(slot);
+          return slot;
+        });
+        env.storageViews[`rack${r.rack}`] = { rack: r.rack, slots, hitbox: slots[0].hitbox, meshes: [], previewSlot: slots[0] };
       });
+      env.storageViews.all.previewSlot = env.storageViews.all.slots[0];
+      env.syncStorageBoxes = function (storage) {
+        Object.keys(env.storageViews).forEach(k => {
+          const v = env.storageViews[k];
+          v.meshes.forEach(m => scene.remove(m));
+          v.meshes = [];
+          if (v.hitboxes) {
+            v.hitboxes.forEach(hb => {
+              scene.remove(hb);
+              const idx = env.interactables.indexOf(hb);
+              if (idx !== -1) env.interactables.splice(idx, 1);
+            });
+            v.hitboxes = [];
+          }
+        });
+        Object.values(env.storageSlots).forEach(s => {
+          s.occupied = false;
+          s.hitbox.userData.outlineMeshes = null;
+        });
+        Object.keys(storage || {}).forEach(k => {
+          const boxes = Array.isArray(storage[k]) ? storage[k] : [];
+          boxes.forEach(box => {
+            if (!box || box.amount <= 0) return;
+            const slot = env.storageSlots[box.slotId] || env.storageSlots[`r${box.rack || 0}s${box.slot || 0}`];
+            if (!slot) return;
+            slot.occupied = true;
+            const bm = makeBoxMesh(box.kind);
+            const storageBoxY = slot.y + STORAGE_BOX_Y_OFFSET;
+            bm.position.set(slot.x, storageBoxY, slot.z);
+            bm.rotation.y = slot.rot;
+            const count = new THREE.Mesh(
+              new THREE.PlaneGeometry(0.22, 0.09),
+              textLabel(`x${box.amount}`, 128, 48, '700 28px "Malgun Gothic"', '#f5ead8', '#3a2416')
+            );
+            count.position.set(0, 0.34, 0.17);
+            bm.add(count);
+            scene.add(bm);
+            const boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, storageBoxY + 0.17, slot.z, { id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true });
+            boxHitbox.rotation.y = slot.rot;
+            boxHitbox.userData.outlineMeshes = [bm];
+            boxHitbox.userData.storageBoxHitbox = true;
+            scene.add(boxHitbox);
+            env.interactables.push(boxHitbox);
+            env.storageViews.all.meshes.push(bm);
+            env.storageViews.all.hitboxes.push(boxHitbox);
+          });
+        });
+      };
+      env.setStoragePlacementMode = function (active) {
+        Object.values(env.storageSlots).forEach(slot => {
+          slot.hitbox.userData.interactDisabled = !active || !!slot.occupied;
+        });
+      };
+      env.setStoragePreview = function (slotId, ok = true) {
+        if (!env.storagePreview) {
+          const g = new THREE.Group();
+          const mat = new THREE.MeshBasicMaterial({
+            color: 0x7fb069, transparent: true, opacity: 0.3, depthWrite: false,
+          });
+          const body = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.31, 0.34), mat);
+          body.position.y = 0.155;
+          g.add(body);
+          g.visible = false;
+          g.renderOrder = 8;
+          scene.add(g);
+          env.storagePreview = { root: g, body, mat };
+        }
+        const p = env.storagePreview;
+        const slot = env.storageSlots[slotId];
+        if (!slot) { p.root.visible = false; return; }
+        p.root.position.set(slot.x, slot.y + STORAGE_BOX_Y_OFFSET, slot.z);
+        p.root.rotation.y = slot.rot;
+        p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
+        p.mat.opacity = ok ? 0.3 : 0.2;
+        p.root.visible = true;
+      };
       // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
       if (window.Assets && window.Assets.ready) {
         window.Assets.ready.then(() => {
-          kinds.forEach(([, cz]) => { const r = window.Assets.spawn('ShelvingRack', Cx + 0.2, cz + 0.42, 0, Math.PI / 2); if (r) scene.add(r); });
+          STORAGE_RACKS.forEach(({ z }) => { const r = window.Assets.spawn('ShelvingRack', Cx + 0.2, z + 0.42, 0, Math.PI / 2); if (r) scene.add(r); });
         }).catch(() => {});
       }
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.25), textLabel('창 고', 256, 64, '700 40px "Malgun Gothic"'));
@@ -1054,9 +1255,22 @@ const WORLD = (() => {
       const pfOut = makePortafilterMesh('none');
       pfOut.position.set(0, 0.17, 0.15);   // 배출 깔때기(outlet ~y0.27) 바로 아래에 바스켓이 오도록
       g.add(pfOut);
+      // 분쇄도 다이얼(노브+눈금) — 본체 좌측 전면. 포터필터 소지와 무관하게 [E]로 조정, 머신에 설정 저장
+      const dcx = -0.07, dcy = 0.27, dz = 0.115, dialR = 0.052;
+      const dRing = new THREE.Mesh(new THREE.RingGeometry(dialR, dialR * 1.2, 44),
+        new THREE.MeshStandardMaterial({ color: 0x17130f, roughness: 0.6 }));
+      dRing.position.set(dcx, dcy, dz);                                   // 어두운 외곽 림
+      const dFace = new THREE.Mesh(new THREE.CircleGeometry(dialR, 44), grindDialTex());
+      dFace.position.set(dcx, dcy, dz + 0.002);                          // 숫자 눈금 면(1~7)
+      const dKnob = cyl(dialR * 0.4, dialR * 0.44, 0.024, M().blackMatte, dcx, dcy, dz + 0.012, 18); dKnob.rotation.x = Math.PI / 2;   // 중앙 노브
+      const dSlot = box(dialR * 0.55, 0.004, 0.006, M().steel, dcx, dcy, dz + 0.026, { cast: false });                                // 노브 슬롯(금속)
+      const dialMark = new THREE.Group(); dialMark.position.set(dcx, dcy, dz + 0.02);   // 회전 바늘(현재 분쇄도 지시), 기본 0.5=위(숫자 4)
+      dialMark.add(box(0.006, 0.044, 0.005, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5 }), 0, 0.02, 0, { cast: false }));
+      g.add(dRing, dFace, dKnob, dSlot, dialMark);
       const job = {
         kind: 'grinder',
         st, pfMesh: pfOut, hasPf: false,
+        dialMark, grindSetting: 0.5,                  // 현재 분쇄도 설정(0 가늚 ~ 1 굵음)
         progress: makeProgress(g, 0, 0.34, 0.15),   // 분쇄 중인 포터필터 바로 위
         busy: false, done: false, t: 0, dur: 0, sound: null
       };
@@ -1089,6 +1303,72 @@ const WORLD = (() => {
         }
       }
       return null;
+    };
+
+    env.clearDeliveryBoxes = function () {
+      env.deliveryViews.forEach(v => {
+        scene.remove(v.mesh);
+        scene.remove(v.hitbox);
+        const i = env.interactables.indexOf(v.hitbox);
+        if (i >= 0) env.interactables.splice(i, 1);
+      });
+      env.deliveryViews = [];
+    };
+    env.syncDeliveryBoxes = function (boxes) {
+      env.clearDeliveryBoxes();
+      boxes.forEach((b, i) => {
+        const spot = deliverySpot(i);
+        const x = typeof b.x === 'number' ? b.x : spot.x;
+        const z = typeof b.z === 'number' ? b.z : spot.z;
+        const rot = typeof b.rot === 'number' ? b.rot : spot.rot;
+        const mesh = makeBoxMesh(b.kind);
+        mesh.position.set(x, 0, z);
+        mesh.rotation.y = rot;
+        mesh.scale.setScalar(1.25);
+        scene.add(mesh);
+        const hb = hitbox(0.68, 0.52, 0.55, x, 0.28, z, { id: 'deliveryBox', boxId: b.id });
+        hb.rotation.y = rot;
+        hb.userData.outlineRoot = mesh;
+        addI(hb);
+        env.deliveryViews.push({ id: b.id, mesh, hitbox: hb });
+      });
+    };
+    env.canPlaceDeliveryBox = function (point, ignoreId = null) {
+      if (!point) return false;
+      const x = point.x, z = point.z;
+      if (x < ROOM.x0 + 0.45 || x > ROOM.x1 - 0.45 || z < ROOM.z0 + 0.45 || z > 18.2) return false;
+      const pad = 0.24;
+      for (const c of env.colliders) {
+        if (x > c.x0 - pad && x < c.x1 + pad && z > c.z0 - pad && z < c.z1 + pad) return false;
+      }
+      for (const v of env.deliveryViews) {
+        if (v.id === ignoreId) continue;
+        if (Math.hypot(v.mesh.position.x - x, v.mesh.position.z - z) < 0.72) return false;
+      }
+      return true;
+    };
+    env.setDeliveryPreview = function (spec) {
+      if (!env.deliveryPreview) {
+        const g = new THREE.Group();
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0x7fb069, transparent: true, opacity: 0.26, depthWrite: false,
+        });
+        const body = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.42, 0.55), mat);
+        body.position.y = 0.21;
+        g.add(body);
+        g.visible = false;
+        g.renderOrder = 8;
+        scene.add(g);
+        env.deliveryPreview = { root: g, body, mat };
+      }
+      const p = env.deliveryPreview;
+      if (!spec) { p.root.visible = false; return; }
+      const ok = !!spec.ok;
+      p.root.position.set(spec.x, 0.02, spec.z);
+      p.root.rotation.y = spec.rot || 0;
+      p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
+      p.body.material.opacity = ok ? 0.26 : 0.18;
+      p.root.visible = true;
     };
 
     /* ---------- 장식 ---------- */
@@ -1291,5 +1571,8 @@ const WORLD = (() => {
     return env;
   }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, drinkColor, ROOM };
+  // 분쇄도 바늘 회전 (frac 0 가늚=숫자1 ~ 1 굵음=숫자7, 0.5=숫자4 위). ±135° 스윕
+  function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = (6 * frac - 3) * (Math.PI / 4); }
+
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makeSupplyMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
 })();

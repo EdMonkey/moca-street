@@ -12,11 +12,13 @@ const Game = (() => {
     DAY_LEN, SAVE_KEY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
     ART_TIP_PERFECT, ART_TIP_GOOD,
+    DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
+    GRIND_DUR, GRIND_IDEAL_MIN, GRIND_IDEAL_MAX, GRIND_TIP_PERFECT,
   } = DATA;
 
   /* ===== 상태 ===== */
   let env = null, scene = null;
-  let mode = 'menu';              // menu | playing | dayEnd
+  let mode = 'menu';              // menu | prep | playing | closing | after | gameover
   let S = null;                   // 저장되는 상태
   let held = null;                // {type:'drink',drink:{...}} | {type:'dessert',kind}
   let orders = [];                // {customer, items:[{type,recipeId|kind,done}], total}
@@ -28,19 +30,33 @@ const Game = (() => {
   let indPulse = 0;
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
   let steamGame = null;           // 스팀 미니게임 상태 (비활성 시 null)
+  let doseGame = null;            // 시럽/휘핑 도징 미니게임 상태 (비활성 시 null)
+  let grindGame = null;           // 분쇄도 다이얼 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
+  let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
 
-  function freshState() {
-    return {
+  function freshState(starter = true) {
+    const base = {
       money: 20000, day: 1, rep: 50, level: 1, xp: 0,
       stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
+      storage: { beans: 0, milk: 0, cups: 0, dessert: 0 },
+      pendingDeliveries: [],
+      deliveryBoxes: [],
       upgrades: {},
       equip: {},          // 구매한 추가 장비 개수 { grinder, espresso, steamer }
     };
+    return starter ? Logistics.initialState(base) : Logistics.ensureState(base);
   }
   function freshDayStats() {
     return { revenue: 0, tips: 0, served: 0, angry: 0, spent: 0 };
   }
+  const supplyNames = { beans: '원두', milk: '우유', cups: '컵', dessert: '디저트' };
+  const stationTargets = {
+    grinder: 'beans',
+    pitcherrack: 'milk',
+    cupHot: 'cups', cupIce: 'cups', cupEsp: 'cups',
+    dessert: 'dessert',
+  };
 
   /* ===== 유틸 ===== */
   const fmt = n => '₩ ' + n.toLocaleString('ko-KR');
@@ -58,6 +74,139 @@ const Game = (() => {
   }
   function unlockedRecipes() { return Object.keys(RECIPES).filter(k => RECIPES[k].lvl <= S.level); }
   function unlockedDesserts() { return Object.keys(DESSERTS).filter(k => DESSERTS[k].lvl <= S.level); }
+
+  function renderDeliveryBoxes() {
+    if (!env || !env.syncDeliveryBoxes) return;
+    Logistics.ensureState(S);
+    const hiddenId = held && held.type === 'deliveryBox' ? held.id : null;
+    env.syncDeliveryBoxes(S.deliveryBoxes.filter(b => b.id !== hiddenId));
+  }
+
+  function renderStorageBoxes() {
+    if (!env || !env.syncStorageBoxes) return;
+    Logistics.ensureState(S);
+    env.syncStorageBoxes(S.storageBoxes || {});
+  }
+
+  function renderDeliveryOrders() {
+    const list = $('deliveryOrderList');
+    if (!list) return;
+    Logistics.ensureState(S);
+    const money = $('deliveryMoney');
+    if (money) money.innerHTML = `보유 금액 <b>${fmt(S.money)}</b>`;
+    list.innerHTML = '';
+    Logistics.KINDS.forEach(kind => {
+      const r = RESTOCK[kind];
+      const pending = S.pendingDeliveries
+        .filter(d => d.kind === kind)
+        .reduce((sum, d) => sum + d.amount, 0);
+      const div = document.createElement('div');
+      div.className = 'upg';
+      div.innerHTML =
+        `<div><div class="un">${r.name} 주문</div>` +
+        `<div class="ud">내일 아침 문앞 도착 +${r.amount}${pending ? ` · 대기 ${pending}` : ''}</div></div>` +
+        `<button class="btn" data-delivery="${kind}" ${S.money < r.price ? 'disabled' : ''}>${fmt(r.price)}</button>`;
+      list.appendChild(div);
+    });
+    list.querySelectorAll('button[data-delivery]').forEach(b => {
+      b.onclick = () => orderScheduledDelivery(b.dataset.delivery);
+    });
+  }
+
+  function orderScheduledDelivery(kind) {
+    const r = RESTOCK[kind];
+    if (S.money < r.price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
+    S.money -= r.price;
+    Logistics.scheduleDelivery(S, kind, 1, S.day - 1);   // 마감 후엔 S.day가 이미 다음날
+    AudioFX.cash();
+    toast(`${r.name} 주문 완료 — 다음날 아침 문앞 도착`, 'good');
+    renderDeliveryOrders();
+    UI.hud();
+    save();
+  }
+
+  function orderQuickDelivery(kind) {
+    const r = RESTOCK[kind];
+    const price = Logistics.deliveryPrice(kind, 1, true);
+    if (S.money < price) { toast('퀵 배송비가 부족해요!', 'bad'); AudioFX.err(); return; }
+    S.money -= price;
+    if (dayStats) dayStats.spent += price;
+    Logistics.addDeliveryBox(S, kind, r.amount, 'quick');
+    renderDeliveryBoxes();
+    AudioFX.cash();
+    toast(`퀵 배송 도착! 문앞 ${r.name} 박스를 창고에 넣으세요`, 'gold', 4200);
+    UI.hud();
+    save();
+  }
+
+  function storeHeldDelivery(slotId) {
+    if (!held || held.type !== 'deliveryBox') return false;
+    const res = Logistics.storeDeliveryBox(S, held.id, slotId);
+    if (!res.ok) {
+      const msg = res.reason === 'occupied' ? '이 선반칸에는 이미 박스가 있어요'
+        : res.reason === 'full' ? '이 창고칸 선반이 가득 찼어요'
+        : '이미 입고된 박스예요';
+      toast(msg, 'bad'); AudioFX.err();
+      if (res.reason === 'missing') { setHeld(null); renderDeliveryBoxes(); }
+      return true;
+    }
+    setHeld(null);
+    renderDeliveryBoxes();
+    renderStorageBoxes();
+    UI.hud();
+    save();
+    toast(`${supplyNames[res.box.kind]} 창고 입고 +${res.box.amount}`, 'good');
+    AudioFX.put();
+    return true;
+  }
+
+  function takeStorageSupply(slotId) {
+    const box = Logistics.storageSlotBox(S, slotId);
+    if (!box) { toast('이 선반칸은 비어있어요'); return; }
+    const res = Logistics.takeSupply(S, box.kind, slotId);
+    if (!res.ok) {
+      if (res.reason === 'empty_slot') { toast('이 선반칸은 비어있어요'); return; }
+      if (mode === 'playing' || mode === 'closing') orderQuickDelivery(box.kind);
+      else { toast(`창고에 ${supplyNames[box.kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
+      return;
+    }
+    setHeld({ type: 'supply', kind: res.kind, storageBoxId: res.boxId, slotId: res.slotId });
+    renderStorageBoxes();
+    UI.hud();
+    AudioFX.pick();
+  }
+
+  function putHeldSupply(kind) {
+    if (!held || held.type !== 'supply') return false;
+    if (held.kind !== kind) { toast(`${supplyNames[held.kind]}은(는) 여기 보충할 수 없어요`, 'bad'); AudioFX.err(); return true; }
+    const res = Logistics.putSupplyToStation(S, kind);
+    if (!res.ok) { toast(`${supplyNames[kind]} 사용처 재고가 가득 찼어요`, 'bad'); AudioFX.err(); return true; }
+    setHeld(null);
+    renderStorageBoxes();
+    UI.hud();
+    save();
+    AudioFX.put();
+    toast(`${supplyNames[kind]} 보충 +1`, 'good');
+    return true;
+  }
+
+  function returnHeldLogistics(notify = false) {
+    if (!held || (held.type !== 'supply' && held.type !== 'deliveryBox')) return false;
+    if (held.type === 'supply') {
+      const res = Logistics.returnSupply(S, held.kind, held.storageBoxId, held.slotId);
+      if (!res.ok) { toast('창고 선반이 가득 찼어요', 'bad'); AudioFX.err(); return true; }
+      setHeld(null);
+      renderStorageBoxes();
+      UI.hud();
+      if (notify) { save(); toast('창고에 되돌렸어요'); }
+      return true;
+    }
+    setHeld(null);
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+    renderDeliveryBoxes();
+    if (notify) toast('택배박스를 문앞에 내려놓았어요');
+    return true;
+  }
 
   /* ===== 음료 비교 ===== */
   function canonical(d) {
@@ -150,6 +299,14 @@ const Game = (() => {
       const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
       Player.setHeld(m, equip);
+    } else if (h.type === 'deliveryBox') {
+      const m = WORLD.makeBoxMesh(h.kind);
+      m.scale.setScalar(1.35);
+      Player.setHeld(m, equip);
+    } else if (h.type === 'supply') {
+      const m = WORLD.makeSupplyMesh(h.kind);
+      m.scale.setScalar(1.05);
+      Player.setHeld(m, equip);
     }
     UI.held();
   }
@@ -179,6 +336,8 @@ const Game = (() => {
     }
     if (h.type === 'shotglass') return h.filled ? '샷잔 (에스프레소 ☕)' : '샷잔 (비어 있음)';
     if (h.type === 'pitcher') return h.foam ? '스팀 피처 (우유+거품)' : h.milk ? '스팀 피처 (데운 우유)' : '스팀 피처 (비어 있음)';
+    if (h.type === 'deliveryBox') return `${supplyNames[h.kind]} 택배박스 x${h.amount}`;
+    if (h.type === 'supply') return `${supplyNames[h.kind]} 1개`;
     return DESSERTS[h.kind].name;
   }
 
@@ -186,8 +345,78 @@ const Game = (() => {
     return placedItems.some(p => p.mesh.position.distanceTo(point) < 0.2);
   }
 
+  function deliveryPlacePreview() {
+    if (!held || held.type !== 'deliveryBox') {
+      if (env && env.setDeliveryPreview) env.setDeliveryPreview(null);
+      return null;
+    }
+    const pt = Player.aimGround && Player.aimGround();
+    if (!pt) {
+      if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+      return null;
+    }
+    const ok = !env.canPlaceDeliveryBox || env.canPlaceDeliveryBox(pt, held.id);
+    const spec = { x: pt.x, z: pt.z, rot: deliveryPlaceRot, kind: held.kind, ok };
+    if (env.setDeliveryPreview) env.setDeliveryPreview(spec);
+    return spec;
+  }
+
+  function moveHeldDeliveryBox() {
+    if (!held || held.type !== 'deliveryBox') return false;
+    const spec = deliveryPlacePreview();
+    if (!spec) { toast('바닥을 바라보면 박스를 내려놓을 수 있어요'); return true; }
+    if (!spec.ok) { toast('여기엔 박스를 놓을 공간이 없어요', 'bad'); AudioFX.err(); return true; }
+    const res = Logistics.moveDeliveryBox(S, held.id, spec);
+    if (!res.ok) { toast('박스 위치를 찾지 못했어요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
+    setHeld(null);
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+    renderDeliveryBoxes();
+    save();
+    AudioFX.put();
+    toast(`${supplyNames[res.box.kind]} 박스를 내려놓았어요`, 'good');
+    return true;
+  }
+
+  function rotateDeliveryBoxPreview() {
+    if (!held || held.type !== 'deliveryBox') return false;
+    deliveryPlaceRot = (deliveryPlaceRot + Math.PI / 2) % (Math.PI * 2);
+    held.rot = deliveryPlaceRot;
+    deliveryPlacePreview();
+    return true;
+  }
+
+  function showStoragePreview(aimData) {
+    if (!env.setStoragePreview) return false;
+    if (!aimData || aimData.id !== 'restock') {
+      env.setStoragePreview(null);
+      return false;
+    }
+    if (!held || held.type !== 'deliveryBox') {
+      env.setStoragePreview(null);
+      return false;
+    }
+    if (aimData.box) {
+      env.setStoragePreview(null);
+      return false;
+    }
+    const occupied = Logistics.storageSlotOccupied(S, aimData.slotId);
+    env.setStoragePreview(aimData.slotId, !occupied);
+    return true;
+  }
+
+  function storageAimUsable(aimData) {
+    if (!aimData || aimData.id !== 'restock') return false;
+    if (held && held.type === 'deliveryBox') return true;
+    if (held) return false;
+    return !!aimData.box && !!Logistics.storageSlotBox(S, aimData.slotId);
+  }
+
   function placeItem(point) {
     const item = held;
+    if (item.type === 'deliveryBox' || item.type === 'supply') {
+      toast('택배/재고는 창고나 사용처에 직접 넣으세요');
+      return;
+    }
     let mesh, yOff = 0.004;
     if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
     else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
@@ -229,7 +458,7 @@ const Game = (() => {
   // 슬롯/표면에서 손으로 되돌릴 때: 샷잔(cup:'shot')은 도구 타입으로, 일반 컵은 음료로 환원
   function vesselToHand(drink) {
     return drink.cup === 'shot'
-      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect, freshAt: drink.freshAt }
+      ? { type: 'shotglass', filled: !!drink.espresso, perfect: !!drink.perfect, grindPerfect: !!drink.grindPerfect, grindQ: drink.grindQ, freshAt: drink.freshAt }
       : { type: 'drink', drink };   // 일반 컵은 같은 객체 → freshAt 자동 유지
   }
   // 내려놓은 음료 컵의 메시를 현재 내용물로 다시 그림 (샷을 부은 뒤 색/크레마 갱신)
@@ -271,7 +500,7 @@ const Game = (() => {
     if (held.type === 'shotglass') {
       if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
       if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect;
+      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
       carryFresh(drink, held);   // 샷잔이 오래됐으면 컵도 그만큼 상함
       refresh();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
@@ -383,9 +612,34 @@ const Game = (() => {
       if (env.door) { env.door.toggle(); AudioFX.bell(); toast(env.door.open ? '🚪 문을 열었어요' : '🚪 문을 닫았어요'); }
       return;
     }
-    // 준비 단계엔 재고 보충만 (제조·서빙은 영업 중에)
-    if (mode === 'prep' && id !== 'restock') {
-      toast('영업을 시작하면 사용할 수 있어요 — 지금은 재고 보충과 [B] 배치');
+
+    if (id === 'deliveryBox') {
+      if (held) { toast('손이 비어있어야 택배박스를 들 수 있어요'); return; }
+      const box = S.deliveryBoxes.find(b => b.id === it.boxId);
+      if (!box) { renderDeliveryBoxes(); return; }
+      deliveryPlaceRot = typeof box.rot === 'number' ? box.rot : 0;
+      setHeld({ type: 'deliveryBox', id: box.id, kind: box.kind, amount: box.amount, rot: deliveryPlaceRot });
+      renderDeliveryBoxes();
+      AudioFX.pick();
+      return;
+    }
+
+    const stationKind = stationTargets[id];
+    if (stationKind && held && held.type === 'supply') {
+      putHeldSupply(stationKind);
+      return;
+    }
+
+    if (id === 'restock') {
+      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.slotId); return; }
+      if (held) { toast('손을 비우면 창고에서 꺼낼 수 있어요'); return; }
+      takeStorageSupply(it.slotId);
+      return;
+    }
+
+    // 준비/영업후엔 물류·문·배치만, 제조·서빙은 영업 중에
+    if (mode === 'prep' || mode === 'after') {
+      toast(mode === 'prep' ? '영업을 시작하면 사용할 수 있어요 — 지금은 물류와 [B] 배치' : '영업후 정리 시간 — 주문·입고·보충을 마치고 다음날로 넘어가세요');
       return;
     }
 
@@ -480,26 +734,29 @@ const Game = (() => {
       if (job.busy) {
         if (!job.done) { toast('분쇄 중입니다…'); return; }
         if (held) { toast('손이 비어있어야 포터필터를 꺼낼 수 있어요'); return; }
+        const grind = job.grind;   // 분쇄도를 포터필터에 인계 (추출에 영향)
         resetJob(job);
-        setHeld({ type: 'portafilter', state: 'filled' });
+        setHeld({ type: 'portafilter', state: 'filled', grind });
         AudioFX.metalClack();
         return;
       }
-      // 빈손으로 유휴 그라인더 — 더 이상 무에서 포터필터 생성 금지
-      if (!held) { toast('머신에서 포터필터를 분리해 가져오세요', 'bad'); AudioFX.err(); return; }
-      if (held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
-      if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
-      if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
-      if (held.state === 'tamped') { toast('이미 탬핑된 포터필터예요 — 머신에 장착하세요'); return; }
-      if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
-      // 빈 포터필터 삽입 + 분쇄 시작
-      S.stocks.beans--;
-      setHeld(null);
-      job.busy = true; job.done = false; job.t = 0; job.dur = 1.6; job.hasPf = true;
-      WORLD.setPortafilterState(job.pfMesh, 'empty');
-      job.sound = AudioFX.grind(job.dur);
-      AudioFX.metalClack();
-      UI.hud();
+      // 빈 포터필터를 들고 있으면 → 현재 설정된 분쇄도로 즉시 분쇄 시작
+      if (held && held.type === 'portafilter') {
+        if (held.state === 'used') { toast('넉박스에 가루를 먼저 털어내세요', 'bad'); AudioFX.err(); return; }
+        if (held.state === 'filled') { toast('이미 분쇄된 포터필터예요'); return; }
+        if (held.state === 'tamped') { toast('이미 탬핑된 포터필터예요 — 머신에 장착하세요'); return; }
+        if (S.stocks.beans <= 0) { toast('원두가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+        S.stocks.beans--;
+        setHeld(null);
+        job.busy = true; job.done = false; job.t = 0; job.dur = 1.6; job.hasPf = true; job.grind = job.grindSetting;
+        WORLD.setPortafilterState(job.pfMesh, 'empty');
+        job.sound = AudioFX.grind(job.dur);
+        AudioFX.metalClack();
+        UI.hud();
+        return;
+      }
+      // 포터필터를 들지 않았으면 → 분쇄도 다이얼 조정 (소지 여부와 무관하게 가능)
+      if (!grindGame) startGrindGame(job);
       return;
     }
 
@@ -560,6 +817,7 @@ const Game = (() => {
         if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
         slot.pfState = held.state || 'empty';
         slot.tampPerfect = !!held.tampPerfect;
+        slot.grind = held.grind;   // 분쇄도 인계 (추출 시 줄기/시간/품질에 반영)
         WORLD.setPortafilterState(slot.pf, slot.pfState);
         slot.pf.rotation.y = PF_MOUNT_TWIST;   // 왼쪽으로 틀어진 채 시작 → updateSlots가 잠금 회전
         slot.mountT = 0;
@@ -571,8 +829,8 @@ const Game = (() => {
       const state = slot.pfState;     // 빈손 → 분리
       slot.pfState = 'none';
       WORLD.setPortafilterState(slot.pf, 'none');
-      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect });
-      slot.tampPerfect = false; AudioFX.metalClack();
+      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect, grind: slot.grind });
+      slot.tampPerfect = false; slot.grind = undefined; AudioFX.metalClack();
       return;
     }
 
@@ -590,9 +848,22 @@ const Game = (() => {
         AudioFX.err();
         return;
       }
+      // 분쇄도 → 추출 속도(시간), 탬핑 → 채널링(물총). 둘 다 추출 줄기 비주얼에 반영
+      const grind = (slot.grind == null) ? (GRIND_IDEAL_MIN + GRIND_IDEAL_MAX) / 2 : slot.grind;
+      const idealGrind = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
+      slot.grindPerfect = idealGrind && slot.grind != null;
+      slot.grindQ = grindQuality(grind);   // 빗나간 정도(1 이상 ~ 0 최악) — 만족도 비례 감점용
+      // 물총(채널링): 탬핑이 완벽하지 않으면 퍽이 고르지 않아 줄기가 비스듬히 튄다(분쇄도와 무관)
+      slot.extractMode = !slot.tampPerfect ? 'channel'
+        : idealGrind ? 'ideal' : (grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse');
+      let dur = S.upgrades.fastShot ? 2.0 : 3.4;
+      if (grind < GRIND_IDEAL_MIN) dur *= 1 + (GRIND_IDEAL_MIN - grind) * 1.5;     // 가늚: 추출 지연(과다)
+      else if (grind > GRIND_IDEAL_MAX) dur *= 1 - (grind - GRIND_IDEAL_MAX) * 0.8;  // 굵음: 추출 단축(부족)
       slot.busy = true; slot.done = false; slot.t = 0;
-      slot.dur = S.upgrades.fastShot ? 2.0 : 3.4;
+      slot.dur = dur;
       slot.stream.visible = true;
+      slot.stream.scale.set(1, 1, 1);
+      slot.stream.rotation.set(0, 0, 0);
       slot.brewLiquid = WORLD.makeBrewLiquid(slot.drink.cup);
       slot.cupMesh.add(slot.brewLiquid);
       AudioFX.metalClack();
@@ -637,6 +908,8 @@ const Game = (() => {
           job.drink.espresso = 1;
           addStep(job.drink, 'espresso');
           job.drink.perfect = !!held.perfect;
+          job.drink.grindPerfect = !!held.grindPerfect;
+          job.drink.grindQ = held.grindQ;
           swapJobCup(job);                                   // 컵 메시 갱신(크레마 표시)
           setHeld({ type: 'shotglass', filled: false, perfect: false });
           AudioFX.pourWater(0.5);
@@ -665,25 +938,19 @@ const Game = (() => {
       return;
     }
 
-    /* --- 시럽 --- */
+    /* --- 시럽: 컵을 들고 [E]를 꾹 눌러 정량 도징 미니게임 --- */
     if (id === 'syrup') {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.syrup) { toast('이미 시럽이 들어있어요'); return; }
-      held.drink.syrup = it.kind;
-      addStep(held.drink, 'syrup');
-      setHeld(held);
-      AudioFX.syrupPump();
+      if (!doseGame) startDoseGame('syrup', it.kind);
       return;
     }
 
-    /* --- 휘핑크림 --- */
+    /* --- 휘핑크림: 컵을 들고 [E]를 꾹 눌러 정량 도징 미니게임 --- */
     if (id === 'whip') {
       if (!held || held.type !== 'drink') { toast('컵을 먼저 들고 오세요'); return; }
       if (held.drink.whip) { toast('이미 휘핑크림을 올렸어요'); return; }
-      held.drink.whip = 1;
-      addStep(held.drink, 'whip');
-      setHeld(held);
-      AudioFX.whipSpray();
+      if (!doseGame) startDoseGame('whip', null);
       return;
     }
 
@@ -755,21 +1022,6 @@ const Game = (() => {
       return;
     }
 
-    /* --- 재고 보충 (준비=정상가 / 영업중=비상 웃돈) --- */
-    if (id === 'restock') {
-      const r = RESTOCK[it.kind];
-      const emergency = mode === 'playing';
-      const price = emergency ? Math.round(r.price * 1.8 / 100) * 100 : r.price;
-      if (S.money < price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
-      S.money -= price;
-      if (dayStats) dayStats.spent += price;
-      S.stocks[it.kind] += r.amount;
-      toast(`${r.name} +${r.amount} (${fmt(price)})${emergency ? ' · 비상 보충 ⚡' : ''}`, emergency ? 'bad' : 'good');
-      AudioFX.cash();
-      UI.hud();
-      save();   // 구매(장비·업그레이드)와 동일하게 즉시 저장 — 새로고침 시 되돌아가는 불일치 방지
-      return;
-    }
   }
 
   /* ===== 서빙 ===== */
@@ -818,6 +1070,13 @@ const Game = (() => {
     AudioFX.err();
   }
 
+  // 분쇄도 품질: 이상 구간이면 1, 멀어질수록 0으로 (만족도 비례 감점)
+  function grindQuality(grind) {
+    if (grind == null) return 1;
+    if (grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX) return 1;
+    const d = grind < GRIND_IDEAL_MIN ? GRIND_IDEAL_MIN - grind : grind - GRIND_IDEAL_MAX;
+    return Math.max(0, 1 - d / 0.40);   // 이상에서 0.40 이상 벗어나면 0
+  }
   function completeOrder(o, servedDrink) {
     const c = o.customer;
     const frac = Math.max(0, c.patience / c.patienceMax);
@@ -836,6 +1095,22 @@ const Game = (() => {
     const artTier = servedDrink && servedDrink.artTier;
     if (artTier === 'perfect') tip += Math.round(o.total * ART_TIP_PERFECT / 100) * 100;
     else if (artTier === 'good') tip += Math.round(o.total * ART_TIP_GOOD / 100) * 100;
+    // 정량 도징(시럽/휘핑 미니게임) 보너스 — 각 +8%
+    const syrupPerfect = !!(servedDrink && servedDrink.syrupPerfect);
+    if (syrupPerfect) tip += Math.round(o.total * DOSE_TIP_PERFECT / 100) * 100;
+    const whipPerfect = !!(servedDrink && servedDrink.whipPerfect);
+    if (whipPerfect) tip += Math.round(o.total * DOSE_TIP_PERFECT / 100) * 100;
+    // 이상 분쇄도 추출 보너스 — +10%
+    const grindPerfect = !!(servedDrink && servedDrink.grindPerfect);
+    if (grindPerfect) tip += Math.round(o.total * GRIND_TIP_PERFECT / 100) * 100;
+    // 추출 컨디션 → 손님 만족도: 채널링(물총=탬핑 불균일)·과/부족 추출(분쇄도)이면 감점
+    let extractQ = 1;
+    if (servedDrink && servedDrink.espresso) {
+      if (!perfect) extractQ -= 0.2;        // 물총(채널링) — 고르지 않은 추출
+      const grindQ = servedDrink.grindQ == null ? 1 : servedDrink.grindQ;
+      extractQ -= (1 - grindQ) * 0.4;       // 분쇄도 빗나간 정도에 비례 (이상=0, 최악=−0.4)
+    }
+    if (extractQ < 1) tip = Math.round(tip * extractQ / 100) * 100;
     // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
     const fresh = freshness01(servedDrink);
     if (fresh < 1) tip = Math.round(tip * (0.4 + 0.6 * fresh) / 100) * 100;   // 상해도 최소 40%
@@ -844,19 +1119,28 @@ const Game = (() => {
     dayStats.tips += tip;
     dayStats.served++;
     let repDelta = (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0);
+    if (extractQ < 0.7) repDelta -= 1;     // 추출 컨디션 나쁨(채널링+분쇄 빗나감): 평판 손해
     if (fresh < 0.5) repDelta -= 2;        // 많이 상함: 평판 손해
     else if (fresh < 1) repDelta -= 1;     // 약간 상함: 평판 이득 감소
     S.rep = Math.max(0, Math.min(100, S.rep + repDelta));
+    if (extractQ <= 0.8) toast('☕ 추출 컨디션 미흡 — 손님 만족도 하락', 'bad', 2000);
     if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁·평판 감소`, 'bad', 2200);
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
-    // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
-    Customers.serve(c, null);
-    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${perfect || foamPerfect || artTier === 'perfect' ? ' · 퍼펙트 ✨' : ''}`, 'good');
+    // 손님 만족도 종합(추출 컨디션·신선도·응대 속도) → 표정 + 한마디 반응
+    let sat = extractQ * (0.4 + 0.6 * fresh);
+    if (frac < 0.25) sat -= 0.15;          // 오래 기다리게 함
+    const mood = sat >= 0.95 ? 'great' : sat >= 0.7 ? 'ok' : 'bad';
+    // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 떠남
+    Customers.serve(c, null, mood);
+    const anyPerfect = perfect || foamPerfect || artTier === 'perfect' || syrupPerfect || whipPerfect || grindPerfect;
+    toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${anyPerfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
     if (orderOk) toast('✨ 정확한 제조 순서! 팁 +15% · 평판 +1', 'gold', 2200);
     if (foamPerfect) toast('🥛 퍼펙트 마이크로폼! 팁 +15%', 'gold', 2200);
     if (artTier === 'perfect') toast('🎨 라떼아트 퍼펙트! 팁 +15% · 평판 +1', 'gold', 2200);
+    if (syrupPerfect || whipPerfect) toast('✨ 정량 도징! 팁 보너스', 'gold', 2200);
+    if (grindPerfect) toast('⚙️ 완벽한 분쇄·추출! 팁 +10%', 'gold', 2200);
     AudioFX.cash();
     UI.hud();
     Tutorial.event('served');
@@ -954,6 +1238,8 @@ const Game = (() => {
         slot.drink.espresso = 1;
         addStep(slot.drink, 'espresso');
         slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
+        slot.drink.grindPerfect = !!slot.grindPerfect;   // 이상 분쇄도 → 추출 품질 보너스
+        slot.drink.grindQ = slot.grindQ;                 // 빗나간 정도 인계(만족도 비례 감점)
         // 추출 완료 — 포터필터는 사용한 가루(used) 상태가 됨
         slot.pfState = 'used';
         WORLD.setPortafilterState(slot.pf, 'used');
@@ -966,10 +1252,43 @@ const Game = (() => {
         slot.cupMesh = cm;
         AudioFX.bell();
       } else {
-        // 커피 줄기 애니메이션 (위치 떨림 + 압력 느낌의 길이 흔들림)
+        // 커피 줄기 — 탬핑 불균일이면 물총(channel), 분쇄도로 빠름(coarse)/꾸준(ideal)/뚝뚝(fine)
         const s = slot.stream;
-        s.position.y = 0.115 + Math.sin(slot.t * 30) * 0.005;   // 올라간 추출구에 맞춘 줄기 중심
-        s.scale.y = 1 + Math.sin(slot.t * 22) * 0.08;
+        const mode = slot.extractMode || 'ideal';
+        const bx = slot.localPos.x;
+        if (mode === 'channel') {
+          // 물총(스프릿징): 채널링으로 가는 줄기가 비스듬히 사방으로 튐 — 각도/위치가 들쭉날쭉
+          s.visible = true;
+          const ang = Math.sin(slot.t * 57) * 0.5 + Math.sin(slot.t * 31) * 0.22;   // 좌우로 휘는 분출 각
+          s.scale.set(0.7, 1.05 + Math.sin(slot.t * 40) * 0.15, 0.7);                // 가늘게(굵은 분수 아님)
+          s.rotation.z = ang;
+          s.rotation.x = Math.sin(slot.t * 46) * 0.28;
+          s.position.x = bx - ang * 0.06 + Math.sin(slot.t * 63) * 0.01;             // 추출구(상단) 고정하듯 보정 + 떨림
+          s.position.y = 0.115 + Math.sin(slot.t * 44) * 0.008;
+        } else if (mode === 'coarse') {
+          // 세찬 분출: 압력으로 굵고 빠르게 뿜어져 나옴 — 좌우로 흔들리며 출렁(부족 추출)
+          s.visible = true;
+          s.rotation.z = Math.sin(slot.t * 72) * 0.13;                       // 세찬 분출로 좌우로 휨
+          s.rotation.x = Math.sin(slot.t * 84) * 0.09;
+          s.position.x = bx + Math.sin(slot.t * 95) * 0.007;                 // 빠른 떨림
+          s.scale.set(1.7, 1.35 + Math.sin(slot.t * 58) * 0.25, 1.7);        // 더 굵고 길게, 빠르게 출렁
+          s.position.y = 0.12 + Math.sin(slot.t * 52) * 0.01;
+        } else if (mode === 'fine') {
+          // 뚝뚝: 작은 물방울이 추출구에서 컵으로 똑…똑 떨어짐(과다 추출)
+          const period = 0.5;                            // 방울 간격(초)
+          const ph = (slot.t % period) / period;
+          s.visible = ph < 0.72;                         // 낙하 후 잠깐 끊김(뚝…뚝)
+          const fall = Math.min(1, ph / 0.72);
+          s.rotation.set(0, 0, 0); s.position.x = bx;
+          s.scale.set(0.5 + fall * 0.12, 0.34, 0.5 + fall * 0.12);   // 짧고 둥근 방울 (떨어지며 살짝 커짐)
+          s.position.y = 0.142 - fall * 0.092;           // 추출구 → 컵 바닥으로 낙하
+        } else {
+          // 이상: 꾸준한 줄기 (압력 느낌의 미세한 흔들림)
+          s.visible = true;
+          s.rotation.set(0, 0, 0); s.position.x = bx;
+          s.position.y = 0.115 + Math.sin(slot.t * 30) * 0.005;   // 올라간 추출구에 맞춘 줄기 중심
+          s.scale.set(1, 1 + Math.sin(slot.t * 22) * 0.08, 1);
+        }
       }
     });
   }
@@ -984,14 +1303,34 @@ const Game = (() => {
     if (t) t.innerHTML = title;
     if (h) h.textContent = hint;
   }
+  // 게이지(#tampGame) 채움 방향/색 설정 — 탬핑·스팀은 아래→위(기본 앰버), 도징은 위→아래(재료색)
+  function gaugeBottomUp(lo, w = TAMP_PERF_W, fillBg = '') {
+    $('tampGame').classList.remove('dose');
+    $('tgFill').style.background = fillBg;   // '' = CSS 기본 앰버 그라데이션
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.top = 'auto'; band.style.bottom = (lo * 100) + '%'; band.style.height = (w * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+  }
+  function gaugeTopDown(lo, fillBg) {
+    $('tampGame').classList.add('dose');
+    $('tgFill').style.background = fillBg;
+    const band = document.querySelector('#tampGame .tgPerfect');
+    if (band) { band.style.bottom = 'auto'; band.style.top = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
+    $('tgFill').style.height = '0%';
+  }
+  // 시럽/휘핑 게이지 색 (위가 밝고 아래가 진하게 — 부어 넣는 느낌)
+  function doseFillColor(kind, syrupKind) {
+    if (kind === 'whip') return 'linear-gradient(180deg,#ffffff,#e7e3d6)';
+    const c = ({ vanilla: ['#f6ecc4', '#e3c97e'], caramel: ['#d59a55', '#a5662a'], choco: ['#7c4c30', '#492a18'] })[syrupKind]
+      || ['#e6cd84', '#c08a3e'];
+    return `linear-gradient(180deg,${c[0]},${c[1]})`;
+  }
   function startTampGame() {
     // 퍼펙트 존 시작 위치를 매번 살짝 랜덤화 (외워지지 않도록)
     const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
     // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
     tampGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: AudioFX.tampHold(TAMP_DUR) };
-    const band = document.querySelector('#tampGame .tgPerfect');
-    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
-    $('tgFill').style.height = '0%';
+    gaugeBottomUp(lo);
     setGaugeText('🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기', '퍼펙트 존(초록)에서 손을 떼면 크레마(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
@@ -1028,7 +1367,7 @@ const Game = (() => {
       pressTamper();
       AudioFX.tampDone();
       if (result === 'perfect') AudioFX.tampPerfectSfx();
-      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공!', result === 'perfect' ? 'gold' : 'good');
+      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공 — 약간 불균일(추출 시 물총 주의)', result === 'perfect' ? 'gold' : 'good');
     }
   }
   function finishTamp(perfect, msg, cls) {
@@ -1062,9 +1401,7 @@ const Game = (() => {
     const dur = S.upgrades.fastSteam ? 1.4 : 2.4;
     // 누르는 즉시 채워지는 press-and-hold (탬핑식 armed/ready 2단계 없음)
     steamGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], job, makingFoam, dur, sound: AudioFX.steam(dur) };
-    const band = document.querySelector('#tampGame .tgPerfect');
-    if (band) { band.style.bottom = (lo * 100) + '%'; band.style.height = (TAMP_PERF_W * 100) + '%'; }
-    $('tgFill').style.height = '0%';
+    gaugeBottomUp(lo);
     setGaugeText('🥛 스티밍 — <b>[E]</b>를 누르고 있어 ' + (makingFoam ? '우유 거품 만들기' : '우유 데우기'),
       '퍼펙트 존(초록)에서 손을 떼면 마이크로폼(팁) 보너스 · 끝까지 눌러도 성공');
     clearHitFx();
@@ -1123,6 +1460,162 @@ const Game = (() => {
     return true;
   }
 
+  /* ===== 시럽/휘핑 도징 미니게임 — 탬핑·스팀과 같은 게이지를 공유, 컵을 든 채 진행 =====
+   * 시럽 펌프대/휘핑기를 보며 컵을 들고 [E]로 시작 → [E]를 꾹 눌러 도징 게이지 상승 →
+   * 퍼펙트 존(정량)에서 떼면 팁 보너스, 일반 성공도 재료 추가. 너무 적으면 재시도. */
+  function startDoseGame(kind, syrupKind) {
+    const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
+    const part = kind === 'syrup'
+      ? (env.machines.syrup && env.machines.syrup.pumps[syrupKind])
+      : (env.machines.whip && env.machines.whip.nozzle);
+    // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
+    doseGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], kind, syrupKind,
+      drink: held.drink, field: kind === 'syrup' ? 'syrup' : 'whip', tickT: 0,
+      part, partBaseY: part ? part.position.y : 0 };
+    gaugeTopDown(lo, doseFillColor(kind, syrupKind));   // 위→아래로 차오르는 재료색 게이지
+    setGaugeText(kind === 'syrup' ? '🍯 시럽 — <b>[E]</b>를 누르고 있어 펌프' : '🍦 휘핑 — <b>[E]</b>를 누르고 있어 짜기',
+      '퍼펙트 존(초록)에서 손을 떼면 정량 도징(팁) 보너스 · 끝까지 눌러도 성공');
+    clearHitFx();
+    $('tampGame').classList.remove('hidden');
+  }
+  // 펌프 헤드/노즐을 살짝 눌렀다 떼는 연출 (펌프질·분사 반복)
+  function pulseDosePart() {
+    const g = doseGame;
+    if (!g || !g.part) return;
+    const part = g.part, base = g.partBaseY;
+    part.position.y = base - 0.03;
+    setTimeout(() => { part.position.y = base; }, 120);
+  }
+  function endDoseGame() {
+    if (doseGame && doseGame.part) doseGame.part.position.y = doseGame.partBaseY;   // 진행 중 종료 시 원위치
+    doseGame = null;
+    clearHitFx();
+    $('tampGame').classList.remove('dose');
+    $('tgFill').style.background = '';
+    $('tampGame').classList.add('hidden');
+  }
+  function lockDoseGame(fill) {
+    if (doseGame.locked) return;
+    doseGame.locked = true;
+    const pz = doseGame.perfect;
+    const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
+      : (fill >= DOSE_MIN) ? 'good' : 'weak';
+    if (result === 'weak') {
+      AudioFX.err();
+      toast(doseGame.kind === 'syrup' ? '시럽이 너무 적어요 — 다시 [E]로 펌프하세요' : '휘핑이 부족해요 — 다시 [E]로 짜세요', 'bad', 1500);
+      endDoseGame();
+    } else {
+      finishDose(result === 'perfect');
+    }
+  }
+  function finishDose(perfect) {
+    const d = doseGame.drink;
+    if (doseGame.kind === 'syrup') {
+      d.syrup = doseGame.syrupKind;
+      addStep(d, 'syrup');
+      d.syrupPerfect = perfect;
+      AudioFX.syrupPump();
+    } else {
+      d.whip = 1;
+      addStep(d, 'whip');
+      d.whipPerfect = perfect;
+      AudioFX.whipSpray();
+    }
+    if (perfect) AudioFX.tampPerfectSfx();
+    setHeld(held);   // 컵 메시·라벨 갱신
+    toast(perfect ? (doseGame.kind === 'syrup' ? '✨ 퍼펙트 시럽 도징! (팁 보너스)' : '✨ 완벽한 휘핑! (팁 보너스)')
+      : (doseGame.kind === 'syrup' ? '시럽을 넣었어요' : '휘핑크림을 올렸어요'), perfect ? 'gold' : 'good');
+    endDoseGame();
+  }
+  function updateDoseGame(dt, aimData) {
+    if (!doseGame) return false;
+    const g = doseGame;
+    const ok = aimData && aimData.id === g.kind && held && held.type === 'drink' && !held.drink[g.field];
+    if (!ok) { endDoseGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
+    // 누르는 동안 도징 게이지 상승(펌프/스프레이 사운드 반복), 손 떼면 그 지점으로 즉시 판정·확정
+    if (useDown) {
+      g.fill = Math.min(1, g.fill + dt / DOSE_DUR);
+      $('tgFill').style.height = (g.fill * 100) + '%';
+      g.tickT += dt;
+      if (g.tickT >= 0.22) { g.tickT = 0; (g.kind === 'syrup' ? AudioFX.syrupPump : AudioFX.whipSpray)(); pulseDosePart(); }
+      if (g.fill >= 1) lockDoseGame(1);
+    } else {
+      lockDoseGame(g.fill);
+    }
+    return true;
+  }
+
+  /* ===== 분쇄도 다이얼 — 그라인더에서 [E] 누른 채 마우스로 다이얼을 직접 돌려 맞춘다 =====
+   * 게이지가 아니라 실제 다이얼 회전. [E]를 누르면 시점이 잠기고 마우스 좌우로 바늘(1~7)을 돌림.
+   * 초록(이상, 숫자 4 부근)에 맞추면 완벽 추출. [E]에서 손을 떼면 그 분쇄도로 확정(머신에 저장). */
+  function startGrindGame(job) {
+    grindGame = { job, set: job.grindSetting };
+    Player.setLook(false);                                  // 시점 잠금 — 마우스를 다이얼 회전에 양보
+    if (job.dialMark) WORLD.setGrinderDial(job.dialMark, grindGame.set);
+    buildGrindTicks();                                      // 눈금·숫자 1회 생성
+    $('grindDial').classList.remove('hidden');              // 중앙 다이얼 비주얼 표시
+    updateGrindDial();
+  }
+  // 다이얼 눈금(마이너/메이저) + 숫자 1~7 생성 (한 번만)
+  function buildGrindTicks() {
+    const g = document.getElementById('gdTicks');
+    if (!g || g.childElementCount) return;
+    const NS = 'http://www.w3.org/2000/svg', cx = 100, cy = 100;
+    const tick = (set, r1, r2, w, col) => {
+      const th = (set - 0.5) * 270 * Math.PI / 180, s = Math.sin(th), c = Math.cos(th);
+      const l = document.createElementNS(NS, 'line');
+      l.setAttribute('x1', (cx + r1 * s).toFixed(1)); l.setAttribute('y1', (cy - r1 * c).toFixed(1));
+      l.setAttribute('x2', (cx + r2 * s).toFixed(1)); l.setAttribute('y2', (cy - r2 * c).toFixed(1));
+      l.setAttribute('stroke', col); l.setAttribute('stroke-width', w); l.setAttribute('stroke-linecap', 'round');
+      g.appendChild(l);
+    };
+    for (let i = 0; i < 6; i++) tick((i + 0.5) / 6, 90, 84, 2, 'rgba(232,184,109,.3)');   // 마이너 눈금
+    for (let i = 0; i <= 6; i++) {
+      tick(i / 6, 90, 78, 3, 'rgba(232,184,109,.7)');                                     // 메이저 눈금
+      const th = (i / 6 - 0.5) * 270 * Math.PI / 180;
+      const tx = document.createElementNS(NS, 'text');
+      tx.setAttribute('x', (cx + 64 * Math.sin(th)).toFixed(1));
+      tx.setAttribute('y', (cy - 64 * Math.cos(th)).toFixed(1));
+      tx.setAttribute('fill', '#e8d8c0'); tx.setAttribute('font-size', '15'); tx.setAttribute('font-weight', '700');
+      tx.setAttribute('text-anchor', 'middle'); tx.setAttribute('dominant-baseline', 'central');
+      tx.textContent = String(i + 1);
+      g.appendChild(tx);
+    }
+  }
+  function updateGrindDial() {                              // 중앙 다이얼: 바늘 회전 + 분쇄도 읽기
+    if (!grindGame) return;
+    const set = grindGame.set;
+    const needle = document.getElementById('gdNeedle');
+    if (needle) needle.setAttribute('transform', `rotate(${((set - 0.5) * 270).toFixed(1)} 100 100)`);   // 0.5=정중앙(위)
+    $('gdReadout').innerHTML = `분쇄도 <b>${(1 + set * 6).toFixed(1)}</b>`;
+  }
+  function turnGrindDial(dx) {                              // 마우스 좌우 이동 → 다이얼 회전
+    if (!grindGame) return;
+    grindGame.set = Math.max(0, Math.min(1, grindGame.set - dx * 0.0016));
+    if (grindGame.job.dialMark) WORLD.setGrinderDial(grindGame.job.dialMark, grindGame.set);
+    updateGrindDial();
+  }
+  function endGrindGame() {
+    grindGame = null;
+    Player.setLook(true);
+    $('grindDial').classList.add('hidden');
+  }
+  function confirmGrind() {
+    const set = grindGame.set;
+    grindGame.job.grindSetting = set;   // 머신에 저장(분쇄 시 포터필터로 인계)
+    const ideal = set >= GRIND_IDEAL_MIN && set <= GRIND_IDEAL_MAX;
+    if (ideal) { toast('⚙️ 분쇄도: 이상적 — 균형 잡힌 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
+    else { toast(set < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라요(부족)', '', 1700); AudioFX.metalClack(); }
+    endGrindGame();
+  }
+  function updateGrindGame(dt, aimData) {
+    if (!grindGame) return false;
+    // [E]를 떼거나 그라인더에서 시선/위치가 벗어나면 현재 분쇄도로 확정. (회전은 mousemove에서)
+    const ok = aimData && aimData.id === 'grinder' && !(held && held.type === 'portafilter');
+    if (!ok || !useDown) { confirmGrind(); return false; }
+    return true;
+  }
+
 
 
 
@@ -1133,10 +1626,13 @@ const Game = (() => {
 
   // 매장(머신·들고있는것·연출) 초기화 — 준비/영업 진입 시 공용
   function resetStations() {
+    returnHeldLogistics(false);
     setHeld(null);
     clearPlacedItems();
     Effects.clear();
     env.placeIndicator.visible = false;
+    if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+    if (env.setStoragePreview) env.setStoragePreview(null);
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
@@ -1145,10 +1641,12 @@ const Game = (() => {
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
-    // 탬핑/스팀 미니게임 초기화
+    // 탬핑/스팀/도징/분쇄 미니게임 초기화
     useDown = false;
     endTampGame();
     endSteamGame();
+    endDoseGame();
+    endGrindGame();
     if (env.machines.tamp && env.machines.tamp.tamper) env.machines.tamp.tamper.position.y = 0.04;
   }
 
@@ -1156,6 +1654,8 @@ const Game = (() => {
   function startPrep() {
     mode = 'prep';
     open = false; timeSec = 0;
+    Logistics.ensureState(S);
+    const arrivals = Logistics.collectArrivals(S, S.day);
     dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
@@ -1175,7 +1675,10 @@ const Game = (() => {
       Weather.setClock(8);                                     // 준비 단계 = 아침 08시(해 낮게)
       if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
     }
+    renderDeliveryBoxes();
+    renderStorageBoxes();
     UI.hud(); UI.clock();
+    if (arrivals.length) { save(); toast(`문앞에 택배 ${arrivals.length}개 도착 — 창고에 입고하세요`, 'gold', 4500); }
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
   }
 
@@ -1212,7 +1715,7 @@ const Game = (() => {
     renderUpgrades();
     $('prepPanel').classList.remove('hidden');
     Player.enabled = false;
-    document.exitPointerLock && document.exitPointerLock();
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
   }
   function closePrepPanel() {
     prepPanelOpen = false;
@@ -1234,13 +1737,15 @@ const Game = (() => {
   }
 
   function endDay() {
-    mode = 'dayEnd';
+    returnHeldLogistics(false);
+    mode = 'after';
     Player.enabled = false;
+    open = false;
     if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
     if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
-    document.exitPointerLock && document.exitPointerLock();
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
     const rent = rentFor(S.day);
     S.money -= rent;
@@ -1283,7 +1788,91 @@ const Game = (() => {
     $('dayEnd').classList.remove('hidden');
     if (crisis) AudioFX.err();
     S.day++;
+    renderDeliveryOrders();
     save();
+  }
+
+  function closeDayEndPanel() {
+    if (mode !== 'after') return;
+    $('dayEnd').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    Player.enabled = true;
+    UI.hud();
+    UI.clock();
+    renderDeliveryBoxes();
+  }
+
+  function clearDebugOverlays() {
+    ['menuScreen', 'pauseScreen', 'prepPanel', 'dayEnd', 'gameOver'].forEach(id => {
+      const el = $(id);
+      if (el) el.classList.add('hidden');
+    });
+    $('hud').classList.remove('hidden');
+    prepPanelOpen = false;
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
+  }
+
+  function goPrep() {
+    if (typeof Editor !== 'undefined' && Editor.active) Editor.toggle();
+    clearDebugOverlays();
+    startPrep();
+    save();
+    toast('디버그: 영업전으로 이동', 'gold');
+  }
+
+  function goOpen() {
+    if (mode !== 'prep') goPrep();
+    beginOpen();
+    save();
+    toast('디버그: 영업중으로 이동', 'gold');
+  }
+
+  function goAfter() {
+    if (typeof Editor !== 'undefined' && Editor.active) Editor.toggle();
+    returnHeldLogistics(false);
+    mode = 'after';
+    open = false;
+    Customers.clear();
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    clearDebugOverlays();
+    $('prepBar').classList.add('hidden');
+    if (env.doorSign) env.doorSign.setOpen(false);
+    if (env.door) env.door.open = false;
+    if (typeof Weather !== 'undefined') Weather.setClock(18);
+    Player.enabled = true;
+    renderDeliveryBoxes();
+    UI.hud(); UI.clock();
+    save();
+    toast('디버그: 영업후로 이동', 'gold');
+  }
+
+  function endDayNow() {
+    if (!dayStats) dayStats = freshDayStats();
+    Customers.clear();
+    orders = []; orderSeq = 0;
+    $('tickets').innerHTML = '';
+    if (mode === 'after') {
+      $('hud').classList.add('hidden');
+      $('dayEnd').classList.remove('hidden');
+      Player.enabled = false;
+      return;
+    }
+    endDay();
+  }
+
+  function addMoney(amount) {
+    const n = Math.max(0, Math.round(Number(amount) || 0));
+    if (!n) { toast('추가할 금액을 입력하세요', 'bad'); AudioFX.err(); return; }
+    S.money += n;
+    refreshPrepMoney();
+    UI.hud();
+    save();
+    toast(`디버그: ${fmt(n)} 추가`, 'gold');
+  }
+
+  function debugState() {
+    return { mode, day: S.day, money: S.money, open };
   }
 
   function renderUpgrades() {
@@ -1385,7 +1974,7 @@ const Game = (() => {
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
-      if (d && d.money !== undefined) { S = Object.assign(freshState(), d); return true; }
+      if (d && d.money !== undefined) { S = Object.assign(freshState(false), d); Logistics.ensureState(S); return true; }
     } catch (e) { /* 손상된 저장 무시 */ }
     return false;
   }
@@ -1428,6 +2017,7 @@ const Game = (() => {
       return null;
     }
     // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들 — 후처리 외곽선은 작은 버튼도 잘 보임)
+    if (it && it.id === 'restock' && it.box && aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes, storageBoxOutline: true, color: 0x4ade80, hiddenColor: 0x14532d };
     if (aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes };
     if (aimMesh.userData.station) return { key: aimMesh.userData.station.root, srcList: [aimMesh.userData.station.root] };
     if (aimMesh.userData.outlineRoot) return { key: aimMesh.userData.outlineRoot, srcList: [aimMesh.userData.outlineRoot] };
@@ -1439,6 +2029,8 @@ const Game = (() => {
     const spec = aimOutlineSpec(aimMesh);
     if (spec && _outlinePass) {             // 모델 메시 → 후처리 외곽선
       if (box) box.visible = false;
+      _outlinePass.visibleEdgeColor.setHex(spec.color || 0xffa000);
+      _outlinePass.hiddenEdgeColor.setHex(spec.hiddenColor || 0x6b4200);
       if (_outlineSrc !== spec.key) { _outlinePass.selectedObjects = collectOutlineTargets(spec.srcList); _outlineSrc = spec.key; }
       return;
     }
@@ -1449,6 +2041,7 @@ const Game = (() => {
       aimMesh.updateWorldMatrix(true, false);
       aimMesh.matrixWorld.decompose(box.position, box.quaternion, box.scale);
       box.scale.set(box.scale.x * g.width, box.scale.y * g.height, box.scale.z * g.depth).multiplyScalar(1.04);
+      box.material.color.setHex((spec && spec.color) || 0xffffff);
       box.visible = true;
     } else {
       box.visible = false;
@@ -1456,14 +2049,27 @@ const Game = (() => {
   }
 
   function updatePrep() {
-    // 준비 단계: 재고 보충 프롬프트만 표시 (손님·시계 정지)
+    // 준비/영업후: 물류 프롬프트만 표시 (손님·시계 정지)
     const pr = $('prompt');
-    if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); updateAimHighlight(null); return; }
+    if (prepPanelOpen) {
+      pr.classList.add('hidden'); $('crosshair').classList.remove('active');
+      if (env.setStoragePreview) env.setStoragePreview(null);
+      updateAimHighlight(null);
+      return;
+    }
+    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
-    const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door');   // 준비 단계에 쓸 수 있는 것만
-    updateAimHighlight(usable ? Player.aimedObject : null);
+    const targetKind = aimData && stationTargets[aimData.id];
+    const usable = aimData && (storageAimUsable(aimData) || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
+    const shelfPreview = showStoragePreview(aimData);
+    const dprev = usable || shelfPreview ? null : deliveryPlacePreview();
+    if (usable && env.setDeliveryPreview) env.setDeliveryPreview(null);
+    updateAimHighlight(usable && !shelfPreview ? Player.aimedObject : null);
     if (usable) {
       pr.innerHTML = UI.prompt(aimData);
+      pr.classList.remove('hidden'); $('crosshair').classList.add('active');
+    } else if (dprev) {
+      pr.innerHTML = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
       pr.classList.add('hidden'); $('crosshair').classList.remove('active');
@@ -1486,12 +2092,28 @@ const Game = (() => {
   }
 
   function update(dt) {
-    if (mode === 'prep') { updatePrep(); return; }
-    if (mode !== 'playing') { updateAimHighlight(null); $('freshness').classList.add('hidden'); return; }
+    if (mode === 'prep' || mode === 'after') { updatePrep(); $('freshness').classList.add('hidden'); return; }
+    if (mode !== 'playing' && mode !== 'closing') {
+      if (env.setDeliveryPreview) env.setDeliveryPreview(null);
+      if (env.setStoragePreview) env.setStoragePreview(null);
+      updateAimHighlight(null); $('freshness').classList.add('hidden'); return;
+    }
 
     // 시간
-    timeSec += dt;
-    if (open && timeSec >= DAY_LEN) {
+    if (mode === 'playing') {
+      timeSec += dt;
+      if (open && timeSec >= DAY_LEN) {
+        open = false;
+        mode = 'closing';
+        toast('영업 마감! 남은 손님을 응대하세요', 'gold', 3500);
+        AudioFX.bell();
+      }
+    }
+    if (mode === 'closing' && Customers.list.length === 0) {
+      endDay();
+      return;
+    }
+    if (mode === 'closing' && open) {
       open = false;
       toast('영업 마감! 남은 손님을 응대하세요', 'gold', 3500);
       AudioFX.bell();
@@ -1501,13 +2123,13 @@ const Game = (() => {
       Weather.setClock(Math.min(18, 9 + (timeSec / DAY_LEN) * 9));
 
     // 손님 스폰
-    if (open) {
+    if (mode === 'playing' && open) {
       spawnTimer -= dt;
       if (spawnTimer <= 0) {
         spawnTimer = spawnInterval();
         Customers.spawn(patienceForNew());
       }
-    } else if (Customers.list.length === 0) {
+    } else if (mode === 'playing' && Customers.list.length === 0) {
       endDay();
       return;
     }
@@ -1531,14 +2153,23 @@ const Game = (() => {
     }
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
+    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
-    updateAimHighlight(aimData ? Player.aimedObject : null);
+    const shelfPreview = showStoragePreview(aimData);
+    updateAimHighlight(aimData && !shelfPreview ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
     const steaming = updateSteamGame(dt, aimData);
+    const dosing = updateDoseGame(dt, aimData);
+    const grinding = updateGrindGame(dt, aimData);
     let p = UI.prompt(aimData);
-    if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
+    if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
-    if (!aimData && held) {
+    if (!shelfPreview && env.setStoragePreview) env.setStoragePreview(null);
+    const dprev = !aimData ? deliveryPlacePreview() : null;
+    if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
+    if (dprev) {
+      p = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
+    } else if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
       const pt = Player.aimSurface();
       if (pt) {
         if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
@@ -1586,36 +2217,46 @@ const Game = (() => {
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
       if (LatteArt.active) return;   // 라떼아트 진행 중엔 입력이 푸어(useDown)에만 쓰임
+      if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
       const aimData = Player.aim();
       if (aimData) { interact(aimData); return; }
       if (held) {
+        if (moveHeldDeliveryBox()) return;
         const pt = Player.aimSurface();
         if (pt && !placeBlocked(pt)) placeItem(pt);
       }
     }
+    function dropOrReturnHeld() {
+      if (!held) return false;
+      if (returnHeldLogistics(true)) return true;
+      if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
+      else if (held.type === 'shotglass') { toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad'); }
+      else if (held.type === 'pitcher') { toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad'); }
+      else { setHeld(null); toast('버렸습니다'); }
+      return true;
+    }
     // const Editor는 window 속성이 아니므로 typeof로 확인해야 게이트가 작동함
     const editing = () => typeof Editor !== 'undefined' && Editor.active;
     document.addEventListener('keydown', ev => {
-      if (mode !== 'playing' && mode !== 'prep') return;
+      if (mode !== 'playing' && mode !== 'prep' && mode !== 'closing' && mode !== 'after') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
       if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
-      // 준비 단계 전용 조작
-      if (mode === 'prep') {
+      // 준비/영업후 전용 조작
+      if (mode === 'prep' || mode === 'after') {
         if (prepPanelOpen) return;                       // 패널은 버튼으로 조작
-        if (ev.code === 'KeyE') onUse();                 // 재고 보충
-        else if (ev.code === 'KeyO') beginOpen();        // 영업 시작
-        else if (ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
+        if (ev.code === 'KeyQ' && dropOrReturnHeld()) return;
+        if (ev.code === 'KeyE') onUse();                 // 물류/문
+        else if (mode === 'prep' && ev.code === 'KeyO') beginOpen();        // 영업 시작
+        else if (mode === 'prep' && ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
+        else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); }
+        else if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
         else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
         return;
       }
       // 영업 중 조작
       if (ev.code === 'KeyE') { useDown = true; onUse(); }
-      if (ev.code === 'KeyQ' && held) {
-        if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
-        else if (held.type === 'shotglass') { toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad'); }
-        else if (held.type === 'pitcher') { toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad'); }
-        else { setHeld(null); toast('버렸습니다'); }
-      }
+      if (ev.code === 'KeyQ') dropOrReturnHeld();
+      if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT') Tutorial.cancel();
     });
@@ -1624,13 +2265,15 @@ const Game = (() => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
     document.addEventListener('mousedown', ev => {
-      if (mode === 'playing' && document.pointerLockElement && ev.button === 0 && !editing()) {
+      if ((mode === 'playing' || mode === 'closing' || mode === 'after') && document.pointerLockElement && ev.button === 0 && !editing()) {
         useDown = true; onUse();
       }
     });
     // 탬핑 홀드 해제: [E]/좌클릭에서 손을 떼면 게이지 판정
     document.addEventListener('keyup', ev => { if (ev.code === 'KeyE') useDown = false; });
     document.addEventListener('mouseup', ev => { if (ev.button === 0) useDown = false; });
+    // 분쇄도 다이얼 회전 — [E] 누른 채 마우스 좌우로 돌림 (시점은 잠겨 있음)
+    document.addEventListener('mousemove', ev => { if (grindGame && useDown) turnGrindDial(ev.movementX); });
     // 포커스/포인터락이 풀리면 keyup·mouseup이 안 와 useDown이 눌린 채로 남는다 → 강제 해제
     window.addEventListener('blur', () => { useDown = false; });
     document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) useDown = false; });
@@ -1638,6 +2281,7 @@ const Game = (() => {
 
   function newGame() {
     S = freshState();
+    Logistics.ensureState(S);
     UI.recipeBook();
     pendingTutorial = true;      // 튜토리얼은 첫 영업 시작 때 시작
     startPrep();
@@ -1656,7 +2300,7 @@ const Game = (() => {
 
   return {
     init, update, newGame, continueGame, nextDay, hasSave, onAngryLeave,
-    beginOpen, openPrepPanel, closePrepPanel,
+    beginOpen, openPrepPanel, closePrepPanel, closeDayEndPanel,
     setOutlinePass(p) { _outlinePass = p; },   // main.js가 후처리 OutlinePass 주입
 
     get mode() { return mode; },
@@ -1675,6 +2319,10 @@ const Game = (() => {
     },
     isBrewing: () => env.machines.espressoSlots.some(s => s.busy && !s.done),
     steamSources,
-    _debug: { closeNow() { timeSec = DAY_LEN + 1; open = false; Customers.clear(); orders = []; $('tickets').innerHTML = ''; } },
+    _debug: {
+      goPrep, goOpen, goAfter, endDayNow, addMoney,
+      state: debugState,
+      closeNow: endDayNow,
+    },
   };
 })();

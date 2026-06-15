@@ -139,6 +139,15 @@ const Customers = (() => {
     c.anim = name;
   }
 
+  /* ---------- 서빙/이탈 시 손님 반응 (이모지 + 한마디) ---------- */
+  const REACT = {
+    great: { emoji: '😍', texts: ['완벽해요!', '최고예요!', '맛있어요!', '단골 될게요!'] },
+    ok:    { emoji: '🙂', texts: ['감사합니다', '잘 마실게요', '좋아요'] },
+    bad:   { emoji: '😖', texts: ['별로네요…', '음… 아쉬워요', '실망이에요'] },
+    angry: { emoji: '😠', texts: ['너무 느려요!', '한참 기다렸어요!', '그냥 갈게요'] },
+  };
+  const pick = arr => arr[(Math.random() * arr.length) | 0];
+
   /* ---------- 머리 위 말풍선 + 인내심 바 ---------- */
   function makeBillboard() {
     const c = document.createElement('canvas');
@@ -157,22 +166,35 @@ const Customers = (() => {
     ctx.clearRect(0, 0, 160, 96);
     if (mode === 'none') { c.bb.sprite.visible = false; return; }
     c.bb.sprite.visible = true;
-    if (mode === 'bubble' || mode === 'happy' || mode === 'angry') {
-      // 말풍선
+    // 반응 말풍선(만족/보통/불만/화남): 이모지 + 텍스트
+    const react = REACT[mode];
+    if (react) {
+      const bad = mode === 'bad' || mode === 'angry';
+      ctx.fillStyle = bad ? 'rgba(255,236,234,.96)' : 'rgba(250,247,238,.96)';
+      ctx.beginPath(); ctx.roundRect(4, 4, 152, 62, 16); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(70, 64); ctx.lineTo(80, 80); ctx.lineTo(90, 64); ctx.fill();
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '28px "Segoe UI Emoji","Malgun Gothic"';
+      ctx.fillStyle = '#3a2a1e';
+      ctx.fillText(react.emoji, 80, 23);
+      ctx.font = '700 19px "Malgun Gothic","Segoe UI"';
+      ctx.fillStyle = bad ? '#b0392e' : '#3a2a1e';
+      ctx.fillText(c.reactText || react.texts[0], 80, 49);
+      c.bb.sprite.material.map.needsUpdate = true;
+      return;
+    }
+    // 주문 말풍선(☕) — 줄 맨 앞 손님
+    if (mode === 'bubble') {
       ctx.fillStyle = 'rgba(252,248,240,.95)';
-      ctx.beginPath();
-      ctx.roundRect(40, 4, 80, 56, 14);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(70, 58); ctx.lineTo(80, 74); ctx.lineTo(90, 58);
-      ctx.fill();
+      ctx.beginPath(); ctx.roundRect(40, 4, 80, 56, 14); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(70, 58); ctx.lineTo(80, 74); ctx.lineTo(90, 58); ctx.fill();
       ctx.font = '34px "Segoe UI Emoji","Malgun Gothic"';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillStyle = '#3a2a1e';
-      ctx.fillText(mode === 'bubble' ? '☕' : mode === 'happy' ? '😊' : '😠', 80, 34);
+      ctx.fillText('☕', 80, 34);
     }
-    if (frac !== null && mode !== 'happy' && mode !== 'angry') {
-      // 인내심 바
+    // 인내심 바 (bubble / wait)
+    if (frac !== null) {
       ctx.fillStyle = 'rgba(10,6,3,.7)';
       ctx.beginPath(); ctx.roundRect(20, 78, 120, 12, 6); ctx.fill();
       const col = frac > 0.5 ? '#7fb069' : frac > 0.25 ? '#e8b86d' : '#d9534f';
@@ -374,8 +396,9 @@ const Customers = (() => {
     c.pathIdx = 0;
     c.queueIdx = c.pickupIdx = -1;
     setFace(c, 'angry');
+    c.reactText = pick(REACT.angry.texts);
     drawBillboard(c, 'angry', null);
-    setTimeout(() => { if (c.bb) drawBillboard(c, 'none', null); }, 2200);
+    setTimeout(() => { if (c.bb) drawBillboard(c, 'none', null); }, 2600);
     hooks.onAngryLeave && hooks.onAngryLeave(c);
   }
 
@@ -396,14 +419,16 @@ const Customers = (() => {
     drawBillboard(c, 'wait', 1);
   }
 
-  function serve(c, drinkMesh) {
+  // mood: 'great'(만족) | 'ok'(보통) | 'bad'(불만) — 추출 컨디션·신선도·응대 속도 종합
+  function serve(c, drinkMesh, mood = 'great') {
     c.state = 'leave';
     c.path = leavePath(c);
     c.pathIdx = 0;
     c.pickupIdx = -1;
-    setFace(c, 'happy');
-    drawBillboard(c, 'happy', null);
-    setTimeout(() => { if (c.bb) drawBillboard(c, 'none', null); }, 2200);
+    setFace(c, mood === 'bad' ? 'angry' : 'happy');
+    c.reactText = pick((REACT[mood] || REACT.great).texts);
+    drawBillboard(c, REACT[mood] ? mood : 'great', null);
+    setTimeout(() => { if (c.bb) drawBillboard(c, 'none', null); }, 2600);
     if (drinkMesh) {
       drinkMesh.position.set(0.3, 1.05, 0.12);
       drinkMesh.scale.setScalar(0.9);
