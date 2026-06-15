@@ -321,7 +321,7 @@ const WORLD = (() => {
       surfaces: [],            // 아이템을 내려놓을 수 있는 표면(카운터·테이블·선반)
       stations: [],            // 편집 모드로 이동 가능한 기구들
       staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
-      machines: {}, steamEmitters: [],
+      machines: {}, steamEmitters: [], deliveryViews: [],
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
       doorPos: new THREE.Vector3(5.5, 0, 8),
@@ -1089,6 +1089,31 @@ const WORLD = (() => {
         }
       }
       return null;
+    };
+
+    env.clearDeliveryBoxes = function () {
+      env.deliveryViews.forEach(v => {
+        scene.remove(v.mesh);
+        scene.remove(v.hitbox);
+        const i = env.interactables.indexOf(v.hitbox);
+        if (i >= 0) env.interactables.splice(i, 1);
+      });
+      env.deliveryViews = [];
+    };
+    env.syncDeliveryBoxes = function (boxes) {
+      env.clearDeliveryBoxes();
+      const spots = [[5.05, 9.35], [5.95, 9.35], [5.05, 10.05], [5.95, 10.05]];
+      boxes.slice(0, spots.length).forEach((b, i) => {
+        const [x, z] = spots[i];
+        const mesh = makeBoxMesh(b.kind);
+        mesh.position.set(x, 0, z);
+        mesh.scale.setScalar(1.25);
+        scene.add(mesh);
+        const hb = hitbox(0.68, 0.52, 0.55, x, 0.28, z, { id: 'deliveryBox', boxId: b.id });
+        hb.userData.outlineRoot = mesh;
+        addI(hb);
+        env.deliveryViews.push({ id: b.id, mesh, hitbox: hb });
+      });
     };
 
     /* ---------- 장식 ---------- */

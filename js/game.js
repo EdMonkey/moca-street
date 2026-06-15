@@ -16,7 +16,7 @@ const Game = (() => {
 
   /* ===== 상태 ===== */
   let env = null, scene = null;
-  let mode = 'menu';              // menu | playing | dayEnd
+  let mode = 'menu';              // menu | prep | playing | closing | after | gameover
   let S = null;                   // 저장되는 상태
   let held = null;                // {type:'drink',drink:{...}} | {type:'dessert',kind}
   let orders = [];                // {customer, items:[{type,recipeId|kind,done}], total}
@@ -34,6 +34,9 @@ const Game = (() => {
     return {
       money: 20000, day: 1, rep: 50, level: 1, xp: 0,
       stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
+      storage: { beans: 0, milk: 0, cups: 0, dessert: 0 },
+      pendingDeliveries: [],
+      deliveryBoxes: [],
       upgrades: {},
       equip: {},          // 구매한 추가 장비 개수 { grinder, espresso, steamer }
     };
@@ -41,6 +44,13 @@ const Game = (() => {
   function freshDayStats() {
     return { revenue: 0, tips: 0, served: 0, angry: 0, spent: 0 };
   }
+  const supplyNames = { beans: '원두', milk: '우유', cups: '컵', dessert: '디저트' };
+  const stationTargets = {
+    grinder: 'beans',
+    pitcherrack: 'milk',
+    cupHot: 'cups', cupIce: 'cups', cupEsp: 'cups',
+    dessert: 'dessert',
+  };
 
   /* ===== 유틸 ===== */
   const fmt = n => '₩ ' + n.toLocaleString('ko-KR');
@@ -58,6 +68,116 @@ const Game = (() => {
   }
   function unlockedRecipes() { return Object.keys(RECIPES).filter(k => RECIPES[k].lvl <= S.level); }
   function unlockedDesserts() { return Object.keys(DESSERTS).filter(k => DESSERTS[k].lvl <= S.level); }
+
+  function renderDeliveryBoxes() {
+    if (!env || !env.syncDeliveryBoxes) return;
+    Logistics.ensureState(S);
+    const hiddenId = held && held.type === 'deliveryBox' ? held.id : null;
+    env.syncDeliveryBoxes(S.deliveryBoxes.filter(b => b.id !== hiddenId));
+  }
+
+  function renderDeliveryOrders() {
+    const list = $('deliveryOrderList');
+    if (!list) return;
+    Logistics.ensureState(S);
+    list.innerHTML = '';
+    Logistics.KINDS.forEach(kind => {
+      const r = RESTOCK[kind];
+      const pending = S.pendingDeliveries
+        .filter(d => d.kind === kind)
+        .reduce((sum, d) => sum + d.amount, 0);
+      const div = document.createElement('div');
+      div.className = 'upg';
+      div.innerHTML =
+        `<div><div class="un">${r.name} 주문</div>` +
+        `<div class="ud">내일 아침 문앞 도착 +${r.amount}${pending ? ` · 대기 ${pending}` : ''}</div></div>` +
+        `<button class="btn" data-delivery="${kind}" ${S.money < r.price ? 'disabled' : ''}>${fmt(r.price)}</button>`;
+      list.appendChild(div);
+    });
+    list.querySelectorAll('button[data-delivery]').forEach(b => {
+      b.onclick = () => orderScheduledDelivery(b.dataset.delivery);
+    });
+  }
+
+  function orderScheduledDelivery(kind) {
+    const r = RESTOCK[kind];
+    if (S.money < r.price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
+    S.money -= r.price;
+    Logistics.scheduleDelivery(S, kind, 1, S.day - 1);   // 마감 후엔 S.day가 이미 다음날
+    AudioFX.cash();
+    toast(`${r.name} 주문 완료 — 다음날 아침 문앞 도착`, 'good');
+    renderDeliveryOrders();
+    UI.hud();
+    save();
+  }
+
+  function orderQuickDelivery(kind) {
+    const r = RESTOCK[kind];
+    const price = Logistics.deliveryPrice(kind, 1, true);
+    if (S.money < price) { toast('퀵 배송비가 부족해요!', 'bad'); AudioFX.err(); return; }
+    S.money -= price;
+    if (dayStats) dayStats.spent += price;
+    Logistics.addDeliveryBox(S, kind, r.amount, 'quick');
+    renderDeliveryBoxes();
+    AudioFX.cash();
+    toast(`퀵 배송 도착! 문앞 ${r.name} 박스를 창고에 넣으세요`, 'gold', 4200);
+    UI.hud();
+    save();
+  }
+
+  function storeHeldDelivery(kind) {
+    if (!held || held.type !== 'deliveryBox') return false;
+    if (held.kind !== kind) { toast(`${supplyNames[held.kind]} 박스는 해당 창고칸에 넣으세요`, 'bad'); AudioFX.err(); return true; }
+    const res = Logistics.storeDeliveryBox(S, held.id);
+    if (!res.ok) { toast('이미 입고된 박스예요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
+    setHeld(null);
+    renderDeliveryBoxes();
+    UI.hud();
+    save();
+    toast(`${supplyNames[kind]} 창고 입고 +${res.box.amount}`, 'good');
+    AudioFX.put();
+    return true;
+  }
+
+  function takeStorageSupply(kind) {
+    const res = Logistics.takeSupply(S, kind);
+    if (!res.ok) {
+      if (mode === 'playing' || mode === 'closing') orderQuickDelivery(kind);
+      else { toast(`창고에 ${supplyNames[kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
+      return;
+    }
+    setHeld({ type: 'supply', kind });
+    UI.hud();
+    AudioFX.pick();
+  }
+
+  function putHeldSupply(kind) {
+    if (!held || held.type !== 'supply') return false;
+    if (held.kind !== kind) { toast(`${supplyNames[held.kind]}은(는) 여기 보충할 수 없어요`, 'bad'); AudioFX.err(); return true; }
+    const res = Logistics.putSupplyToStation(S, kind);
+    if (!res.ok) { toast(`${supplyNames[kind]} 사용처 재고가 가득 찼어요`, 'bad'); AudioFX.err(); return true; }
+    setHeld(null);
+    UI.hud();
+    save();
+    AudioFX.put();
+    toast(`${supplyNames[kind]} 보충 +1`, 'good');
+    return true;
+  }
+
+  function returnHeldLogistics(notify = false) {
+    if (!held || (held.type !== 'supply' && held.type !== 'deliveryBox')) return false;
+    if (held.type === 'supply') {
+      S.storage[held.kind] = (S.storage[held.kind] || 0) + 1;
+      setHeld(null);
+      UI.hud();
+      if (notify) { save(); toast('창고에 되돌렸어요'); }
+      return true;
+    }
+    setHeld(null);
+    renderDeliveryBoxes();
+    if (notify) toast('택배박스를 문앞에 내려놓았어요');
+    return true;
+  }
 
   /* ===== 음료 비교 ===== */
   function canonical(d) {
@@ -150,6 +270,10 @@ const Game = (() => {
       const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
       Player.setHeld(m, equip);
+    } else if (h.type === 'deliveryBox' || h.type === 'supply') {
+      const m = WORLD.makeBoxMesh(h.kind);
+      m.scale.setScalar(h.type === 'deliveryBox' ? 1.35 : 0.85);
+      Player.setHeld(m, equip);
     }
     UI.held();
   }
@@ -179,6 +303,8 @@ const Game = (() => {
     }
     if (h.type === 'shotglass') return h.filled ? '샷잔 (에스프레소 ☕)' : '샷잔 (비어 있음)';
     if (h.type === 'pitcher') return h.foam ? '스팀 피처 (우유+거품)' : h.milk ? '스팀 피처 (데운 우유)' : '스팀 피처 (비어 있음)';
+    if (h.type === 'deliveryBox') return `${supplyNames[h.kind]} 택배박스 x${h.amount}`;
+    if (h.type === 'supply') return `${supplyNames[h.kind]} 1개`;
     return DESSERTS[h.kind].name;
   }
 
@@ -188,6 +314,10 @@ const Game = (() => {
 
   function placeItem(point) {
     const item = held;
+    if (item.type === 'deliveryBox' || item.type === 'supply') {
+      toast('택배/재고는 창고나 사용처에 직접 넣으세요');
+      return;
+    }
     let mesh, yOff = 0.004;
     if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
     else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
@@ -383,9 +513,33 @@ const Game = (() => {
       if (env.door) { env.door.toggle(); AudioFX.bell(); toast(env.door.open ? '🚪 문을 열었어요' : '🚪 문을 닫았어요'); }
       return;
     }
-    // 준비 단계엔 재고 보충만 (제조·서빙은 영업 중에)
-    if (mode === 'prep' && id !== 'restock') {
-      toast('영업을 시작하면 사용할 수 있어요 — 지금은 재고 보충과 [B] 배치');
+
+    if (id === 'deliveryBox') {
+      if (held) { toast('손이 비어있어야 택배박스를 들 수 있어요'); return; }
+      const box = S.deliveryBoxes.find(b => b.id === it.boxId);
+      if (!box) { renderDeliveryBoxes(); return; }
+      setHeld({ type: 'deliveryBox', id: box.id, kind: box.kind, amount: box.amount });
+      renderDeliveryBoxes();
+      AudioFX.pick();
+      return;
+    }
+
+    const stationKind = stationTargets[id];
+    if (stationKind && held && held.type === 'supply') {
+      putHeldSupply(stationKind);
+      return;
+    }
+
+    if (id === 'restock') {
+      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.kind); return; }
+      if (held) { toast('손을 비우면 창고에서 꺼낼 수 있어요'); return; }
+      takeStorageSupply(it.kind);
+      return;
+    }
+
+    // 준비/영업후엔 물류·문·배치만, 제조·서빙은 영업 중에
+    if (mode === 'prep' || mode === 'after') {
+      toast(mode === 'prep' ? '영업을 시작하면 사용할 수 있어요 — 지금은 물류와 [B] 배치' : '영업후 정리 시간 — 주문·입고·보충을 마치고 다음날로 넘어가세요');
       return;
     }
 
@@ -755,21 +909,6 @@ const Game = (() => {
       return;
     }
 
-    /* --- 재고 보충 (준비=정상가 / 영업중=비상 웃돈) --- */
-    if (id === 'restock') {
-      const r = RESTOCK[it.kind];
-      const emergency = mode === 'playing';
-      const price = emergency ? Math.round(r.price * 1.8 / 100) * 100 : r.price;
-      if (S.money < price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
-      S.money -= price;
-      if (dayStats) dayStats.spent += price;
-      S.stocks[it.kind] += r.amount;
-      toast(`${r.name} +${r.amount} (${fmt(price)})${emergency ? ' · 비상 보충 ⚡' : ''}`, emergency ? 'bad' : 'good');
-      AudioFX.cash();
-      UI.hud();
-      save();   // 구매(장비·업그레이드)와 동일하게 즉시 저장 — 새로고침 시 되돌아가는 불일치 방지
-      return;
-    }
   }
 
   /* ===== 서빙 ===== */
@@ -1133,6 +1272,7 @@ const Game = (() => {
 
   // 매장(머신·들고있는것·연출) 초기화 — 준비/영업 진입 시 공용
   function resetStations() {
+    returnHeldLogistics(false);
     setHeld(null);
     clearPlacedItems();
     Effects.clear();
@@ -1156,6 +1296,8 @@ const Game = (() => {
   function startPrep() {
     mode = 'prep';
     open = false; timeSec = 0;
+    Logistics.ensureState(S);
+    const arrivals = Logistics.collectArrivals(S, S.day);
     dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
@@ -1175,7 +1317,9 @@ const Game = (() => {
       Weather.setClock(8);                                     // 준비 단계 = 아침 08시(해 낮게)
       if (w) toast(`${w.icon} 오늘 바깥 날씨: ${w.label}`, '', 3200);
     }
+    renderDeliveryBoxes();
     UI.hud(); UI.clock();
+    if (arrivals.length) { save(); toast(`문앞에 택배 ${arrivals.length}개 도착 — 창고에 입고하세요`, 'gold', 4500); }
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
   }
 
@@ -1234,8 +1378,10 @@ const Game = (() => {
   }
 
   function endDay() {
-    mode = 'dayEnd';
+    returnHeldLogistics(false);
+    mode = 'after';
     Player.enabled = false;
+    open = false;
     if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
     if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
@@ -1283,7 +1429,18 @@ const Game = (() => {
     $('dayEnd').classList.remove('hidden');
     if (crisis) AudioFX.err();
     S.day++;
+    renderDeliveryOrders();
     save();
+  }
+
+  function closeDayEndPanel() {
+    if (mode !== 'after') return;
+    $('dayEnd').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    Player.enabled = true;
+    UI.hud();
+    UI.clock();
+    renderDeliveryBoxes();
   }
 
   function renderUpgrades() {
@@ -1385,7 +1542,7 @@ const Game = (() => {
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
-      if (d && d.money !== undefined) { S = Object.assign(freshState(), d); return true; }
+      if (d && d.money !== undefined) { S = Object.assign(freshState(), d); Logistics.ensureState(S); return true; }
     } catch (e) { /* 손상된 저장 무시 */ }
     return false;
   }
@@ -1456,11 +1613,12 @@ const Game = (() => {
   }
 
   function updatePrep() {
-    // 준비 단계: 재고 보충 프롬프트만 표시 (손님·시계 정지)
+    // 준비/영업후: 물류 프롬프트만 표시 (손님·시계 정지)
     const pr = $('prompt');
     if (prepPanelOpen) { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); updateAimHighlight(null); return; }
     const aimData = Player.aim();
-    const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door');   // 준비 단계에 쓸 수 있는 것만
+    const targetKind = aimData && stationTargets[aimData.id];
+    const usable = aimData && (aimData.id === 'restock' || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
     updateAimHighlight(usable ? Player.aimedObject : null);
     if (usable) {
       pr.innerHTML = UI.prompt(aimData);
@@ -1486,12 +1644,24 @@ const Game = (() => {
   }
 
   function update(dt) {
-    if (mode === 'prep') { updatePrep(); return; }
-    if (mode !== 'playing') { updateAimHighlight(null); $('freshness').classList.add('hidden'); return; }
+    if (mode === 'prep' || mode === 'after') { updatePrep(); $('freshness').classList.add('hidden'); return; }
+    if (mode !== 'playing' && mode !== 'closing') { updateAimHighlight(null); $('freshness').classList.add('hidden'); return; }
 
     // 시간
-    timeSec += dt;
-    if (open && timeSec >= DAY_LEN) {
+    if (mode === 'playing') {
+      timeSec += dt;
+      if (open && timeSec >= DAY_LEN) {
+        open = false;
+        mode = 'closing';
+        toast('영업 마감! 남은 손님을 응대하세요', 'gold', 3500);
+        AudioFX.bell();
+      }
+    }
+    if (mode === 'closing' && Customers.list.length === 0) {
+      endDay();
+      return;
+    }
+    if (mode === 'closing' && open) {
       open = false;
       toast('영업 마감! 남은 손님을 응대하세요', 'gold', 3500);
       AudioFX.bell();
@@ -1501,13 +1671,13 @@ const Game = (() => {
       Weather.setClock(Math.min(18, 9 + (timeSec / DAY_LEN) * 9));
 
     // 손님 스폰
-    if (open) {
+    if (mode === 'playing' && open) {
       spawnTimer -= dt;
       if (spawnTimer <= 0) {
         spawnTimer = spawnInterval();
         Customers.spawn(patienceForNew());
       }
-    } else if (Customers.list.length === 0) {
+    } else if (mode === 'playing' && Customers.list.length === 0) {
       endDay();
       return;
     }
@@ -1538,7 +1708,7 @@ const Game = (() => {
     let p = UI.prompt(aimData);
     if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
-    if (!aimData && held) {
+    if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
       const pt = Player.aimSurface();
       if (pt) {
         if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
@@ -1593,29 +1763,35 @@ const Game = (() => {
         if (pt && !placeBlocked(pt)) placeItem(pt);
       }
     }
+    function dropOrReturnHeld() {
+      if (!held) return false;
+      if (returnHeldLogistics(true)) return true;
+      if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
+      else if (held.type === 'shotglass') { toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad'); }
+      else if (held.type === 'pitcher') { toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad'); }
+      else { setHeld(null); toast('버렸습니다'); }
+      return true;
+    }
     // const Editor는 window 속성이 아니므로 typeof로 확인해야 게이트가 작동함
     const editing = () => typeof Editor !== 'undefined' && Editor.active;
     document.addEventListener('keydown', ev => {
-      if (mode !== 'playing' && mode !== 'prep') return;
+      if (mode !== 'playing' && mode !== 'prep' && mode !== 'closing' && mode !== 'after') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
       if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
-      // 준비 단계 전용 조작
-      if (mode === 'prep') {
+      // 준비/영업후 전용 조작
+      if (mode === 'prep' || mode === 'after') {
         if (prepPanelOpen) return;                       // 패널은 버튼으로 조작
-        if (ev.code === 'KeyE') onUse();                 // 재고 보충
-        else if (ev.code === 'KeyO') beginOpen();        // 영업 시작
-        else if (ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
+        if (ev.code === 'KeyQ' && dropOrReturnHeld()) return;
+        if (ev.code === 'KeyE') onUse();                 // 물류/문
+        else if (mode === 'prep' && ev.code === 'KeyO') beginOpen();        // 영업 시작
+        else if (mode === 'prep' && ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
+        else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; document.exitPointerLock && document.exitPointerLock(); }
         else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
         return;
       }
       // 영업 중 조작
       if (ev.code === 'KeyE') { useDown = true; onUse(); }
-      if (ev.code === 'KeyQ' && held) {
-        if (held.type === 'portafilter') { toast('⛔ 포터필터는 버릴 수 없어요', 'bad'); }
-        else if (held.type === 'shotglass') { toast('⛔ 샷잔은 버릴 수 없어요 — 거치대에 반납하거나 컵에 따르세요', 'bad'); }
-        else if (held.type === 'pitcher') { toast('⛔ 스팀 피처는 버릴 수 없어요 — 거치대에 반납하거나 컵에 부으세요', 'bad'); }
-        else { setHeld(null); toast('버렸습니다'); }
-      }
+      if (ev.code === 'KeyQ') dropOrReturnHeld();
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT') Tutorial.cancel();
     });
@@ -1624,7 +1800,7 @@ const Game = (() => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
     document.addEventListener('mousedown', ev => {
-      if (mode === 'playing' && document.pointerLockElement && ev.button === 0 && !editing()) {
+      if ((mode === 'playing' || mode === 'closing' || mode === 'after') && document.pointerLockElement && ev.button === 0 && !editing()) {
         useDown = true; onUse();
       }
     });
@@ -1638,6 +1814,7 @@ const Game = (() => {
 
   function newGame() {
     S = freshState();
+    Logistics.ensureState(S);
     UI.recipeBook();
     pendingTutorial = true;      // 튜토리얼은 첫 영업 시작 때 시작
     startPrep();
@@ -1656,7 +1833,7 @@ const Game = (() => {
 
   return {
     init, update, newGame, continueGame, nextDay, hasSave, onAngryLeave,
-    beginOpen, openPrepPanel, closePrepPanel,
+    beginOpen, openPrepPanel, closePrepPanel, closeDayEndPanel,
     setOutlinePass(p) { _outlinePass = p; },   // main.js가 후처리 OutlinePass 주입
 
     get mode() { return mode; },
