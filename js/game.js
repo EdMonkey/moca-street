@@ -79,7 +79,9 @@ const Game = (() => {
   }
 
   function renderStorageBoxes() {
-    if (env && env.syncStorageBoxes) env.syncStorageBoxes(S.storage || {});
+    if (!env || !env.syncStorageBoxes) return;
+    Logistics.ensureState(S);
+    env.syncStorageBoxes(S.storageBoxes || {});
   }
 
   function renderDeliveryOrders() {
@@ -133,11 +135,18 @@ const Game = (() => {
     save();
   }
 
-  function storeHeldDelivery(kind) {
+  function storeHeldDelivery(kind, slot) {
     if (!held || held.type !== 'deliveryBox') return false;
     if (held.kind !== kind) { toast(`${supplyNames[held.kind]} 박스는 해당 창고칸에 넣으세요`, 'bad'); AudioFX.err(); return true; }
-    const res = Logistics.storeDeliveryBox(S, held.id);
-    if (!res.ok) { toast('이미 입고된 박스예요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
+    const res = Logistics.storeDeliveryBox(S, held.id, slot);
+    if (!res.ok) {
+      const msg = res.reason === 'occupied' ? '이 선반칸에는 이미 박스가 있어요'
+        : res.reason === 'full' ? '이 창고칸 선반이 가득 찼어요'
+        : '이미 입고된 박스예요';
+      toast(msg, 'bad'); AudioFX.err();
+      if (res.reason === 'missing') { setHeld(null); renderDeliveryBoxes(); }
+      return true;
+    }
     setHeld(null);
     renderDeliveryBoxes();
     renderStorageBoxes();
@@ -148,14 +157,15 @@ const Game = (() => {
     return true;
   }
 
-  function takeStorageSupply(kind) {
-    const res = Logistics.takeSupply(S, kind);
+  function takeStorageSupply(kind, slot) {
+    const res = Logistics.takeSupply(S, kind, slot);
     if (!res.ok) {
+      if (res.reason === 'empty_slot') { toast('이 선반칸은 비어있어요'); return; }
       if (mode === 'playing' || mode === 'closing') orderQuickDelivery(kind);
       else { toast(`창고에 ${supplyNames[kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
       return;
     }
-    setHeld({ type: 'supply', kind });
+    setHeld({ type: 'supply', kind, storageBoxId: res.boxId, slot: res.slot });
     renderStorageBoxes();
     UI.hud();
     AudioFX.pick();
@@ -178,7 +188,8 @@ const Game = (() => {
   function returnHeldLogistics(notify = false) {
     if (!held || (held.type !== 'supply' && held.type !== 'deliveryBox')) return false;
     if (held.type === 'supply') {
-      S.storage[held.kind] = (S.storage[held.kind] || 0) + 1;
+      const res = Logistics.returnSupply(S, held.kind, held.storageBoxId, held.slot);
+      if (!res.ok) { toast('창고 선반이 가득 찼어요', 'bad'); AudioFX.err(); return true; }
       setHeld(null);
       renderStorageBoxes();
       UI.hud();
@@ -375,8 +386,9 @@ const Game = (() => {
       env.setStoragePreview(null);
       return false;
     }
-    const ok = !held || held.type !== 'deliveryBox' || held.kind === aimData.kind;
-    env.setStoragePreview(aimData.kind, ok);
+    const occupied = Logistics.storageSlotOccupied(S, aimData.kind, aimData.slot);
+    const ok = !held || held.type !== 'deliveryBox' || (held.kind === aimData.kind && !occupied);
+    env.setStoragePreview(aimData.kind, aimData.slot, ok);
     return true;
   }
 
@@ -600,9 +612,9 @@ const Game = (() => {
     }
 
     if (id === 'restock') {
-      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.kind); return; }
+      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.kind, it.slot); return; }
       if (held) { toast('손을 비우면 창고에서 꺼낼 수 있어요'); return; }
-      takeStorageSupply(it.kind);
+      takeStorageSupply(it.kind, it.slot);
       return;
     }
 
@@ -1862,13 +1874,14 @@ const Game = (() => {
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
     const aimData = Player.aim();
-    updateAimHighlight(aimData ? Player.aimedObject : null);
+    const shelfPreview = showStoragePreview(aimData);
+    updateAimHighlight(aimData && !shelfPreview ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
     const steaming = updateSteamGame(dt, aimData);
     let p = UI.prompt(aimData);
     if (tamping || steaming) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
-    if (env.setStoragePreview) env.setStoragePreview(null);
+    if (!shelfPreview && env.setStoragePreview) env.setStoragePreview(null);
     const dprev = !aimData ? deliveryPlacePreview() : null;
     if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (dprev) {

@@ -5,6 +5,7 @@ const Logistics = (() => {
   const { RESTOCK } = DATA;
   const KINDS = Object.keys(RESTOCK);
   const CAPACITY = { beans: 30, milk: 20, cups: 40, dessert: 12 };
+  const STORAGE_SLOTS = [0, 1, 2];
   const DOOR_RIGHT_SPOT = { x: 7.05, z: 9.35, rot: Math.PI / 2 };
   const DOOR_SPOTS = [
     DOOR_RIGHT_SPOT,
@@ -13,6 +14,7 @@ const Logistics = (() => {
     { x: 7.65, z: 9.55, rot: Math.PI / 2 },
   ];
   let seq = 1;
+  let storageSeq = 1;
 
   function emptyBag() {
     return { beans: 0, milk: 0, cups: 0, dessert: 0 };
@@ -24,8 +26,64 @@ const Logistics = (() => {
     return out;
   }
 
+  function emptyStorageBoxes() {
+    return { beans: [], milk: [], cups: [], dessert: [] };
+  }
+
+  function storageId(kind) {
+    return `storage_${kind}_${Date.now().toString(36)}_${storageSeq++}`;
+  }
+
+  function clampSlot(slot) {
+    const n = Number(slot);
+    return STORAGE_SLOTS.includes(n) ? n : null;
+  }
+
+  function firstFreeStorageSlot(S, kind) {
+    ensureState(S);
+    const used = new Set(S.storageBoxes[kind].map(b => b.slot));
+    return STORAGE_SLOTS.find(s => !used.has(s));
+  }
+
+  function normalizeStorageBoxes(boxes, totals) {
+    const out = emptyStorageBoxes();
+    KINDS.forEach(kind => {
+      const used = new Set();
+      const raw = boxes && Array.isArray(boxes[kind]) ? boxes[kind] : [];
+      raw.forEach(b => {
+        const amount = Math.max(0, Number(b && b.amount) || 0);
+        if (amount <= 0) return;
+        let slot = clampSlot(b.slot);
+        if (slot == null || used.has(slot)) slot = STORAGE_SLOTS.find(s => !used.has(s));
+        if (slot == null) return;
+        used.add(slot);
+        out[kind].push({
+          id: b.id || storageId(kind),
+          kind,
+          amount,
+          slot,
+          source: b.source || 'stored',
+        });
+      });
+      const total = Math.max(0, Number(totals && totals[kind]) || 0);
+      if (!out[kind].length && total > 0) {
+        out[kind].push({ id: storageId(kind), kind, amount: total, slot: 0, source: 'legacy' });
+      }
+    });
+    return out;
+  }
+
+  function syncStorageTotals(S) {
+    S.storage = emptyBag();
+    KINDS.forEach(kind => {
+      S.storage[kind] = S.storageBoxes[kind].reduce((sum, b) => sum + Math.max(0, Number(b.amount) || 0), 0);
+    });
+  }
+
   function ensureState(S) {
-    S.storage = normalizeBag(S.storage);
+    const totals = normalizeBag(S.storage);
+    S.storageBoxes = normalizeStorageBoxes(S.storageBoxes, totals);
+    syncStorageTotals(S);
     S.stocks = normalizeBag(S.stocks);
     S.pendingDeliveries = Array.isArray(S.pendingDeliveries) ? S.pendingDeliveries : [];
     S.deliveryBoxes = Array.isArray(S.deliveryBoxes) ? S.deliveryBoxes : [];
@@ -36,6 +94,27 @@ const Logistics = (() => {
       if (typeof b.rot !== 'number') b.rot = spot.rot;
     });
     return S;
+  }
+
+  function storageTotal(S, kind) {
+    ensureState(S);
+    return S.storage[kind] || 0;
+  }
+
+  function storageSlotBox(S, kind, slot) {
+    ensureState(S);
+    const s = clampSlot(slot);
+    if (s == null) return null;
+    return S.storageBoxes[kind].find(b => b.slot === s) || null;
+  }
+
+  function storageSlotAmount(S, kind, slot) {
+    const box = storageSlotBox(S, kind, slot);
+    return box ? box.amount : 0;
+  }
+
+  function storageSlotOccupied(S, kind, slot) {
+    return !!storageSlotBox(S, kind, slot);
   }
 
   function initialState(base) {
@@ -95,20 +174,66 @@ const Logistics = (() => {
     return Object.keys(byKind).map(kind => addDeliveryBox(S, kind, byKind[kind], 'scheduled'));
   }
 
-  function storeDeliveryBox(S, id) {
+  function storeDeliveryBox(S, id, slot = null) {
     ensureState(S);
     const idx = S.deliveryBoxes.findIndex(b => b.id === id);
     if (idx < 0) return { ok: false, reason: 'missing' };
-    const [box] = S.deliveryBoxes.splice(idx, 1);
-    S.storage[box.kind] += box.amount;
-    return { ok: true, box };
+    const deliveryBox = S.deliveryBoxes[idx];
+    const targetSlot = clampSlot(slot);
+    const freeSlot = targetSlot == null ? firstFreeStorageSlot(S, deliveryBox.kind) : targetSlot;
+    if (freeSlot == null) return { ok: false, reason: 'full' };
+    if (storageSlotOccupied(S, deliveryBox.kind, freeSlot)) return { ok: false, reason: 'occupied' };
+    S.deliveryBoxes.splice(idx, 1);
+    const box = {
+      id: storageId(deliveryBox.kind),
+      kind: deliveryBox.kind,
+      amount: deliveryBox.amount,
+      slot: freeSlot,
+      source: deliveryBox.source || 'stored',
+    };
+    S.storageBoxes[box.kind].push(box);
+    syncStorageTotals(S);
+    return { ok: true, box, deliveryBox };
   }
 
-  function takeSupply(S, kind) {
+  function takeSupply(S, kind, slot = null) {
     ensureState(S);
-    if (S.storage[kind] <= 0) return { ok: false, reason: 'empty' };
-    S.storage[kind]--;
-    return { ok: true, kind };
+    const targetSlot = clampSlot(slot);
+    let box = null;
+    if (targetSlot == null) {
+      box = S.storageBoxes[kind].find(b => b.amount > 0) || null;
+    } else {
+      box = storageSlotBox(S, kind, targetSlot);
+      if (!box && storageTotal(S, kind) > 0) return { ok: false, reason: 'empty_slot', kind, slot: targetSlot };
+    }
+    if (!box) return { ok: false, reason: 'empty', kind };
+    box.amount--;
+    const remaining = box.amount;
+    const boxId = box.id;
+    const usedSlot = box.slot;
+    if (box.amount <= 0) S.storageBoxes[kind] = S.storageBoxes[kind].filter(b => b.id !== boxId);
+    syncStorageTotals(S);
+    return { ok: true, kind, boxId, slot: usedSlot, remaining };
+  }
+
+  function returnSupply(S, kind, preferredBoxId = null, preferredSlot = null) {
+    ensureState(S);
+    let box = preferredBoxId && S.storageBoxes[kind].find(b => b.id === preferredBoxId);
+    const targetSlot = clampSlot(preferredSlot);
+    if (!box && targetSlot != null && !storageSlotOccupied(S, kind, targetSlot)) {
+      box = { id: storageId(kind), kind, amount: 0, slot: targetSlot, source: 'returned' };
+      S.storageBoxes[kind].push(box);
+    }
+    if (!box) box = S.storageBoxes[kind].find(b => b.amount > 0) || null;
+    if (!box) {
+      const freeSlot = firstFreeStorageSlot(S, kind);
+      if (freeSlot == null) return { ok: false, reason: 'full' };
+      box = { id: storageId(kind), kind, amount: 0, slot: freeSlot, source: 'returned' };
+      S.storageBoxes[kind].push(box);
+    }
+    box.amount++;
+    syncStorageTotals(S);
+    return { ok: true, kind, boxId: box.id, slot: box.slot, amount: box.amount };
   }
 
   function putSupplyToStation(S, kind) {
@@ -119,8 +244,9 @@ const Logistics = (() => {
   }
 
   return {
-    KINDS, CAPACITY, DOOR_RIGHT_SPOT,
+    KINDS, CAPACITY, STORAGE_SLOTS, DOOR_RIGHT_SPOT,
     ensureState, deliveryPrice, scheduleDelivery, collectArrivals,
-    initialState, addDeliveryBox, moveDeliveryBox, storeDeliveryBox, takeSupply, putSupplyToStation,
+    initialState, addDeliveryBox, moveDeliveryBox, storeDeliveryBox, takeSupply, returnSupply,
+    putSupplyToStation, storageTotal, storageSlotBox, storageSlotAmount, storageSlotOccupied, firstFreeStorageSlot,
   };
 })();

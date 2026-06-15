@@ -1082,13 +1082,21 @@ const WORLD = (() => {
       // 랙은 spawn(Cx+0.2, cz+0.42)에, 박스/히트박스는 (Cx,cz)에 둬 박스가 랙 중앙에 오게 한다.
       const Cx = -8.7;                                   // 랙 형상 중심 X(벽 앞)
       // 형상 중심 Z — 박스를 랙 중앙에 정렬 + 전체를 오른쪽(-z)으로 렉하나(1.1)만큼 민 값
+      const STORAGE_SLOT_LEVELS = [
+        { slot: 0, y: 0.36 },
+        { slot: 1, y: 0.92 },
+        { slot: 2, y: 1.48 },
+      ];
       const kinds = [['beans', -4.32], ['milk', -3.22], ['cups', -2.12], ['dessert', -1.02]];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
       kinds.forEach(([k, cz]) => {
-        const hb = addI(hitbox(0.85, 1.8, 0.9, Cx, 0.95, cz, { id: 'restock', kind: k }));
+        const slots = STORAGE_SLOT_LEVELS.map(s => {
+          const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, cz, { id: 'restock', kind: k, slot: s.slot }));
+          return { slot: s.slot, x: Cx, y: s.y, z: cz, rot: Math.PI / 2, hitbox: hb };
+        });
         env.storageViews[k] = {
-          cz, hitbox: hb, meshes: [],
-          previewSlot: { x: Cx, y: 0.65, z: cz, rot: Math.PI / 2 },
+          cz, slots, hitbox: slots[0].hitbox, meshes: [],
+          previewSlot: slots[0],
         };
       });
       env.syncStorageBoxes = function (storage) {
@@ -1096,25 +1104,28 @@ const WORLD = (() => {
           const v = env.storageViews[k];
           v.meshes.forEach(m => scene.remove(m));
           v.meshes = [];
-          const amount = storage && Number(storage[k]) || 0;
-          if (amount <= 0) { v.hitbox.userData.outlineMeshes = null; return; }
-          const bm = makeSupplyMesh(k);
-          bm.position.set(Cx, 0.65, v.cz);
-          bm.rotation.y = Math.PI / 2;
-          scene.add(bm);
-          v.meshes.push(bm);
-          if (amount > 1) {
-            const bm2 = makeSupplyMesh(k);
-            bm2.position.set(Cx, 1.20, v.cz);
-            bm2.rotation.y = Math.PI / 2;
-            bm2.scale.setScalar(0.9);
-            scene.add(bm2);
-            v.meshes.push(bm2);
-          }
-          v.hitbox.userData.outlineMeshes = v.meshes;
+          v.slots.forEach(s => { s.hitbox.userData.outlineMeshes = null; });
+          const boxes = storage && Array.isArray(storage[k]) ? storage[k] : [];
+          boxes.forEach(box => {
+            if (!box || box.amount <= 0) return;
+            const slot = v.slots.find(s => s.slot === box.slot);
+            if (!slot) return;
+            const bm = makeBoxMesh(box.kind);
+            bm.position.set(slot.x, slot.y, slot.z);
+            bm.rotation.y = slot.rot;
+            const count = new THREE.Mesh(
+              new THREE.PlaneGeometry(0.22, 0.09),
+              textLabel(`x${box.amount}`, 128, 48, '700 28px "Malgun Gothic"', '#f5ead8', '#3a2416')
+            );
+            count.position.set(0, 0.34, 0.17);
+            bm.add(count);
+            scene.add(bm);
+            v.meshes.push(bm);
+            slot.hitbox.userData.outlineMeshes = [bm];
+          });
         });
       };
-      env.setStoragePreview = function (kind, ok = true) {
+      env.setStoragePreview = function (kind, slotNo = 0, ok = true) {
         if (!env.storagePreview) {
           const g = new THREE.Group();
           const mat = new THREE.MeshBasicMaterial({
@@ -1131,7 +1142,7 @@ const WORLD = (() => {
         const p = env.storagePreview;
         const v = kind && env.storageViews[kind];
         if (!v) { p.root.visible = false; return; }
-        const slot = v.previewSlot;
+        const slot = v.slots.find(s => s.slot === slotNo) || v.previewSlot;
         p.root.position.set(slot.x, slot.y, slot.z);
         p.root.rotation.y = slot.rot;
         p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);

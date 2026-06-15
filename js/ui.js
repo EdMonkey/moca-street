@@ -224,11 +224,17 @@ const UI = (() => {
       }
       case 'restock': {
         const r = RESTOCK[it.kind];
-        if (held && held.type === 'deliveryBox')
-          return held.kind === it.kind ? E + `${r.name} 창고 입고 +${held.amount}` : `${RESTOCK[held.kind].name} 박스는 해당 창고칸에 넣으세요`;
+        const slotLabel = typeof it.slot === 'number' ? `아래서 ${it.slot + 1}번째 칸` : '창고칸';
+        const slotAmount = Logistics.storageSlotAmount(S, it.kind, it.slot);
+        const total = Logistics.storageTotal(S, it.kind);
+        if (held && held.type === 'deliveryBox') {
+          if (held.kind !== it.kind) return `${RESTOCK[held.kind].name} 박스는 해당 창고칸에 넣으세요`;
+          if (slotAmount > 0) return `${slotLabel}에는 이미 박스가 있어요`;
+          return E + `${r.name} 박스 ${slotLabel} 입고 +${held.amount}`;
+        }
         if (held) return '손을 비우면 창고에서 꺼낼 수 있어요';
-        const stock = S.storage && S.storage[it.kind] || 0;
-        if (stock > 0) return E + `${r.name} 1개 꺼내기 (창고 ${stock})`;
+        if (slotAmount > 0) return E + `${r.name} 1개 꺼내기 (${slotLabel} ${slotAmount} · 창고 ${total})`;
+        if (total > 0) return `${slotLabel}은 비어있어요`;
         return ctx.mode() === 'playing' || ctx.mode() === 'closing'
           ? E + `${r.name} 퀵 배송 (${fmt(Math.round(r.price * 1.8 / 100) * 100)})`
           : `창고에 ${r.name} 재고가 없어요`;
@@ -255,7 +261,12 @@ const UI = (() => {
       $('xpTxt').textContent = `${S.xp}/${next} XP`;
     }
     const st = S.stocks;
-    const wh = S.storage || {};
+    const wh = {
+      beans: Logistics.storageTotal(S, 'beans'),
+      milk: Logistics.storageTotal(S, 'milk'),
+      cups: Logistics.storageTotal(S, 'cups'),
+      dessert: Logistics.storageTotal(S, 'dessert'),
+    };
     $('stocks').innerHTML =
       `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span> <span style="opacity:.55">창고 ${wh.beans || 0}</span><br>` +
       `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span> <span style="opacity:.55">창고 ${wh.milk || 0}</span><br>` +

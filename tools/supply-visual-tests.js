@@ -13,7 +13,7 @@ const world = fs.readFileSync(path.join(root, 'js/world.js'), 'utf8');
 assert.ok(world.includes('function makeSupplyMesh(kind)'), 'world should expose a supply mesh factory');
 assert.ok(world.includes("'CoffeeBeanBag'"), 'bean supply should prefer the CoffeeBeanBag model');
 assert.ok(world.includes('const supplyModels'), 'supply mesh model mapping should be explicit');
-assert.ok(world.includes('makeSupplyMesh(k)'), 'warehouse shelf stock should render supply items, not delivery boxes');
+assert.ok(world.includes('makeBoxMesh(box.kind)'), 'warehouse shelf should render storage boxes');
 assert.ok(world.includes('makeSupplyMesh,'), 'WORLD should export makeSupplyMesh');
 
 assert.ok(game.includes("} else if (h.type === 'deliveryBox')"), 'delivery boxes should keep box rendering');
