@@ -82,11 +82,19 @@ const DATA = (() => {
   const DOSE_MIN = 0.30;          // 이보다 적게 넣으면 부족(재시도)
   const DOSE_TIP_PERFECT = 0.08;  // 퍼펙트 도징 팁 보너스 비율 (시럽/휘핑 각각)
 
+  // 분쇄도(그라인더) — [E]를 꾹 눌러 게이지를 멈춘 위치가 분쇄도(0 가늘 ~ 1 굵음).
+  // 이상 구간에서 멈추면 완벽 추출(꾸준한 줄기). 너무 가늘면 추출이 느려 뚝뚝 떨어지고(과다 추출),
+  // 너무 굵으면 빨라져 분사된다(부족 추출).
+  const GRIND_DUR = 1.8;          // 게이지가 끝까지(가장 굵게) 차는 시간(초)
+  const GRIND_IDEAL_MIN = 0.42, GRIND_IDEAL_MAX = 0.60;   // 이상 분쇄도(에스프레소) 구간
+  const GRIND_TIP_PERFECT = 0.10; // 이상 분쇄도 추출 팁 보너스 비율
+
   return {
     RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
     DAY_LEN, SAVE_KEY, RENT_BASE, RENT_PER_DAY, BANKRUPT_LIMIT, rentFor, dailyGoalFor,
     TAMP_DUR, TAMP_MIN, TAMP_PERF_W, TAMP_PERF_MIN, TAMP_PERF_MAX,
     ART_VOL, ART_PERFECT, ART_GOOD, ART_TIP_PERFECT, ART_TIP_GOOD,
     DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
+    GRIND_DUR, GRIND_IDEAL_MIN, GRIND_IDEAL_MAX, GRIND_TIP_PERFECT,
   };
 })();
