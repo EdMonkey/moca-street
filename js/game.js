@@ -610,6 +610,7 @@ const Game = (() => {
       slot.dur = dur;
       slot.stream.visible = true;
       slot.stream.scale.set(1, 1, 1);
+      slot.stream.rotation.set(0, 0, 0);
       slot.brewLiquid = WORLD.makeBrewLiquid(slot.drink.cup);
       slot.cupMesh.add(slot.brewLiquid);
       AudioFX.metalClack();
@@ -990,23 +991,30 @@ const Game = (() => {
         slot.cupMesh = cm;
         AudioFX.bell();
       } else {
-        // 커피 줄기 애니메이션 — 분쇄도에 따라 분사(굵음)/꾸준(이상)/뚝뚝(가늚)
+        // 커피 줄기 애니메이션 — 분쇄도에 따라 물총(굵음)/꾸준(이상)/뚝뚝(가늚)
         const s = slot.stream;
         const mode = slot.extractMode || 'ideal';
+        const bx = slot.localPos.x;
         if (mode === 'coarse') {
-          // 분사: 굵고 빠르고 거칠게 튀는 줄기
+          // 물총(스프릿징): 채널링으로 가는 줄기가 비스듬히 사방으로 튐 — 각도/위치가 들쭉날쭉
           s.visible = true;
-          s.position.y = 0.115 + Math.sin(slot.t * 50) * 0.012;
-          s.scale.set(2.3 + Math.sin(slot.t * 41) * 0.6, 1.18 + Math.sin(slot.t * 37) * 0.2, 2.3 + Math.cos(slot.t * 44) * 0.6);
+          const ang = Math.sin(slot.t * 57) * 0.5 + Math.sin(slot.t * 31) * 0.22;   // 좌우로 휘는 분출 각
+          s.scale.set(0.7, 1.05 + Math.sin(slot.t * 40) * 0.15, 0.7);                // 가늘게(굵은 분수 아님)
+          s.rotation.z = ang;
+          s.rotation.x = Math.sin(slot.t * 46) * 0.28;
+          s.position.x = bx - ang * 0.06 + Math.sin(slot.t * 63) * 0.01;             // 추출구(상단) 고정하듯 보정 + 떨림
+          s.position.y = 0.115 + Math.sin(slot.t * 44) * 0.008;
         } else if (mode === 'fine') {
           // 뚝뚝: 가는 줄기가 주기적으로 끊기며 방울이 떨어짐
           const phase = (slot.t * 2.4) % 1;
           s.visible = phase < 0.42;
+          s.rotation.set(0, 0, 0); s.position.x = bx;
           s.scale.set(0.55, 0.5 + phase * 0.5, 0.55);
           s.position.y = 0.13 - phase * 0.05;
         } else {
           // 이상: 꾸준한 줄기 (압력 느낌의 미세한 흔들림)
           s.visible = true;
+          s.rotation.set(0, 0, 0); s.position.x = bx;
           s.position.y = 0.115 + Math.sin(slot.t * 30) * 0.005;   // 올라간 추출구에 맞춘 줄기 중심
           s.scale.set(1, 1 + Math.sin(slot.t * 22) * 0.08, 1);
         }
@@ -1290,7 +1298,7 @@ const Game = (() => {
     if (job.dialMark) WORLD.setGrinderDial(job.dialMark, fill);
     const ideal = fill >= GRIND_IDEAL_MIN && fill <= GRIND_IDEAL_MAX;
     if (ideal) { toast('⚙️ 분쇄도 설정: 이상적 — 완벽 추출', 'good', 1600); AudioFX.tampPerfectSfx(); }
-    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라 분사(부족)', '', 1700); AudioFX.metalClack(); }
+    else { toast(fill < GRIND_IDEAL_MIN ? '⚙️ 분쇄도: 가늚 — 추출이 느려 뚝뚝(과다)' : '⚙️ 분쇄도: 굵음 — 추출이 빨라 물총처럼 튐(부족)', '', 1700); AudioFX.metalClack(); }
     endGrindGame();
   }
   function updateGrindGame(dt, aimData) {
