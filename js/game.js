@@ -883,8 +883,12 @@ const Game = (() => {
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
-    // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 만족하며 떠남
-    Customers.serve(c, null);
+    // 손님 만족도 종합(추출 컨디션·신선도·응대 속도) → 표정 + 한마디 반응
+    let sat = extractQ * (0.4 + 0.6 * fresh);
+    if (frac < 0.25) sat -= 0.15;          // 오래 기다리게 함
+    const mood = sat >= 0.95 ? 'great' : sat >= 0.7 ? 'ok' : 'bad';
+    // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 떠남
+    Customers.serve(c, null, mood);
     const anyPerfect = perfect || foamPerfect || artTier === 'perfect' || syrupPerfect || whipPerfect || grindPerfect;
     toast(`주문 #${o.num} 완료! +${fmt(o.total)}${tip > 0 ? ` (팁 +${fmt(tip)})` : ''}${anyPerfect ? ' · 퍼펙트 ✨' : ''}`, 'good');
     if (orderOk) toast('✨ 정확한 제조 순서! 팁 +15% · 평판 +1', 'gold', 2200);
