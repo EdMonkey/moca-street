@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>모카 스트리트 — 밸런스 에디터</title>
+<style>
+  :root{--accent:#e8b86d;--green:#7fb069;--red:#d9534f;}
+  body{font-family:system-ui,'Malgun Gothic',sans-serif;background:#1d1a17;color:#f0e9df;margin:0;padding:24px 28px 80px;}
+  h1{font-size:22px;margin:0 0 4px;color:var(--accent);}
+  .sub{color:#b7ad9f;font-size:13px;margin-bottom:18px;line-height:1.6;}
+  .sub b{color:var(--accent);}
+  #root{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;}
+  .sec{background:#2a2520;border:1px solid #3a342c;border-radius:12px;overflow:hidden;width:340px;}
+  .sec h2{font-size:15px;margin:0;padding:10px 14px;background:#332c24;color:var(--accent);}
+  table{width:100%;border-collapse:collapse;}
+  td{padding:6px 14px;border-top:1px solid #322c25;vertical-align:middle;}
+  td.lab{font-size:13px;color:#e3dccf;}
+  td.lab .key{display:block;font-size:11px;color:#7c7263;font-family:monospace;margin-top:1px;}
+  td.val{width:104px;text-align:right;}
+  input[type=number]{width:92px;padding:6px 9px;font-size:14px;font-family:monospace;text-align:right;
+    background:#15110d;color:#ffe;border:1px solid #4a4236;border-radius:7px;}
+  input:focus{outline:none;border-color:var(--accent);}
+  input.changed{border-color:var(--green);color:var(--green);}
+  #bar{position:fixed;bottom:0;left:0;right:0;background:#15110d;border-top:1px solid #3a342c;
+    padding:12px 28px;display:flex;gap:12px;align-items:center;}
+  button{padding:10px 20px;border:0;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;}
+  .save{background:var(--accent);color:#1d1a17;} .save:hover{filter:brightness(1.08);}
+  .reset{background:transparent;color:var(--red);border:1.5px solid var(--red);}
+  #msg{color:var(--green);font-size:13px;}
+  a{color:var(--accent);}
+</style>
+</head>
+<body>
+  <h1>⚖️ 밸런스 에디터</h1>
+  <div class="sub">
+    숫자를 바꾼 뒤 <b>💾 저장</b>을 누르고, 게임(<a href="/" target="_blank">localhost:8000</a>)에서 <b>Ctrl+Shift+R</b> 새로고침하면 반영됩니다.
+    저장은 이 브라우저에만 적용돼요(코드는 안 바뀜). 원래대로는 <b>↺ 기본값 복원</b>.
+  </div>
+  <div id="root">불러오는 중…</div>
+  <div id="bar">
+    <button class="save" onclick="save()">💾 저장 (게임에 적용)</button>
+    <button class="reset" onclick="resetAll()">↺ 기본값 복원</button>
+    <span id="msg"></span>
+  </div>
+
+<script>
+  let B = null;   // DATA.BALANCE (캐시 우회로 직접 로드)
+  // 섹션·키 한글 설명 (없으면 키 이름 표시)
+  const SEC = { grind:'⚙️ 그라인더 분쇄도', tamp:'🔧 탬핑 강도', extract:'☕ 에스프레소 추출',
+    satisfaction:'😊 손님 만족도 / 평판', tip:'💵 팁', freshness:'⏳ 신선도', order:'📋 주문/메뉴',
+    flow:'🚶 손님 흐름(스폰)', patience:'⏱️ 손님 인내심', economy:'💰 경영', minigame:'🎮 기타 미니게임' };
+  const DESC = {
+    grind:{dur:'분쇄 게이지 시간(초)',idealMin:'이상 분쇄도 하한',idealMax:'이상 분쇄도 상한',qualityFalloff:'이상 밖 품질 0 되는 거리',speedFine:'가늚 추출지연 계수',speedCoarse:'굵음 추출단축 계수',tipPerfect:'이상 분쇄 팁 보너스(비율)'},
+    tamp:{dur:'탬핑 게이지 시간(초)',zoneW:'퍼펙트(초록) 존 폭',zoneMin:'존 시작 최소',zoneMax:'존 시작 최대',fail:'이보다 약하면 실패',strong1:'강함 1단계 배율(느림)',strong2:'강함 2단계 배율(느림)',weak1:'약함 1단계 배율(빠름)',weak2:'약함 2단계 배율(빠름)',strong2Over:'강 2단계 진입 폭',weak2Under:'약 2단계 진입 폭'},
+    extract:{baseDur:'기본 추출 시간(초)',fastDur:'고속보일러 추출 시간(초)',speedFloor:'추출시간 최소 배율',channelPenalty:'탬핑 불완전 컨디션 감점',grindPenalty:'분쇄 빗나감 최대 감점'},
+    satisfaction:{freshBase:'신선도 0일 때 계수',shotMismatch:'샷 수 불일치 만족도 감점',waitFrac:'오래대기 기준(인내심)',waitPenalty:'오래대기 감점',fastFrac:'빠른응대 기준(인내심)',fastBonus:'빠른응대 가산',moodGreat:'만족😍 임계',moodOk:'보통🙂 임계',repGreat:'만족 시 평판',repOk:'보통 시 평판',repBad:'불만 시 평판',repTerrible:'최악 시 평판',repTerribleAt:'최악 평판 임계',repBonusOrder:'정확순서 평판 보너스',repBonusArt:'라떼아트 평판 보너스'},
+    tip:{base:'기본 팁 비율',repCoef:'평판 팁 계수',masterBonus:'마스터 바리스타 배율',perfect:'크레마 보너스',order:'정확순서 보너스',foam:'마이크로폼 보너스',artPerfect:'라떼아트 퍼펙트',artGood:'라떼아트 굿',dosePerfect:'정량 도징 보너스',shotMismatch:'샷 불일치 팁 배율'},
+    freshness:{full:'신선 유지(초)',dead:'최저 도달(초)'},
+    order:{extraShotPrice:'샷 추가 요금(원)',extraShotChance:'샷 추가 확률(0~1)',dessertChance:'디저트 동반 확률(0~1)'},
+    flow:{spawnBase:'스폰 기준 간격(초)',spawnDayStep:'날짜당 간격 감소',spawnAds:'광고 업글 간격 배율',spawnRepHigh:'평판 높음 간격 배율',spawnRepLow:'평판 낮음 간격 배율',spawnFloor:'최소 간격(초)',spawnRandMin:'간격 랜덤 하한',spawnRandSpan:'간격 랜덤 폭'},
+    patience:{base:'기본 인내심',dayStep:'날짜당 인내심 감소',interiorBonus:'인테리어 업글 배율',floor:'최소 인내심'},
+    economy:{dayLen:'하루 길이(초)',rentBase:'기본 임대료',rentPerDay:'날짜당 임대료 증가',bankruptLimit:'폐업 한도(원)',goalBase:'기본 목표',goalPerDay:'날짜당 목표 증가'},
+    minigame:{perfW:'스팀/도징 존 폭',perfMin:'존 시작 최소',perfMax:'존 시작 최대',doseDur:'도징 게이지(초)',doseMin:'도징 최소량',artVol:'라떼아트 우유양(초)',artPerfect:'라떼아트 퍼펙트 점수',artGood:'라떼아트 굿 점수'},
+  };
+  function build() {
+    const root = document.getElementById('root'); root.innerHTML = '';
+    if (!B) { root.textContent = 'BALANCE를 불러오지 못했어요 — 새로고침(Ctrl+Shift+R) 해보세요.'; return; }
+    for (const sec in B) {
+      const box = document.createElement('div'); box.className = 'sec';
+      box.innerHTML = `<h2>${SEC[sec] || sec}</h2>`;
+      const tbl = document.createElement('table');
+      for (const k in B[sec]) {
+        const v = B[sec][k];
+        const desc = (DESC[sec] && DESC[sec][k]) || k;
+        const step = Number.isInteger(v) && Math.abs(v) >= 2 ? '1' : 'any';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="lab">${desc}<span class="key">${sec}.${k}</span></td>
+          <td class="val"><input type="number" step="${step}" value="${v}" data-sec="${sec}" data-k="${k}"></td>`;
+        tbl.appendChild(tr);
+      }
+      box.appendChild(tbl); root.appendChild(box);
+    }
+    root.addEventListener('input', e => { if (e.target.matches('input')) e.target.classList.add('changed'); });
+  }
+  function save() {
+    const ov = {};
+    document.querySelectorAll('input[type=number]').forEach(i => {
+      const s = i.dataset.sec, k = i.dataset.k, n = parseFloat(i.value);
+      if (!isFinite(n)) return; (ov[s] = ov[s] || {})[k] = n;
+    });
+    localStorage.setItem('mochaBalance', JSON.stringify(ov));
+    document.getElementById('msg').textContent = '✅ 저장됨 — 게임에서 Ctrl+Shift+R 하세요';
+    document.querySelectorAll('input.changed').forEach(i => i.classList.remove('changed'));
+  }
+  function resetAll() {
+    if (!confirm('모든 값을 기본값으로 되돌릴까요?')) return;
+    localStorage.removeItem('mochaBalance');
+    location.reload();
+  }
+  // data.js를 캐시 우회로 직접 로드해 항상 최신 BALANCE를 표시 (게임 캐시와 무관)
+  fetch('js/data.js?cb=' + Date.now()).then(r => r.text()).then(t => {
+    try { B = (new Function(t + '\n;return DATA;'))().BALANCE; } catch (e) { B = null; }
+    build();
+  }).catch(() => build());
+</script>
+</body>
+</html>
