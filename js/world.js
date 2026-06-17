@@ -949,10 +949,25 @@ const WORLD = (() => {
       addFridgeSurface('middle', 0.50);
       const leftDoorHb = addI(hitbox(0.53, 0.64, 0.16, cx + 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
       const rightDoorHb = addI(hitbox(0.53, 0.64, 0.16, cx - 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
+      const _doorHbV = new THREE.Vector3();
       function syncMilkFridgeDoorHitboxes() {
-        // 문 히트박스는 개구부에 고정(클릭으로 여닫음). 하이라이트 대상만 현재 문짝으로 갱신.
-        leftDoorHb.userData.outlineRoot = fridgeRoot.userData.leftDoor;
-        rightDoorHb.userData.outlineRoot = fridgeRoot.userData.rightDoor;
+        // 문 히트박스를 실제 문짝의 월드 위치·회전에 맞춰 따라가게 한다.
+        // → 문이 열리면 스윙한 문 위에 히트박스가 있어, 그 문을 가리켜야 닫힌다(개구부/선반은 우유용).
+        const lDoor = fridgeRoot.userData.leftDoor, rDoor = fridgeRoot.userData.rightDoor;
+        if (!lDoor || !rDoor) {
+          leftDoorHb.userData.outlineRoot = lDoor;
+          rightDoorHb.userData.outlineRoot = rDoor;
+          return;
+        }
+        fridgeRoot.updateMatrixWorld(true);
+        const place = (hb, door, halfW) => {
+          // 문 로컬: 원점=경첩(바깥 세로 모서리), 패널 중심은 ±halfW, 전면 쪽으로 살짝(+z) 이동
+          hb.position.copy(door.localToWorld(_doorHbV.set(halfW, 0, 0.04)));
+          door.getWorldQuaternion(hb.quaternion);
+          hb.userData.outlineRoot = door;
+        };
+        place(leftDoorHb, lDoor, 0.262);     // 좌측 문: 경첩이 좌측 → 패널은 +x
+        place(rightDoorHb, rDoor, -0.262);   // 우측 문: 경첩이 우측 → 패널은 -x
       }
       const milkHb = addI(hitbox(1.0, 0.62, 0.3, cx, 0.5, -1.32, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
       milkHb.userData.outlineRoot = milkRoot;
