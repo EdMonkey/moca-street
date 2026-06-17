@@ -26,7 +26,8 @@ const UI = (() => {
     el.classList.remove('hidden');
     if (h.type === 'drink') {
       const match = Object.keys(RECIPES).find(k => ctx.matchesRecipe(h.drink, k));
-      const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}</b>` : '제조 중인 음료';
+      const shotTag = (h.drink.shots || 1) >= 2 ? ' · 샷 추가' : '';
+      const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}${shotTag}</b>` : '제조 중인 음료';
       el.innerHTML = `${name}<div class="ing">${ctx.drinkIngredients(h.drink).join(' + ')}</div>`;
     } else if (h.type === 'portafilter') {
       const info = h.state === 'filled' ? '원두 채움 — 머신에 장착하세요'
@@ -66,8 +67,12 @@ const UI = (() => {
   function renderTicketItems(o) {
     const itemName = ctx.itemName;
     o.itemsEl.innerHTML = o.items.map(it => {
-      const hint = (!it.done && it.type === 'drink')
-        ? `<div class="thint">${RECIPES[it.recipeId].steps.join(' → ')}</div>` : '';
+      let hint = '';
+      if (!it.done && it.type === 'drink') {
+        const steps = RECIPES[it.recipeId].steps.slice();
+        if (it.extraShot) steps.push('에스프레소 샷 1잔 더 (샷 추가)');
+        hint = `<div class="thint">${steps.join(' → ')}</div>`;
+      }
       return `<div class="${it.done ? 'done' : ''}">· ${itemName(it)}</div>${hint}`;
     }).join('');
   }

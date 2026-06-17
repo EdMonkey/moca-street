@@ -36,6 +36,7 @@ const Game = (() => {
   let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
   // 머신 위 재사용 도구 수량 제한 — 거치대에 있는(가용) 개수. grab시 --, 반납시 ++
   const SHOT_MAX = 2, PITCHER_MAX = 1;
+  const EXTRA_SHOT_PRICE = 500;   // '샷 추가' 옵션 추가 요금
   let shotAvail = SHOT_MAX, pitcherAvail = PITCHER_MAX;
   function updateRackVisuals() {
     if (env && env.shotRack) env.shotRack.glasses.forEach((g, i) => { g.visible = i < shotAvail; });
@@ -216,11 +217,20 @@ const Game = (() => {
   }
 
   /* ===== 음료 비교 ===== */
-  function canonical(d) {
-    return [d.cup, +!!d.ice, +!!d.espresso, d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
+  function canonical(d) {   // 정확 비교 — 샷 수 포함 (주문 매칭)
+    const shots = (d.shots != null) ? d.shots : (d.espresso ? 1 : 0);
+    return [d.cup, +!!d.ice, shots, d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
   }
-  function matchesRecipe(drink, recipeId) {
-    return canonical(drink) === canonical(RECIPES[recipeId].target);
+  function baseCanonical(d) {   // 느슨 비교 — 샷 수 무시 (음료 종류 식별용)
+    return [d.cup, +!!d.ice, +(!!d.espresso || (d.shots || 0) > 0), d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
+  }
+  function matchesRecipe(drink, recipeId) {   // 음료 종류 식별 (샷 수 무시)
+    return baseCanonical(drink) === baseCanonical(RECIPES[recipeId].target);
+  }
+  function matchesOrderItem(drink, item) {    // 주문 정확 매칭 — '샷 추가' 반영
+    const t = RECIPES[item.recipeId].target;
+    const shots = (t.espresso ? 1 : 0) + (item.extraShot ? 1 : 0);
+    return canonical(drink) === canonical(Object.assign({}, t, { shots }));
   }
 
   /* ===== 제조 순서 ===== */
@@ -277,7 +287,8 @@ const Game = (() => {
   function correctOrder(drink, recipeId) {
     const seq = RECIPES[recipeId].seq;
     if (!seq) return false;
-    const order = (drink.order || []).filter(k => seq.includes(k));
+    const seen = new Set();   // 중복(샷 추가로 'espresso' 2번 등) 제거 — 첫 등장 순서로 판정
+    const order = (drink.order || []).filter(k => seq.includes(k) && !seen.has(k) && seen.add(k));
     return order.length === seq.length && order.every((k, i) => k === seq[i]);
   }
 
@@ -395,7 +406,7 @@ const Game = (() => {
     const out = [];
     out.push(d.cup === 'ice' ? '아이스컵' : d.cup === 'espresso' ? '에스프레소 잔' : '머그컵');
     if (d.ice) out.push('얼음');
-    if (d.espresso) out.push('샷');
+    if (d.espresso) out.push((d.shots || 1) >= 2 ? '샷 ×2' : '샷');
     if (d.water) out.push(d.water === 'hot' ? '온수' : '냉수');
     if (d.milk) out.push('우유');
     if (d.foam) out.push('거품');
@@ -580,8 +591,8 @@ const Game = (() => {
   function pourHeldInto(drink, refresh) {
     if (held.type === 'shotglass') {
       if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
-      if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
+      if ((drink.shots || 0) >= 2) { toast('샷은 최대 2잔까지예요'); return; }
+      drink.espresso = 1; drink.shots = (drink.shots || 0) + 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
       carryFresh(drink, held);   // 샷잔이 오래됐으면 컵도 그만큼 상함
       refresh();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
@@ -616,6 +627,10 @@ const Game = (() => {
     const recipeId = pool[(Math.random() * pool.length) | 0];
     const items = [{ type: 'drink', recipeId, done: false }];
     let total = drinkPrice(recipeId);
+    if (RECIPES[recipeId].target.espresso && Math.random() < 0.25) {   // 에스프레소 음료에 가끔 '샷 추가'
+      items[0].extraShot = true;
+      total += EXTRA_SHOT_PRICE;
+    }
     const dPool = unlockedDesserts();
     if (dPool.length && Math.random() < 0.32) {
       const kind = dPool[(Math.random() * dPool.length) | 0];
@@ -626,7 +641,8 @@ const Game = (() => {
   }
 
   function itemName(it) {
-    return it.type === 'drink' ? RECIPES[it.recipeId].name : DESSERTS[it.kind].name;
+    if (it.type !== 'drink') return DESSERTS[it.kind].name;
+    return RECIPES[it.recipeId].name + (it.extraShot ? ' + 샷 추가' : '');
   }
 
   /* 손님 영어 음성 주문 */
@@ -991,8 +1007,8 @@ const Game = (() => {
         // 물 완료된 컵에 그 자리에서 바로 샷 붓기 (꺼내 옮길 필요 없이)
         if (held && held.type === 'shotglass') {
           if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
-          if (job.drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-          job.drink.espresso = 1;
+          if ((job.drink.shots || 0) >= 2) { toast('샷은 최대 2잔까지예요'); return; }
+          job.drink.espresso = 1; job.drink.shots = (job.drink.shots || 0) + 1;
           addStep(job.drink, 'espresso');
           job.drink.perfect = !!held.perfect;
           job.drink.grindPerfect = !!held.grindPerfect;
@@ -1118,7 +1134,7 @@ const Game = (() => {
       for (const item of o.items) {
         if (item.done) continue;
         let match = false;
-        if (held.type === 'drink' && item.type === 'drink') match = matchesRecipe(held.drink, item.recipeId);
+        if (held.type === 'drink' && item.type === 'drink') match = matchesOrderItem(held.drink, item);
         if (held.type === 'dessert' && item.type === 'dessert') match = held.kind === item.kind;
         if (!match) continue;
         // 서빙 성공
@@ -1320,7 +1336,7 @@ const Game = (() => {
         if (slot.sound) { slot.sound.stop(); slot.sound = null; }
         slot.progress.draw(1, true);
         slot.stream.visible = false;
-        slot.drink.espresso = 1;
+        slot.drink.espresso = 1; slot.drink.shots = (slot.drink.shots || 0) + 1;
         addStep(slot.drink, 'espresso');
         slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
         slot.drink.grindPerfect = !!slot.grindPerfect;   // 이상 분쇄도 → 추출 품질 보너스
