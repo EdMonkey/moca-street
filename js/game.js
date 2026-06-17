@@ -28,36 +28,37 @@ const Game = (() => {
   let barTimer = 0;
   let placedItems = [];           // 표면에 내려놓은 아이템들 {item, mesh, hb}
   let indPulse = 0;
+  let itemPlaceRot = 0;
+  let itemPlacePreview = null;
+  let itemPlacePreviewKey = null;
   let tampGame = null;            // 탬핑 게이지 상태 {fill, locked, sound} (비활성 시 null)
   let steamGame = null;           // 스팀 미니게임 상태 (비활성 시 null)
   let doseGame = null;            // 시럽/휘핑 도징 미니게임 상태 (비활성 시 null)
   let grindGame = null;           // 분쇄도 다이얼 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
   let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
+  let milkFridgeOpen = false;      // 디저트 쇼케이스 아래 우유 냉장고 문 상태
+  let milkFridgeVisibleCount = null;
 
   function freshState(starter = true) {
     const base = {
       money: 20000, day: 1, rep: 50, level: 1, xp: 0,
-      stocks: { beans: 25, milk: 18, cups: 30, dessert: 8 },
+      stocks: { beans: 25, milk: starter ? 2 : 0, cups: 30, dessert: 8 },
       storage: { beans: 0, milk: 0, cups: 0, dessert: 0 },
       pendingDeliveries: [],
       deliveryBoxes: [],
       upgrades: {},
       equip: {},          // 구매한 추가 장비 개수 { grinder, espresso, steamer }
     };
-    return starter ? Logistics.initialState(base) : Logistics.ensureState(base);
+    const state = starter ? Logistics.initialState(base) : Logistics.ensureState(base);
+    Pitchers.ensureState(state);
+    if (starter) Pitchers.ensureMilkState(state, { starterMilk: 2 });
+    return state;
   }
   function freshDayStats() {
     return { revenue: 0, tips: 0, served: 0, angry: 0, spent: 0 };
   }
   const supplyNames = { beans: '원두', milk: '우유', cups: '컵', dessert: '디저트' };
-  const stationTargets = {
-    grinder: 'beans',
-    pitcherrack: 'milk',
-    cupHot: 'cups', cupIce: 'cups', cupEsp: 'cups',
-    dessert: 'dessert',
-  };
-
   /* ===== 유틸 ===== */
   const fmt = n => '₩ ' + n.toLocaleString('ko-KR');
   function toast(msg, cls = '', dur = 2600) {
@@ -78,14 +79,35 @@ const Game = (() => {
   function renderDeliveryBoxes() {
     if (!env || !env.syncDeliveryBoxes) return;
     Logistics.ensureState(S);
-    const hiddenId = held && held.type === 'deliveryBox' ? held.id : null;
-    env.syncDeliveryBoxes(S.deliveryBoxes.filter(b => b.id !== hiddenId));
+    env.syncDeliveryBoxes(S.deliveryBoxes.filter(b => b.id !== (held && held.type === 'deliveryBox' ? held.id : null) && !b.surfacePlaced));
   }
 
   function renderStorageBoxes() {
-    if (!env || !env.syncStorageBoxes) return;
+    if (!env || !env.clearStorageShelfVisuals) return;
     Logistics.ensureState(S);
-    env.syncStorageBoxes(S.storageBoxes || {});
+    Pitchers.ensureMilkState(S);
+    env.clearStorageShelfVisuals();
+  }
+
+  function syncPitchers() {
+    if (!env || !env.syncPitchers) return;
+    Pitchers.ensureState(S);
+    const hiddenId = held && held.type === 'pitcher' ? held.id : null;
+    env.syncPitchers(S.pitchers.items.filter(p => p.id !== hiddenId));
+  }
+
+  function syncMilkFridgeMilk(reset = false) {
+    if (!env || !env.setMilkFridgeMilkCount) return;
+    Pitchers.ensureMilkState(S);
+    const looseFridgeCount = (S.milkCartons || []).filter(c =>
+      c && c.location === 'fridge' && !c.crumpled && !c.spoiled &&
+      Number.isFinite(c.x) && Number.isFinite(c.y) && Number.isFinite(c.z)
+    ).length;
+    const stock = Math.max(0, Pitchers.milkLocationCount(S, 'fridge') - looseFridgeCount);
+    const maxVisible = 6;
+    if (reset || milkFridgeVisibleCount === null) milkFridgeVisibleCount = Math.min(stock, maxVisible);
+    milkFridgeVisibleCount = Math.max(0, Math.min(milkFridgeVisibleCount, stock, maxVisible));
+    env.setMilkFridgeMilkCount(milkFridgeVisibleCount);
   }
 
   function renderDeliveryOrders() {
@@ -139,76 +161,40 @@ const Game = (() => {
     save();
   }
 
-  function storeHeldDelivery(slotId) {
+  function storeHeldDelivery() {
     if (!held || held.type !== 'deliveryBox') return false;
-    const res = Logistics.storeDeliveryBox(S, held.id, slotId);
+    const res = Logistics.storeDeliveryBox(S, held.id);
     if (!res.ok) {
-      const msg = res.reason === 'occupied' ? '이 선반칸에는 이미 박스가 있어요'
-        : res.reason === 'full' ? '이 창고칸 선반이 가득 찼어요'
-        : '이미 입고된 박스예요';
-      toast(msg, 'bad'); AudioFX.err();
+      toast('?? ??? ????', 'bad'); AudioFX.err();
       if (res.reason === 'missing') { setHeld(null); renderDeliveryBoxes(); }
       return true;
     }
+    if (res.kind === 'milk') {
+      Pitchers.ensureMilkState(S);
+      for (let i = 0; i < res.amount; i++) S.milkCartons.push(Pitchers.newMilkCarton({ location: 'storage' }));
+      Pitchers.ensureMilkState(S);
+      seedLooseMilkCartons();
+      restoreLooseMilkCartons();
+      syncMilkFridgeMilk(true);
+    }
     setHeld(null);
     renderDeliveryBoxes();
-    renderStorageBoxes();
     UI.hud();
     save();
-    toast(`${supplyNames[res.box.kind]} 창고 입고 +${res.box.amount}`, 'good');
+    toast(`${supplyNames[res.kind]} ?? +${res.amount}`, 'good');
     AudioFX.put();
-    return true;
-  }
-
-  function takeStorageSupply(slotId) {
-    const box = Logistics.storageSlotBox(S, slotId);
-    if (!box) { toast('이 선반칸은 비어있어요'); return; }
-    const res = Logistics.takeSupply(S, box.kind, slotId);
-    if (!res.ok) {
-      if (res.reason === 'empty_slot') { toast('이 선반칸은 비어있어요'); return; }
-      if (mode === 'playing' || mode === 'closing') orderQuickDelivery(box.kind);
-      else { toast(`창고에 ${supplyNames[box.kind]} 재고가 없어요`, 'bad'); AudioFX.err(); }
-      return;
-    }
-    setHeld({ type: 'supply', kind: res.kind, storageBoxId: res.boxId, slotId: res.slotId });
-    renderStorageBoxes();
-    UI.hud();
-    AudioFX.pick();
-  }
-
-  function putHeldSupply(kind) {
-    if (!held || held.type !== 'supply') return false;
-    if (held.kind !== kind) { toast(`${supplyNames[held.kind]}은(는) 여기 보충할 수 없어요`, 'bad'); AudioFX.err(); return true; }
-    const res = Logistics.putSupplyToStation(S, kind);
-    if (!res.ok) { toast(`${supplyNames[kind]} 사용처 재고가 가득 찼어요`, 'bad'); AudioFX.err(); return true; }
-    setHeld(null);
-    renderStorageBoxes();
-    UI.hud();
-    save();
-    AudioFX.put();
-    toast(`${supplyNames[kind]} 보충 +1`, 'good');
     return true;
   }
 
   function returnHeldLogistics(notify = false) {
-    if (!held || (held.type !== 'supply' && held.type !== 'deliveryBox')) return false;
-    if (held.type === 'supply') {
-      const res = Logistics.returnSupply(S, held.kind, held.storageBoxId, held.slotId);
-      if (!res.ok) { toast('창고 선반이 가득 찼어요', 'bad'); AudioFX.err(); return true; }
-      setHeld(null);
-      renderStorageBoxes();
-      UI.hud();
-      if (notify) { save(); toast('창고에 되돌렸어요'); }
-      return true;
-    }
+    if (!held || held.type !== 'deliveryBox') return false;
     setHeld(null);
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     renderDeliveryBoxes();
-    if (notify) toast('택배박스를 문앞에 내려놓았어요');
+    if (notify) toast('????? ??????');
     return true;
   }
 
-  /* ===== 음료 비교 ===== */
   function canonical(d) {
     return [d.cup, +!!d.ice, +!!d.espresso, d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
   }
@@ -296,18 +282,19 @@ const Game = (() => {
       m.scale.setScalar(1.5);
       Player.setHeld(m, equip);
     } else if (h.type === 'pitcher') {
-      const m = WORLD.makePitcherMesh(h.milk ? 1 : 0, h.foam ? 1 : 0);
+      const m = WORLD.makePitcherMesh(h.rawMilk || h.milk ? 1 : 0, h.foam ? 1 : 0);
       m.scale.setScalar(1.3);
+      Player.setHeld(m, equip);
+    } else if (h.type === 'milkCarton') {
+      const m = WORLD.makeMilkCartonMesh ? WORLD.makeMilkCartonMesh(h) : WORLD.makeSupplyMesh('milk');
+      m.scale.setScalar(1.25);
       Player.setHeld(m, equip);
     } else if (h.type === 'deliveryBox') {
       const m = WORLD.makeBoxMesh(h.kind);
       m.scale.setScalar(1.35);
       Player.setHeld(m, equip);
-    } else if (h.type === 'supply') {
-      const m = WORLD.makeSupplyMesh(h.kind);
-      m.scale.setScalar(1.05);
-      Player.setHeld(m, equip);
     }
+    syncPitchers();
     UI.held();
   }
   function drinkIngredients(d) {
@@ -335,19 +322,161 @@ const Game = (() => {
         : '포터필터 (비어 있음)';
     }
     if (h.type === 'shotglass') return h.filled ? '샷잔 (에스프레소 ☕)' : '샷잔 (비어 있음)';
-    if (h.type === 'pitcher') return h.foam ? '스팀 피처 (우유+거품)' : h.milk ? '스팀 피처 (데운 우유)' : '스팀 피처 (비어 있음)';
+    if (h.type === 'pitcher') return Pitchers.label(h);
+    if (h.type === 'milkCarton') return h.crumpled ? '구겨진 우유곽' : h.spoiled ? '상한 우유' : `우유 카톤 (${h.servings ?? 3}/3)`;
     if (h.type === 'deliveryBox') return `${supplyNames[h.kind]} 택배박스 x${h.amount}`;
-    if (h.type === 'supply') return `${supplyNames[h.kind]} 1개`;
     return DESSERTS[h.kind].name;
   }
 
-  function placeBlocked(point) {
-    return placedItems.some(p => p.mesh.position.distanceTo(point) < 0.2);
+  function placedItemRadius(item) {
+    if (!item) return 0.14;
+    if (item.type === 'milkCarton') return 0.065;
+    if (item.type === 'shotglass') return 0.09;
+    if (item.type === 'pitcher') return 0.12;
+    if (item.type === 'drink') return 0.13;
+    return 0.14;
+  }
+
+  function placeBlocked(point, item = held) {
+    const r = placedItemRadius(item);
+    return placedItems.some(p => {
+      const py = p.item && Number.isFinite(p.item.y) ? p.item.y : p.mesh.position.y;
+      if (Math.abs(py - point.y) > 0.24) return false;
+      const pr = placedItemRadius(p.item);
+      const dx = p.mesh.position.x - point.x;
+      const dz = p.mesh.position.z - point.z;
+      return Math.hypot(dx, dz) < r + pr;
+    });
+  }
+
+  function isSurfacePlaceableItem(item) {
+    if (!item) return false;
+    const legacySurfaceRule = item.type !== 'deliveryBox' && item.type !== 'supply';
+    return item.type === 'deliveryBox' || legacySurfaceRule;
+  }
+
+  function fitPlacedSpecToSurface(spec) {
+    if (!spec || !spec.mesh) return spec;
+    spec.mesh.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(spec.mesh);
+    if (box.isEmpty() || !Number.isFinite(box.min.y) || !Number.isFinite(box.max.y)) return spec;
+    const size = box.getSize(new THREE.Vector3());
+    spec.yOff = 0.004 - box.min.y;
+    spec.hb = {
+      w: Math.max(spec.hb.w, size.x + 0.04),
+      h: Math.max(spec.hb.h, size.y + 0.04),
+      d: Math.max(spec.hb.d, size.z + 0.04),
+      y: 0.004 + size.y / 2,
+    };
+    return spec;
+  }
+
+  function makePlacedItemMesh(item) {
+    let mesh, yOff = 0.004, hb = { w: 0.24, h: 0.3, d: 0.24, y: 0.15 };
+    if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
+    else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
+    else if (item.type === 'shotglass') mesh = WORLD.makeDrinkMesh({ cup: 'shot', espresso: item.filled ? 1 : 0, perfect: item.perfect });
+    else if (item.type === 'pitcher') mesh = WORLD.makePitcherMesh(item.rawMilk || item.milk ? 1 : 0, item.foam ? 1 : 0);
+    else if (item.type === 'deliveryBox') {
+      mesh = WORLD.makeBoxMesh(item.kind);
+      hb = { w: 0.48, h: 0.34, d: 0.38, y: 0.17 };
+    }
+    else if (item.type === 'milkCarton') {
+      mesh = WORLD.makeMilkCartonMesh(item);
+      hb = item.crumpled ? { w: 0.2, h: 0.16, d: 0.2, y: 0.08 } : { w: 0.18, h: 0.34, d: 0.18, y: 0.17 };
+    } else {
+      mesh = WORLD.makePortafilterMesh(item.state || 'empty');
+      yOff = 0.03;
+    }
+    return fitPlacedSpecToSurface({ mesh, yOff, hb });
+  }
+
+  function itemPlacePreviewKeyFor(item) {
+    if (!item) return '';
+    if (item.type === 'drink') return `drink:${item.drink.cup}:${!!item.drink.espresso}:${!!item.drink.milk}:${!!item.drink.foam}`;
+    if (item.type === 'shotglass') return `shotglass:${!!item.filled}:${!!item.perfect}`;
+    if (item.type === 'pitcher') return `pitcher:${!!item.rawMilk}:${!!item.milk}:${!!item.foam}`;
+    if (item.type === 'milkCarton') return `milkCarton:${item.servings ?? 3}:${!!item.crumpled}:${!!item.spoiled}`;
+    if (item.type === 'deliveryBox') return `deliveryBox:${item.kind}:${item.amount}:${item.id}`;
+    if (item.type === 'dessert') return `dessert:${item.kind}`;
+    if (item.type === 'portafilter') return `portafilter:${item.state || 'empty'}`;
+    return item.type;
+  }
+
+  function ghostMat(ok = true) {
+    return new THREE.MeshBasicMaterial({
+      color: ok ? 0x66d9a8 : 0xff7466,
+      transparent: true,
+      opacity: 0.38,
+      depthWrite: false,
+    });
+  }
+
+  function ghostPlacedMesh(root, ok = true) {
+    const mat = ghostMat(ok);
+    root.traverse(o => {
+      if (!o.isMesh) return;
+      o.material = Array.isArray(o.material) ? o.material.map(() => mat.clone()) : mat.clone();
+      o.castShadow = false;
+      o.receiveShadow = false;
+      o.renderOrder = 5;
+    });
+    return root;
+  }
+
+  function clearItemPlacePreview() {
+    if (itemPlacePreview) scene.remove(itemPlacePreview.mesh);
+    itemPlacePreview = null;
+    itemPlacePreviewKey = null;
+  }
+
+  function updateItemPlacePreview(item, point, ok = true) {
+    if (!isSurfacePlaceableItem(item) || !point) {
+      clearItemPlacePreview();
+      return null;
+    }
+    const key = itemPlacePreviewKeyFor(item);
+    if (!itemPlacePreview || itemPlacePreviewKey !== key) {
+      clearItemPlacePreview();
+      const spec = makePlacedItemMesh(item);
+      itemPlacePreview = spec;
+      itemPlacePreview.mesh = ghostPlacedMesh(spec.mesh, ok);
+      itemPlacePreviewKey = key;
+      scene.add(itemPlacePreview.mesh);
+    }
+    itemPlacePreview.mesh.position.set(point.x, point.y + itemPlacePreview.yOff, point.z);
+    const previewRot = Number.isFinite(point.rot) ? point.rot : itemPlaceRot;
+    itemPlacePreview.mesh.rotation.y = itemPlaceRot;
+    if (previewRot !== itemPlaceRot) itemPlacePreview.mesh.rotation.y = previewRot;
+    itemPlacePreview.mesh.visible = true;
+    return itemPlacePreview;
+  }
+
+  function rotateHeldItemPreview() {
+    if (!isSurfacePlaceableItem(held)) return false;
+    const pt = Player.aimSurface();
+    if (!pt) return false;
+    itemPlaceRot = (itemPlaceRot + Math.PI / 2) % (Math.PI * 2);
+    updateItemPlacePreview(held, pt, !placeBlocked(pt, held));
+    return true;
+  }
+
+  function returnPitcherToCounter(pitcher) {
+    if (!pitcher || pitcher.type !== 'pitcher' || !pitcher.id) return false;
+    Pitchers.ensureState(S);
+    if (S.pitchers.items.some(p => p.id === pitcher.id)) return false;
+    const res = Pitchers.placePitcher(S, pitcher);
+    return !!res.ok;
   }
 
   function deliveryPlacePreview() {
     if (!held || held.type !== 'deliveryBox') {
       if (env && env.setDeliveryPreview) env.setDeliveryPreview(null);
+      return null;
+    }
+    const surface = Player.aimSurface && Player.aimSurface();
+    if (surface && isSurfacePlaceableItem(held)) {
+      if (env.setDeliveryPreview) env.setDeliveryPreview(null);
       return null;
     }
     const pt = Player.aimGround && Player.aimGround();
@@ -367,6 +496,7 @@ const Game = (() => {
     if (!spec) { toast('바닥을 바라보면 박스를 내려놓을 수 있어요'); return true; }
     if (!spec.ok) { toast('여기엔 박스를 놓을 공간이 없어요', 'bad'); AudioFX.err(); return true; }
     const res = Logistics.moveDeliveryBox(S, held.id, spec);
+    if (res.ok) delete res.box.surfacePlaced;
     if (!res.ok) { toast('박스 위치를 찾지 못했어요', 'bad'); AudioFX.err(); setHeld(null); renderDeliveryBoxes(); return true; }
     setHeld(null);
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
@@ -385,61 +515,123 @@ const Game = (() => {
     return true;
   }
 
-  function showStoragePreview(aimData) {
-    if (!env.setStoragePreview) return false;
-    if (!aimData || aimData.id !== 'restock') {
-      env.setStoragePreview(null);
-      return false;
-    }
-    if (!held || held.type !== 'deliveryBox') {
-      env.setStoragePreview(null);
-      return false;
-    }
-    if (aimData.box) {
-      env.setStoragePreview(null);
-      return false;
-    }
-    const occupied = Logistics.storageSlotOccupied(S, aimData.slotId);
-    env.setStoragePreview(aimData.slotId, !occupied);
-    return true;
+  function shelfPointForIndex(index) {
+    const levels = [0.61, 1.17, 1.73];
+    const racks = [-4.32, -3.22, -2.12, -1.02];
+    const i = Math.max(0, Number(index) || 0);
+    return {
+      x: -8.7 + ((i % 3) - 1) * 0.18,
+      y: levels[Math.floor(i / 12) % levels.length],
+      z: racks[Math.floor(i / 3) % racks.length] + ((Math.floor(i / 36) % 2) - 0.5) * 0.18,
+      rot: Math.PI / 2,
+    };
   }
 
-  function storageAimUsable(aimData) {
-    if (!aimData || aimData.id !== 'restock') return false;
-    if (held && held.type === 'deliveryBox') return true;
-    if (held) return false;
-    return !!aimData.box && !!Logistics.storageSlotBox(S, aimData.slotId);
+  function fridgePointForIndex(index) {
+    const levels = [0.18, 0.58];
+    const xs = [-5.14, -4.8, -4.46];
+    const i = Math.max(0, Number(index) || 0);
+    return {
+      x: xs[i % xs.length],
+      y: levels[Math.floor(i / xs.length) % levels.length],
+      z: -1.18,
+      rot: Math.PI,
+      fridgeSurface: true,
+    };
   }
 
-  function placeItem(point) {
-    const item = held;
-    if (item.type === 'deliveryBox' || item.type === 'supply') {
-      toast('택배/재고는 창고나 사용처에 직접 넣으세요');
-      return;
+  function seedLooseMilkCartons() {
+    Pitchers.ensureMilkState(S);
+    let n = 0;
+    (S.milkCartons || []).forEach(c => {
+      if (!c || c.crumpled || c.location === 'held' || c.location === 'fridge') return;
+      if (c.location === 'storage' || !Number.isFinite(c.x) || !Number.isFinite(c.y) || !Number.isFinite(c.z)) {
+        const p = shelfPointForIndex(n++);
+        c.location = 'placed';
+        c.slotId = null;
+        c.x = p.x; c.y = p.y; c.z = p.z; c.rot = p.rot;
+      }
+    });
+    Pitchers.ensureMilkState(S);
+  }
+
+  function placeLooseItem(item, point, opts = {}) {
+    if (!isSurfacePlaceableItem(item) || !point) return false;
+    const rot = Number.isFinite(opts.rotationY) ? opts.rotationY : Number.isFinite(point.rot) ? point.rot : itemPlaceRot;
+    if (item.type === 'milkCarton') {
+      item.location = point.fridgeSurface ? 'fridge' : 'placed';
+      item.slotId = null;
+      item.cold = !!point.fridgeSurface;
+      if (point.fridgeSurface) item.outsideDays = 0;
+      item.x = point.x;
+      item.y = point.y;
+      item.z = point.z;
+      item.rot = rot;
+      Pitchers.ensureMilkState(S);
     }
-    let mesh, yOff = 0.004;
-    if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
-    else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
-    else if (item.type === 'shotglass') mesh = WORLD.makeDrinkMesh({ cup: 'shot', espresso: item.filled ? 1 : 0, perfect: item.perfect });
-    else if (item.type === 'pitcher') mesh = WORLD.makePitcherMesh(item.milk ? 1 : 0, item.foam ? 1 : 0);
-    else { mesh = WORLD.makePortafilterMesh(item.state || 'empty'); yOff = 0.03; }
-    mesh.position.set(point.x, point.y + yOff, point.z);
-    // 손잡이/컵이 플레이어 쪽을 향하도록
-    mesh.rotation.y = Math.atan2(Player.position.x - point.x, Player.position.z - point.z);
+    if (item.type === 'deliveryBox') {
+      const box = S.deliveryBoxes.find(b => b.id === item.id);
+      if (box) {
+        box.surfacePlaced = true;
+        box.x = point.x;
+        box.z = point.z;
+        box.rot = rot;
+        box.autoSpot = false;
+      }
+      item.rot = rot;
+    }
+    const spec = makePlacedItemMesh(item);
+    const mesh = spec.mesh;
+    mesh.position.set(point.x, point.y + spec.yOff, point.z);
+    mesh.rotation.y = rot;
     scene.add(mesh);
-    const hb = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.24),
+    const hb = new THREE.Mesh(new THREE.BoxGeometry(spec.hb.w, spec.hb.h, spec.hb.d),
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
-    hb.position.set(point.x, point.y + 0.15, point.z);
+    hb.position.set(point.x, point.y + spec.hb.y, point.z);
+    hb.rotation.y = rot;
     hb.castShadow = hb.receiveShadow = false;
     const rec = { item, mesh, hb };
     hb.userData.interact = { id: 'placedItem', rec };
+    hb.userData.outlineRoot = mesh;
     scene.add(hb);
     mesh.updateMatrixWorld(true);
-    hb.updateMatrixWorld(true); // 같은 프레임에 바로 집을 수 있도록 행렬 즉시 갱신
+    hb.updateMatrixWorld(true);
     env.interactables.push(hb);
     placedItems.push(rec);
-    setHeld(null);
-    if (item.type === 'drink' || item.type === 'shotglass' || item.type === 'pitcher') AudioFX.cupClink(0.4); else AudioFX.put();
+    if (!opts.keepPreview) clearItemPlacePreview();
+    if (!opts.keepHeld && held === item) setHeld(null);
+    if (item.type === 'milkCarton') syncMilkFridgeMilk(true);
+    if (item.type === 'deliveryBox') renderDeliveryBoxes();
+    if (!opts.silent) {
+      UI.hud();
+      if (item.type === 'milkCarton') save();
+      if (item.type === 'drink' || item.type === 'shotglass' || item.type === 'pitcher') AudioFX.cupClink(0.4); else AudioFX.put();
+    }
+    return true;
+  }
+
+  function restoreLooseMilkCartons() {
+    Pitchers.ensureMilkState(S);
+    let fridgeIndex = 0;
+    (S.milkCartons || []).forEach((carton, i) => {
+      if (!carton || carton.crumpled || (carton.location !== 'placed' && carton.location !== 'fridge')) return;
+      if (placedItems.some(rec => rec.item && rec.item.id === carton.id)) return;
+      const point = Number.isFinite(carton.x) && Number.isFinite(carton.y) && Number.isFinite(carton.z)
+        ? { x: carton.x, y: carton.y, z: carton.z, rot: Number.isFinite(carton.rot) ? carton.rot : (carton.location === 'fridge' ? Math.PI : Math.PI / 2), fridgeSurface: carton.location === 'fridge' }
+        : carton.location === 'fridge'
+          ? fridgePointForIndex(fridgeIndex++)
+          : shelfPointForIndex(i);
+      placeLooseItem(carton, point, { silent: true });
+    });
+  }
+
+  function placeItem(point, opts = {}) {
+    const item = held;
+    if (!isSurfacePlaceableItem(item)) {
+      toast('여기에 내려놓을 수 없어요');
+      return false;
+    }
+    return placeLooseItem(item, point, opts);
   }
 
   function removePlaced(rec) {
@@ -451,8 +643,23 @@ const Game = (() => {
     if (j >= 0) placedItems.splice(j, 1);
   }
 
-  function clearPlacedItems() {
-    while (placedItems.length) removePlaced(placedItems[0]);
+  function isPrepPlacedTool(item) {
+    return item && (item.type === 'milkCarton' || item.type === 'shotglass' || item.type === 'pitcher' || item.type === 'drink');
+  }
+
+  function clearPlacedItems(opts = {}) {
+    for (let i = placedItems.length - 1; i >= 0; i--) {
+      const rec = placedItems[i];
+      if (opts.keepPrepTools && isPrepPlacedTool(rec.item)) continue;
+      if (rec.item && rec.item.type === 'deliveryBox') {
+        const box = S.deliveryBoxes.find(b => b.id === rec.item.id);
+        if (box) delete box.surfacePlaced;
+      }
+      returnPitcherToCounter(rec.item);
+      removePlaced(rec);
+    }
+    renderDeliveryBoxes();
+    syncPitchers();
   }
 
   // 슬롯/표면에서 손으로 되돌릴 때: 샷잔(cup:'shot')은 도구 타입으로, 일반 컵은 음료로 환원
@@ -471,6 +678,72 @@ const Game = (() => {
     rec.mesh = m;
   }
 
+  function refreshPlacedPitcher(rec) {
+    const pos = rec.mesh.position.clone(), roty = rec.mesh.rotation.y;
+    scene.remove(rec.mesh);
+    const m = WORLD.makePitcherMesh(rec.item.rawMilk || rec.item.milk ? 1 : 0, rec.item.foam ? 1 : 0);
+    m.position.copy(pos); m.rotation.y = roty;
+    scene.add(m);
+    rec.mesh = m;
+    rec.hb.userData.outlineRoot = m;
+  }
+
+  function refreshPlacedMilkCarton(rec) {
+    const pos = rec.mesh.position.clone(), roty = rec.mesh.rotation.y;
+    scene.remove(rec.mesh);
+    const m = WORLD.makeMilkCartonMesh(rec.item);
+    m.position.copy(pos); m.rotation.y = roty;
+    scene.add(m);
+    rec.mesh = m;
+    rec.hb.userData.outlineRoot = m;
+  }
+
+  function interactPlacedItem(it) {
+    const rec = it.rec;
+    if (!rec) return;
+    if (held && held.type === 'milkCarton') {
+      if (rec.item.type !== 'pitcher') { toast('우유는 피처에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
+      const res = Pitchers.pourCartonIntoPitcher(rec.item, held);
+      if (!res.ok) { toast(res.reason === 'carton_spoiled' ? '상한 우유라 부을 수 없어요' : res.reason === 'carton_empty' ? '구겨진 우유곽이라 부을 수 없어요' : '피처에 이미 내용물이 있어요', 'bad'); AudioFX.err(); return; }
+      setHeld(res.carton || held);
+      refreshPlacedPitcher(rec);
+      AudioFX.pourWater(0.45);
+      toast(held.crumpled ? '우유를 다 써서 구겨진 우유곽만 남았어요' : `피처에 차가운 우유를 부었어요 (${held.servings}/3 남음)`);
+      return;
+    }
+    if (held && held.type === 'pitcher' && rec.item.type === 'milkCarton') {
+      const res = Pitchers.pourCartonIntoPitcher(held, rec.item);
+      if (!res.ok) { toast(res.reason === 'carton_spoiled' ? '상한 우유라 부을 수 없어요' : res.reason === 'carton_empty' ? '구겨진 우유곽이라 부을 수 없어요' : '피처에 이미 내용물이 있어요', 'bad'); AudioFX.err(); return; }
+      refreshPlacedMilkCarton(rec);
+      setHeld(held);
+      AudioFX.pourWater(0.45);
+      toast(rec.item.crumpled ? '우유를 다 써서 구겨진 우유곽만 남았어요' : `피처에 차가운 우유를 부었어요 (${rec.item.servings}/3 남음)`);
+      return;
+    }
+    if (held && (held.type === 'shotglass' || held.type === 'pitcher')) {
+      if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
+      pourHeldInto(rec.item.drink, () => refreshPlacedDrink(rec));
+      return;
+    }
+    if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
+    removePlaced(rec);
+    if (rec.item.type === 'deliveryBox') {
+      const box = S.deliveryBoxes.find(b => b.id === rec.item.id);
+      if (box) delete box.surfacePlaced;
+    }
+    if (rec.item.type === 'milkCarton') {
+      rec.item.location = 'held';
+      rec.item.slotId = null;
+      Pitchers.ensureMilkState(S);
+      renderStorageBoxes();
+      syncMilkFridgeMilk(true);
+      save();
+    }
+    setHeld(rec.item);
+    if (rec.item.type === 'deliveryBox') renderDeliveryBoxes();
+    if (rec.item.type === 'drink' || rec.item.type === 'shotglass' || rec.item.type === 'pitcher') AudioFX.cupClink(0.4); else AudioFX.pick();
+  }
+
   // 컵(drink)에 우유(+거품)를 확정해 붓는다 — 즉시 붓기와 라떼아트 미니게임 완료가 공유.
   // refresh: 컵 메시를 다시 그리는 콜백(놓인 컵/머신 컵 공용). artTier: 'perfect'|'good'|'plain'|null
   function commitMilkPour(drink, refresh, h, artTier) {
@@ -481,7 +754,9 @@ const Game = (() => {
     if (h.perfectFoam) drink.foamPerfect = 1;            // 퍼펙트 마이크로폼 보너스 인계
     if (artTier && artTier !== 'plain') drink.artTier = artTier;   // 라떼아트 등급 인계
     refresh();
-    setHeld({ type: 'pitcher', milk: 0, foam: 0 });  // 피처 비움(재사용)
+    const emptyPitcher = Object.assign({}, h, { rawMilk: 0, milk: 0, foam: 0, perfectFoam: false });
+    delete emptyPitcher.freshAt;
+    setHeld(emptyPitcher);  // 피처 비움(재사용)
     AudioFX.pourWater(0.5);
     if (artTier === 'perfect') toast('🎨 멋진 라떼아트! 팁 보너스 ✨', 'gold', 2200);
     else if (artTier === 'good') toast('🎨 라떼아트 완성 — 제법인데요 🥛', 'good');
@@ -508,9 +783,13 @@ const Game = (() => {
       return;
     }
     // pitcher
-    if (!held.milk && !held.foam) { toast('피처가 비어 있어요 — 스티머에서 우유를 데우세요', 'bad'); AudioFX.err(); return; }
+    if (!Pitchers.canPourToDrink(held)) {
+      toast(held.rawMilk ? '차가운 우유예요 — 스팀봉에서 먼저 데우세요' : '피처가 비어 있어요 — 냉장고 우유를 붓고 스팀하세요', 'bad');
+      AudioFX.err();
+      return;
+    }
     if (drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
-    const h = { milk: held.milk, foam: held.foam, perfectFoam: held.perfectFoam, freshAt: held.freshAt };
+    const h = Object.assign({}, held);
     if (drink.cup === 'hot' && drink.espresso && !drink.foam && held.milk) {   // 라떼아트 가능
       LatteArt.start({ pattern: artPatternFor(), onDone: (tier) => commitMilkPour(drink, refresh, h, tier) });
       return;
@@ -598,6 +877,37 @@ const Game = (() => {
   }
 
   /* ===== 상호작용 ===== */
+  function putHeldMilkInFridge() {
+    if (!held || held.type !== 'milkCarton') return false;
+    if (!milkFridgeOpen) { toast('냉장고를 먼저 열어주세요', 'bad'); AudioFX.err(); return true; }
+    const fridgePt = Player.aimSurface && Player.aimSurface();
+    if (fridgePt && fridgePt.fridgeSurface && !placeBlocked(fridgePt, held)) {
+      placeItem(fridgePt);
+      return true;
+    }
+    toast('냉장고 안쪽 선반을 보고 내려놓으세요', 'bad');
+    AudioFX.err();
+    return true;
+    /*
+    const res = Pitchers.putMilkInFridge(S, held);
+    if (!res.ok) {
+      const msg = res.reason === 'spoiled' ? '상한 우유는 냉장고에 넣어도 쓸 수 없어요'
+        : res.reason === 'empty_carton' ? '빈 우유곽은 냉장고에 넣을 필요가 없어요'
+        : '우유를 냉장고에 넣을 수 없어요';
+      toast(msg, 'bad'); AudioFX.err();
+      return true;
+    }
+    setHeld(null);
+    renderStorageBoxes();
+    syncMilkFridgeMilk(true);
+    UI.hud();
+    save();
+    AudioFX.put();
+    toast('우유를 냉장고에 넣었어요', 'good');
+    return true;
+    */
+  }
+
   function patienceForNew() {
     let p = 80 - S.day * 1.5;
     if (S.upgrades.interior) p *= 1.35;
@@ -624,16 +934,53 @@ const Game = (() => {
       return;
     }
 
-    const stationKind = stationTargets[id];
-    if (stationKind && held && held.type === 'supply') {
-      putHeldSupply(stationKind);
+    if (id === 'milkFridgeDoor' || id === 'milkFridge') {
+      if (held && held.type === 'milkCarton') { putHeldMilkInFridge(); return; }
+      if (held) { toast('손을 비우면 냉장고를 열 수 있어요'); return; }
+      milkFridgeOpen = !milkFridgeOpen;
+      if (env.setMilkFridgeOpen) env.setMilkFridgeOpen(milkFridgeOpen);
+      AudioFX.metalClack();
+      toast(milkFridgeOpen ? '우유 냉장고를 열었어요' : '우유 냉장고를 닫았어요');
       return;
     }
 
-    if (id === 'restock') {
-      if (held && held.type === 'deliveryBox') { storeHeldDelivery(it.slotId); return; }
-      if (held) { toast('손을 비우면 창고에서 꺼낼 수 있어요'); return; }
-      takeStorageSupply(it.slotId);
+    if (id === 'milkFridgeMilk') {
+      if (held && held.type === 'milkCarton') { putHeldMilkInFridge(); return; }
+      if (held) { toast('손을 비우면 우유를 집을 수 있어요'); return; }
+      const res = Pitchers.takeMilkCarton(S);
+      if (!res.ok) { toast('냉장고 우유가 없어요 — 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+      syncMilkFridgeMilk(true);
+      setHeld(res.carton);
+      AudioFX.pick();
+      UI.hud();
+      save();
+      return;
+    }
+
+    if (id === 'pitcherSpot') {
+      if (held && held.type === 'milkCarton') {
+        const p = S.pitchers.items.find(x => x.id === it.pitcherId);
+        if (!p) { syncPitchers(); return; }
+        const target = Object.assign({ type: 'pitcher' }, p);
+        const res = Pitchers.pourCartonIntoPitcher(target, held);
+        if (!res.ok) { toast(res.reason === 'carton_spoiled' ? '상한 우유라 부을 수 없어요' : res.reason === 'carton_empty' ? '구겨진 우유곽이라 부을 수 없어요' : '이 피처에는 이미 내용물이 있어요', 'bad'); AudioFX.err(); return; }
+        Object.assign(p, { rawMilk: target.rawMilk, milk: target.milk, foam: target.foam, perfectFoam: target.perfectFoam });
+        setHeld(res.carton || held);
+        syncPitchers();
+        AudioFX.pourWater(0.45);
+        toast(held.crumpled ? '우유를 다 써서 구겨진 우유곽만 남았어요' : `피처에 차가운 우유를 부었어요 (${held.servings}/3 남음)`);
+        return;
+      }
+      if (held) { toast('손을 비우면 피처를 집을 수 있어요'); return; }
+      const res = Pitchers.takePitcher(S, it.pitcherId);
+      if (!res.ok) { syncPitchers(); return; }
+      setHeld(res.pitcher);
+      AudioFX.cupClink(0.45);
+      return;
+    }
+
+    if (id === 'placedItem') {
+      interactPlacedItem(it);
       return;
     }
 
@@ -660,22 +1007,6 @@ const Game = (() => {
     /* --- 서빙 --- */
     if (id === 'pickup') { tryServe(); return; }
 
-    /* --- 내려놓은 아이템: 가득 찬 샷잔으로 샷 붓기 / 집기 --- */
-    if (id === 'placedItem') {
-      const rec = it.rec;
-      // 가득 찬 샷잔/피처를 들고 놓인 컵을 조준 → 붓기 (붓기는 샷잔·피처만 가능)
-      if (held && (held.type === 'shotglass' || held.type === 'pitcher')) {
-        if (rec.item.type !== 'drink' || rec.item.drink.cup === 'shot') { toast('컵에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
-        pourHeldInto(rec.item.drink, () => refreshPlacedDrink(rec));
-        return;
-      }
-      if (held) { toast('손이 비어있어야 집을 수 있어요'); return; }
-      removePlaced(rec);
-      setHeld(rec.item);
-      if (rec.item.type === 'drink' || rec.item.type === 'shotglass') AudioFX.cupClink(0.4); else AudioFX.pick();
-      return;
-    }
-
     /* --- 컵 --- */
     if (id === 'cupHot' || id === 'cupIce' || id === 'cupEsp') {
       if (held) { toast('손이 비어있어야 컵을 잡을 수 있어요'); return; }
@@ -698,20 +1029,6 @@ const Game = (() => {
       }
       if (held) { toast('손이 비어있어야 샷잔을 집을 수 있어요'); return; }
       setHeld({ type: 'shotglass', filled: false, perfect: false });
-      AudioFX.cupClink(0.45);
-      return;
-    }
-
-    /* --- 스팀 피처 거치대: 빈 피처 집기 / 반납 (재사용 무료 도구) --- */
-    if (id === 'pitcherrack') {
-      if (held && held.type === 'pitcher') {
-        if (held.milk || held.foam) { toast('우유가 들어있어요 — 컵에 부은 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
-        setHeld(null);
-        AudioFX.cupClink(0.4);
-        return;
-      }
-      if (held) { toast('손이 비어있어야 피처를 집을 수 있어요'); return; }
-      setHeld({ type: 'pitcher', milk: 0, foam: 0 });
       AudioFX.cupClink(0.45);
       return;
     }
@@ -882,7 +1199,7 @@ const Game = (() => {
       if (held.type === 'drink') { toast('컵에 직접 스팀할 수 없어요 — 스팀 피처에 우유를 데우세요', 'bad'); AudioFX.err(); return; }
       if (held.type !== 'pitcher') { toast('스팀 피처를 들고 오세요', 'bad'); AudioFX.err(); return; }
       if (held.foam) { toast('이미 거품까지 만든 피처예요 — 컵에 부으세요'); return; }
-      if (S.stocks.milk <= 0) { toast('우유가 떨어졌어요! 창고에서 보충하세요', 'bad'); AudioFX.err(); return; }
+      if (!held.rawMilk && !held.milk) { toast('피처가 비어 있어요 — 냉장고에서 우유를 붓고 오세요', 'bad'); AudioFX.err(); return; }
       if (!steamGame) startSteamGame(job);
       return;
     }
@@ -1435,9 +1752,8 @@ const Game = (() => {
     }
   }
   function finishSteam(perfect, msg, cls) {
-    S.stocks.milk--;                          // 성공 시 우유 1 소모
-    if (steamGame.makingFoam) held.foam = 1; else held.milk = 1;
-    held.perfectFoam = perfect;               // 마이크로폼 — 컵에 부을 때 보너스 인계
+    const res = Pitchers.steamPitcher(held, perfect);
+    if (!res.ok) { toast('스팀할 우유가 없어요', 'bad'); AudioFX.err(); endSteamGame(); return; }
     stampFresh(held);                         // 데운 우유 신선도 시계 시작
     setHeld(held);
     toast(msg, cls);
@@ -1446,7 +1762,7 @@ const Game = (() => {
   }
   function updateSteamGame(dt, aimData) {
     if (!steamGame) return false;
-    const ok = aimData && aimData.id === 'steamwand' && held && held.type === 'pitcher' && !held.foam;
+    const ok = aimData && aimData.id === 'steamwand' && held && held.type === 'pitcher' && (held.rawMilk || held.milk) && !held.foam;
     if (!ok) { endSteamGame(); return false; }   // 시선을 돌리거나 상태가 바뀌면 취소
     // 누르는 동안 폼 게이지 상승 + 스팀봉 증기, 손 떼면 그 지점으로 즉시 판정·확정
     if (useDown) {
@@ -1625,14 +1941,17 @@ const Game = (() => {
   let pendingTutorial = false;
 
   // 매장(머신·들고있는것·연출) 초기화 — 준비/영업 진입 시 공용
-  function resetStations() {
+  function resetStations(opts = {}) {
     returnHeldLogistics(false);
+    returnPitcherToCounter(held);
     setHeld(null);
-    clearPlacedItems();
+    clearPlacedItems({ keepPrepTools: !!opts.keepPrepTools });
     Effects.clear();
     env.placeIndicator.visible = false;
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
-    if (env.setStoragePreview) env.setStoragePreview(null);
+    milkFridgeOpen = false;
+    if (env.setMilkFridgeOpen) env.setMilkFridgeOpen(false);
+    syncMilkFridgeMilk(true);
     env.machines.espressoSlots.forEach(s => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
@@ -1648,6 +1967,7 @@ const Game = (() => {
     endDoseGame();
     endGrindGame();
     if (env.machines.tamp && env.machines.tamp.tamper) env.machines.tamp.tamper.position.y = 0.04;
+    syncPitchers();
   }
 
   /* --- 영업 준비 단계: 손님 없음 · 시간 정지 · 배치/구매/보충 --- */
@@ -1655,6 +1975,7 @@ const Game = (() => {
     mode = 'prep';
     open = false; timeSec = 0;
     Logistics.ensureState(S);
+    Pitchers.ensureMilkState(S);
     const arrivals = Logistics.collectArrivals(S, S.day);
     dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
     orders = []; orderSeq = 0;
@@ -1662,6 +1983,8 @@ const Game = (() => {
     Tutorial.cancel();
     Customers.clear();
     resetStations();
+    seedLooseMilkCartons();
+    restoreLooseMilkCartons();
     prepPanelOpen = false;
     $('prepPanel').classList.add('hidden');
     $('prepBar').classList.remove('hidden');
@@ -1677,6 +2000,8 @@ const Game = (() => {
     }
     renderDeliveryBoxes();
     renderStorageBoxes();
+    syncPitchers();
+    syncMilkFridgeMilk(true);
     UI.hud(); UI.clock();
     if (arrivals.length) { save(); toast(`문앞에 택배 ${arrivals.length}개 도착 — 창고에 입고하세요`, 'gold', 4500); }
     toast(`DAY ${S.day} 영업 준비 — 재고·배치를 마치고 [O]로 영업 시작 ☕`, 'gold', 4500);
@@ -1696,9 +2021,10 @@ const Game = (() => {
     orders = []; orderSeq = 0;
     $('tickets').innerHTML = '';
     spawnTimer = S.day <= 3 ? [7, 4.5, 3][S.day - 1] : 2.5;   // 초반일수록 첫 손님 입장까지 여유
-    resetStations();
+    resetStations({ keepPrepTools: true });
     mode = 'playing';
     Player.enabled = true;
+    syncPitchers();
     UI.hud(); UI.clock();
     toast(`DAY ${S.day} — 영업 시작! 오늘 목표 순이익 ${fmt(dailyGoalFor(S.day))} 이상 ☕`, 'gold', 4000);
     AudioFX.bell();
@@ -1787,6 +2113,7 @@ const Game = (() => {
     ].map(([v, l]) => `<div class="stat"><div class="sv">${v}</div><div class="sl">${l}</div></div>`).join('');
     $('dayEnd').classList.remove('hidden');
     if (crisis) AudioFX.err();
+    Pitchers.advanceMilkAging(S, 1);
     S.day++;
     renderDeliveryOrders();
     save();
@@ -1917,6 +2244,7 @@ const Game = (() => {
     // 저장된 구매 장비를 매장에 다시 생성 (위치는 이후 applyLayout이 복원)
     const eq = S.equip || {};
     Object.keys(EQUIPMENT).forEach(kind => {
+      if (kind === 'pitcher') return;
       const n = eq[kind] || 0;
       for (let i = 0; i < n; i++) {
         const id = kind + '_' + (i + 2);
@@ -1931,6 +2259,20 @@ const Game = (() => {
     const owned = (S.equip[kind] || 0);
     if (owned >= e.max) { toast('이 장비는 더 들일 수 없어요'); return; }
     if (S.money < e.price) { toast('돈이 부족해요!', 'bad'); AudioFX.err(); return; }
+    if (kind === 'pitcher') {
+      S.money -= e.price;
+      if (dayStats) dayStats.spent += e.price;
+      S.equip[kind] = owned + 1;
+      Pitchers.addPitcher(S);
+      syncPitchers();
+      save();
+      AudioFX.cash();
+      renderEquipment();
+      refreshPrepMoney();
+      UI.hud();
+      toast(`${e.name} 구매 완료! 카운터에 피처가 추가됐어요`, 'good', 3500);
+      return;
+    }
     const spot = env.findFreeSpot(e.w, e.d);
     if (!spot) { toast('배치할 빈 공간이 없어요 — 기구를 정리하세요', 'bad'); AudioFX.err(); return; }
     S.money -= e.price;
@@ -1969,12 +2311,17 @@ const Game = (() => {
   }
 
   /* ===== 저장 ===== */
-  function save() { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); }
+  function cleanSaveState() {
+    const out = JSON.parse(JSON.stringify(S));
+    (out.deliveryBoxes || []).forEach(b => delete b.surfacePlaced);
+    return out;
+  }
+  function save() { localStorage.setItem(SAVE_KEY, JSON.stringify(cleanSaveState())); }
   function hasSave() { return !!localStorage.getItem(SAVE_KEY); }
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
-      if (d && d.money !== undefined) { S = Object.assign(freshState(false), d); Logistics.ensureState(S); return true; }
+      if (d && d.money !== undefined) { S = Object.assign(freshState(false), d); Logistics.ensureState(S); Pitchers.ensureState(S); Pitchers.ensureMilkState(S); return true; }
     } catch (e) { /* 손상된 저장 무시 */ }
     return false;
   }
@@ -2017,7 +2364,6 @@ const Game = (() => {
       return null;
     }
     // 포터필터/추출버튼 등 특정 부품만 (히트박스에 지정된 메시들 — 후처리 외곽선은 작은 버튼도 잘 보임)
-    if (it && it.id === 'restock' && it.box && aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes, storageBoxOutline: true, color: 0x4ade80, hiddenColor: 0x14532d };
     if (aimMesh.userData.outlineMeshes) return { key: aimMesh, srcList: aimMesh.userData.outlineMeshes };
     if (aimMesh.userData.station) return { key: aimMesh.userData.station.root, srcList: [aimMesh.userData.station.root] };
     if (aimMesh.userData.outlineRoot) return { key: aimMesh.userData.outlineRoot, srcList: [aimMesh.userData.outlineRoot] };
@@ -2053,26 +2399,46 @@ const Game = (() => {
     const pr = $('prompt');
     if (prepPanelOpen) {
       pr.classList.add('hidden'); $('crosshair').classList.remove('active');
-      if (env.setStoragePreview) env.setStoragePreview(null);
+      if (env.placeIndicator) env.placeIndicator.visible = false;
+      clearItemPlacePreview();
       updateAimHighlight(null);
       return;
     }
-    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
-    const targetKind = aimData && stationTargets[aimData.id];
-    const usable = aimData && (storageAimUsable(aimData) || aimData.id === 'door' || aimData.id === 'deliveryBox' || (held && held.type === 'supply' && targetKind));
-    const shelfPreview = showStoragePreview(aimData);
-    const dprev = usable || shelfPreview ? null : deliveryPlacePreview();
+    const usable = aimData && (aimData.id === 'door' || aimData.id === 'deliveryBox' || aimData.id === 'placedItem');
+    let dprev = null;
+    let placePoint = null;
+    let placePrompt = null;
+    const prepSurfacePt = isSurfacePlaceableItem(held) ? Player.aimSurface() : null;
+    if (prepSurfacePt && (prepSurfacePt.fridgeSurface || (!usable && !aimData))) {
+      const pt = prepSurfacePt;
+      if (pt) {
+        if (placeBlocked(pt, held)) placePrompt = '여기엔 공간이 없어요';
+        else { placePoint = pt; placePrompt = '<b>[E]</b> 내려놓기 · <b>[R]</b> 회전'; }
+      }
+    }
+    if (!usable && !placePoint && !placePrompt) dprev = deliveryPlacePreview();
+    else if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (usable && env.setDeliveryPreview) env.setDeliveryPreview(null);
-    updateAimHighlight(usable && !shelfPreview ? Player.aimedObject : null);
-    if (usable) {
+    updateAimHighlight(usable && !placePoint ? Player.aimedObject : null);
+    if (usable && !placePoint) {
       pr.innerHTML = UI.prompt(aimData);
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else if (dprev) {
       pr.innerHTML = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
       pr.classList.remove('hidden'); $('crosshair').classList.add('active');
+    } else if (placePrompt) {
+      pr.innerHTML = placePrompt;
+      pr.classList.remove('hidden'); $('crosshair').classList.add('active');
     } else {
       pr.classList.add('hidden'); $('crosshair').classList.remove('active');
+    }
+    if (placePoint) {
+      env.placeIndicator.visible = false;
+      updateItemPlacePreview(held, placePoint, true);
+    } else {
+      env.placeIndicator.visible = false;
+      clearItemPlacePreview();
     }
   }
 
@@ -2095,7 +2461,8 @@ const Game = (() => {
     if (mode === 'prep' || mode === 'after') { updatePrep(); $('freshness').classList.add('hidden'); return; }
     if (mode !== 'playing' && mode !== 'closing') {
       if (env.setDeliveryPreview) env.setDeliveryPreview(null);
-      if (env.setStoragePreview) env.setStoragePreview(null);
+      if (env.placeIndicator) env.placeIndicator.visible = false;
+      clearItemPlacePreview();
       updateAimHighlight(null); $('freshness').classList.add('hidden'); return;
     }
 
@@ -2145,6 +2512,7 @@ const Game = (() => {
       $('prompt').classList.add('hidden');
       $('crosshair').classList.remove('active');
       env.placeIndicator.visible = false;
+      clearItemPlacePreview();
       updateAimHighlight(null);
       barTimer -= dt;
       if (barTimer <= 0) { UI.ticketBars(); barTimer = 0.25; }
@@ -2153,10 +2521,8 @@ const Game = (() => {
     }
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
-    if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
     const aimData = Player.aim();
-    const shelfPreview = showStoragePreview(aimData);
-    updateAimHighlight(aimData && !shelfPreview ? Player.aimedObject : null);
+    updateAimHighlight(aimData ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
     const steaming = updateSteamGame(dt, aimData);
     const dosing = updateDoseGame(dt, aimData);
@@ -2164,26 +2530,27 @@ const Game = (() => {
     let p = UI.prompt(aimData);
     if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
     let placePoint = null;
-    if (!shelfPreview && env.setStoragePreview) env.setStoragePreview(null);
-    const dprev = !aimData ? deliveryPlacePreview() : null;
-    if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
+    const playSurfacePt = isSurfacePlaceableItem(held) ? Player.aimSurface() : null;
+    const surfaceOverridesAim = !!(playSurfacePt && playSurfacePt.fridgeSurface);
+    if (surfaceOverridesAim) { p = null; updateAimHighlight(null); }
+    const dprev = !aimData && !surfaceOverridesAim ? deliveryPlacePreview() : null;
+    if ((aimData || surfaceOverridesAim) && env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (dprev) {
       p = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
-    } else if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
-      const pt = Player.aimSurface();
+    } else if (playSurfacePt && (surfaceOverridesAim || !aimData)) {
+      const pt = playSurfacePt;
       if (pt) {
-        if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
-        else { placePoint = pt; p = '<b>[E]</b> 내려놓기'; }
+        if (placeBlocked(pt, held)) p = '여기엔 공간이 없어요';
+        else { placePoint = pt; p = '<b>[E]</b> 내려놓기 · <b>[R]</b> 회전'; }
       }
     }
     const ind = env.placeIndicator;
     if (placePoint) {
-      indPulse += dt * 5;
-      ind.position.set(placePoint.x, placePoint.y + 0.012, placePoint.z);
-      ind.scale.setScalar(1 + Math.sin(indPulse) * 0.07);
-      ind.visible = true;
+      ind.visible = false;
+      updateItemPlacePreview(held, placePoint, true);
     } else {
       ind.visible = false;
+      clearItemPlacePreview();
     }
     const pr = $('prompt');
     if (p) { pr.innerHTML = p; pr.classList.remove('hidden'); $('crosshair').classList.add('active'); }
@@ -2217,13 +2584,22 @@ const Game = (() => {
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
       if (LatteArt.active) return;   // 라떼아트 진행 중엔 입력이 푸어(useDown)에만 쓰임
-      if (env.setStoragePlacementMode) env.setStoragePlacementMode(!!(held && held.type === 'deliveryBox'));
       const aimData = Player.aim();
+      if (held && isSurfacePlaceableItem(held)) {
+        const fridgePt = Player.aimSurface();
+        if (fridgePt && fridgePt.fridgeSurface) {
+          if (!placeBlocked(fridgePt, held)) { placeItem(fridgePt); return; }
+          toast('여기에는 놓을 공간이 없어요', 'bad'); AudioFX.err(); return;
+        }
+      }
       if (aimData) { interact(aimData); return; }
       if (held) {
-        if (moveHeldDeliveryBox()) return;
         const pt = Player.aimSurface();
-        if (pt && !placeBlocked(pt)) placeItem(pt);
+        if (pt && isSurfacePlaceableItem(held)) {
+          if (!placeBlocked(pt, held)) { placeItem(pt); return; }
+          toast('여기는 공간이 없어요', 'bad'); AudioFX.err(); return;
+        }
+        if (moveHeldDeliveryBox()) return;
       }
     }
     function dropOrReturnHeld() {
@@ -2249,6 +2625,7 @@ const Game = (() => {
         else if (mode === 'prep' && ev.code === 'KeyO') beginOpen();        // 영업 시작
         else if (mode === 'prep' && ev.code === 'KeyM') openPrepPanel();    // 관리·업그레이드
         else if (mode === 'after' && ev.code === 'KeyM') { renderDeliveryOrders(); $('hud').classList.add('hidden'); $('dayEnd').classList.remove('hidden'); Player.enabled = false; if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); }
+        else if (ev.code === 'KeyR' && rotateHeldItemPreview()) return;
         else if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
         else if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
         return;
@@ -2256,6 +2633,7 @@ const Game = (() => {
       // 영업 중 조작
       if (ev.code === 'KeyE') { useDown = true; onUse(); }
       if (ev.code === 'KeyQ') dropOrReturnHeld();
+      if (ev.code === 'KeyR' && rotateHeldItemPreview()) return;
       if (ev.code === 'KeyR' && rotateDeliveryBoxPreview()) return;
       if (ev.code === 'KeyR') $('recipeBook').classList.toggle('hidden');
       if (ev.code === 'KeyT') Tutorial.cancel();

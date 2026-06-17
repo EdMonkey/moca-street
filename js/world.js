@@ -346,6 +346,50 @@ const WORLD = (() => {
     dessert: { w: 0.28, h: 0.18 },
   };
 
+  function makeMilkCartonFallback() {
+    const carton = new THREE.Group();
+    const w = 0.14, d = 0.12, bodyH = 0.22, roofH = 0.07;
+    const yTop = bodyH + roofH;
+    const pts = [
+      [-w / 2, 0, d / 2], [w / 2, 0, d / 2], [w / 2, bodyH, d / 2], [0, yTop, d / 2], [-w / 2, bodyH, d / 2],
+      [-w / 2, 0, -d / 2], [w / 2, 0, -d / 2], [w / 2, bodyH, -d / 2], [0, yTop, -d / 2], [-w / 2, bodyH, -d / 2],
+    ];
+    const faces = [
+      [0, 1, 2], [0, 2, 4], [4, 2, 3],
+      [5, 7, 6], [5, 9, 7], [9, 8, 7],
+      [0, 5, 6], [0, 6, 1],
+      [1, 6, 7], [1, 7, 2],
+      [2, 7, 8], [2, 8, 3],
+      [3, 8, 9], [3, 9, 4],
+      [4, 9, 5], [4, 5, 0],
+    ];
+    const pos = [];
+    faces.forEach(f => f.forEach(i => pos.push(...pts[i])));
+    const bodyGeom = new THREE.BufferGeometry();
+    bodyGeom.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    bodyGeom.computeVertexNormals();
+    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf4f2e8, roughness: 0.74 });
+    carton.add(new THREE.Mesh(bodyGeom, bodyMat));
+
+    const roofMat = new THREE.MeshStandardMaterial({ color: 0xa7c7e7, roughness: 0.78 });
+    const roofPanel = (a, b, c, e) => {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute([...a, ...b, ...c, ...a, ...c, ...e], 3));
+      geom.computeVertexNormals();
+      carton.add(new THREE.Mesh(geom, roofMat));
+    };
+    const lift = 0.003;
+    roofPanel([-w / 2, bodyH + lift, d / 2], [0, yTop + lift, d / 2], [0, yTop + lift, -d / 2], [-w / 2, bodyH + lift, -d / 2]);
+    roofPanel([0, yTop + lift, d / 2], [w / 2, bodyH + lift, d / 2], [w / 2, bodyH + lift, -d / 2], [0, yTop + lift, -d / 2]);
+
+    const crease = box(0.018, 0.018, d + 0.01, roofMat, 0, yTop + 0.004, 0, { cast: false });
+    carton.add(crease);
+    const frontPatch = box(0.09, 0.09, 0.006, new THREE.MeshStandardMaterial({ color: 0xfff8df, roughness: 0.8 }), 0, 0.12, d / 2 + 0.004, { cast: false });
+    carton.add(frontPatch);
+    carton.userData.milkCartonFallback = true;
+    return carton;
+  }
+
   function fitSupplyAsset(root, kind) {
     const fit = supplyFit[kind] || { w: 0.28, h: 0.28 };
     root.updateMatrixWorld(true);
@@ -385,8 +429,7 @@ const WORLD = (() => {
       lbl.position.set(0, 0.14, 0.061);
       g.add(lbl);
     } else if (kind === 'milk') {
-      g.add(box(0.14, 0.24, 0.12, new THREE.MeshStandardMaterial({ color: 0xf4f2e8, roughness: 0.7 }), 0, 0.12, 0));
-      g.add(box(0.14, 0.04, 0.12, new THREE.MeshStandardMaterial({ color: 0xa7c7e7, roughness: 0.75 }), 0, 0.26, 0));
+      g.add(makeMilkCartonFallback());
     } else if (kind === 'cups') {
       for (let i = 0; i < 4; i++) {
         const cup = cyl(0.055, 0.045, 0.07, M().cupWhite, 0, 0.04 + i * 0.035, 0, 18, { open: true });
@@ -397,6 +440,84 @@ const WORLD = (() => {
       d.scale.setScalar(0.7);
       g.add(d);
     }
+    return g;
+  }
+
+  function makeMilkCartonMesh(state = {}) {
+    if (state && state.spoiled && !state.crumpled) {
+      const g = makeSupplyMesh('milk');
+      g.traverse(o => {
+        if (o.isMesh && o.material && o.material.color) o.material.color.lerp(new THREE.Color(0x9ca46a), 0.45);
+      });
+      const lbl = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.13, 0.06),
+        textLabel('상함', 96, 48, '700 24px "Malgun Gothic"', '#5a241d', '#f1e4bd')
+      );
+      lbl.position.set(0, 0.13, 0.061);
+      g.add(lbl);
+      return g;
+    }
+    if (state && state.crumpled) {
+      const g = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0xe6dfc4, roughness: 0.95 });
+      const blueMat = new THREE.MeshStandardMaterial({ color: 0x94bfdc, roughness: 0.9 });
+      const body = box(0.17, 0.055, 0.13, bodyMat, 0, 0.03, 0);
+      body.rotation.z = -0.22;
+      const top = box(0.15, 0.028, 0.12, blueMat, 0.015, 0.075, 0);
+      top.rotation.z = 0.32;
+      const dent = box(0.09, 0.018, 0.11, bodyMat, -0.025, 0.055, 0.01);
+      dent.rotation.set(0.15, 0.35, -0.6);
+      const lbl = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.11, 0.045),
+        textLabel('빈 우유', 128, 64, '700 28px "Malgun Gothic"', '#6b4a1d', '#f1e4bd')
+      );
+      lbl.position.set(0, 0.065, 0.071);
+      lbl.rotation.z = -0.16;
+      g.add(body, top, dent, lbl);
+      return g;
+    }
+    return makeSupplyMesh('milk');
+  }
+
+  function makeMilkFridgeMesh(open) {
+    const g = new THREE.Group();
+    const shellMat = new THREE.MeshStandardMaterial({ color: 0xd9d2b8, roughness: 0.62, metalness: 0.12 });
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0xf0ead2, roughness: 0.42, metalness: 0.15 });
+    const milkFridgeInterior = box(1.46, 0.70, 0.08, new THREE.MeshStandardMaterial({ color: 0x172129, roughness: 0.82 }), 0, 0.42, -0.27, { cast: false });
+    const leftWall = box(0.06, 0.82, 0.62, shellMat, -0.78, 0.41, 0);
+    const rightWall = box(0.06, 0.82, 0.62, shellMat, 0.78, 0.41, 0);
+    const topWall = box(1.62, 0.06, 0.62, shellMat, 0, 0.82, 0);
+    const bottomWall = box(1.62, 0.06, 0.62, shellMat, 0, 0.03, 0);
+    const milkFridgeShelf = box(1.42, 0.035, 0.54, M().steel, 0, 0.47, 0.02, { cast: false });
+    const milkFridgeLeftDoor = new THREE.Group();
+    milkFridgeLeftDoor.position.set(-0.39, 0.41, 0.31);
+    milkFridgeLeftDoor.add(box(0.75, 0.76, 0.055, doorMat, 0, 0, 0));
+    const leftHandle = box(0.04, 0.38, 0.045, M().steelDark, 0.29, 0.03, 0.04);
+    milkFridgeLeftDoor.add(leftHandle);
+    const milkFridgeRightDoor = new THREE.Group();
+    milkFridgeRightDoor.position.set(0.39, 0.41, 0.31);
+    milkFridgeRightDoor.add(box(0.75, 0.76, 0.055, doorMat, 0, 0, 0));
+    const rightHandle = box(0.04, 0.38, 0.045, M().steelDark, -0.29, 0.03, 0.04);
+    milkFridgeRightDoor.add(rightHandle);
+    const label = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.7, 0.16),
+      textLabel('우유 냉장고', 256, 64, '700 32px "Malgun Gothic"', '#28415d', '#f8fbff')
+    );
+    label.position.set(0, 0.28, 0.035);
+    milkFridgeLeftDoor.add(label);
+    if (open) {
+      milkFridgeLeftDoor.position.x = -0.79;
+      milkFridgeLeftDoor.rotation.y = -Math.PI / 2.15;
+      milkFridgeRightDoor.position.x = 0.79;
+      milkFridgeRightDoor.rotation.y = Math.PI / 2.15;
+      label.visible = false;
+    }
+    g.add(milkFridgeInterior, leftWall, rightWall, topWall, bottomWall, milkFridgeShelf, milkFridgeLeftDoor, milkFridgeRightDoor);
+    g.userData.leftDoor = milkFridgeLeftDoor;
+    g.userData.rightDoor = milkFridgeRightDoor;
+    g.userData.interior = milkFridgeInterior;
+    g.userData.shelf = milkFridgeShelf;
+    g.userData.label = label;
     return g;
   }
 
@@ -416,8 +537,8 @@ const WORLD = (() => {
       surfaces: [],            // 아이템을 내려놓을 수 있는 표면(카운터·테이블·선반)
       stations: [],            // 편집 모드로 이동 가능한 기구들
       staticBlockers: [],      // 편집 시 설치 금지 구역(계산대·픽업대·쇼케이스)
-      machines: {}, steamEmitters: [], deliveryViews: [], storageViews: {},
-      deliveryPreview: null, storagePreview: null, DOOR_RIGHT_SPOT,
+      machines: {}, steamEmitters: [], deliveryViews: [], storageViews: {}, pitcherViews: [],
+      deliveryPreview: null, DOOR_RIGHT_SPOT,
       registerPos: new THREE.Vector3(2.5, 1.0, -1.0),
       pickupPos: new THREE.Vector3(-0.6, 1.0, -1.0),
       doorPos: new THREE.Vector3(5.5, 0, 8),
@@ -653,13 +774,25 @@ const WORLD = (() => {
     (function counters() {
       const topY = 1.0;
       // 몸체(나무) + 대리석 상판, x -7 ~ 4
-      scene.add(box(11, 0.95, 0.8, M().counterWoodMid, -1.5, 0.475, -1.0));
+      const fridgeCx = -4.8;
+      const fridgeOpenW = 1.72;
+      const leftEdge = -7.0;
+      const rightEdge = 4.0;
+      const gapL = fridgeCx - fridgeOpenW / 2;
+      const gapR = fridgeCx + fridgeOpenW / 2;
+      const counterPanelZ = -0.57;
+      const counterBackingZ = -0.625;
+      const milkFridgeSupportLeft = box(gapL - leftEdge, 0.95, 0.8, M().counterWoodMid, (leftEdge + gapL) / 2, 0.475, -1.0);
+      const milkFridgeSupportRight = box(rightEdge - gapR, 0.95, 0.8, M().counterWoodMid, (gapR + rightEdge) / 2, 0.475, -1.0);
+      const milkFridgeCustomerFace = box(fridgeOpenW, 0.95, 0.05, M().counterWoodMid, fridgeCx, 0.475, counterBackingZ);
+      scene.add(milkFridgeSupportLeft, milkFridgeSupportRight, milkFridgeCustomerFace);
       const fcTop = box(11.3, 0.07, 1.0, M().counterTop, -1.5, topY, -1.0, { cast: false });
       fcTop.userData.counterTop = true;
       scene.add(fcTop); env.surfaces.push(fcTop);
       // 손님쪽 장식 패널
-      for (let px = -6.6; px <= 3.6; px += 0.8)
-        scene.add(box(0.55, 0.7, 0.05, M().woodDark, px, 0.5, -0.57, { cast: false }));
+      for (let px = -6.6; px <= 3.6; px += 0.8) {
+        scene.add(box(0.55, 0.7, 0.05, M().woodDark, px, 0.5, counterPanelZ, { cast: false }));
+      }
       addCol(-7.2, 4.2, -1.55, -0.45);
 
       // 백 카운터 (z=-4.2), x -7 ~ 4
@@ -746,6 +879,86 @@ const WORLD = (() => {
       sign.position.set(cx, 1.85, -0.85);
       scene.add(sign);
       env.staticBlockers.push({ x: cx, z: -1.0, w: 1.9, d: 0.85 });
+
+      const fridgePos = new THREE.Vector3(cx, 0.08, -1.08);
+      let fridgeRoot = makeMilkFridgeMesh(false);
+      fridgeRoot.position.copy(fridgePos);
+      fridgeRoot.rotation.y = Math.PI;
+      scene.add(fridgeRoot);
+      const milkRoot = new THREE.Group();
+      const milkCartons = [];
+      const milkLevels = [
+        { level: 0.10, z: 0.10 },
+        { level: 0.50, z: 0.08 },
+      ];
+      milkLevels.forEach(({ level, z }) => {
+        for (let i = 0; i < 3; i++) {
+          const milk = makeMilkCartonMesh();
+          milk.position.set(-0.34 + i * 0.34, level, z);
+          milk.scale.setScalar(0.9);
+          milkCartons.push(milk);
+          milkRoot.add(milk);
+        }
+      });
+      milkRoot.position.copy(fridgePos);
+      milkRoot.rotation.y = Math.PI;
+      milkRoot.visible = false;
+      scene.add(milkRoot);
+      const fridgeSurfaces = [];
+      const fridgeSurfaceMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+      const addFridgeSurface = (level, topY) => {
+        const fridgeSurface = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.02, 0.36), fridgeSurfaceMat);
+        fridgeSurface.position.set(cx, topY - 0.01, -1.18);
+        fridgeSurface.userData.fridgeSurface = true;
+        fridgeSurface.userData.fridgeLevel = level;
+        fridgeSurface.userData.storageRot = Math.PI;
+        fridgeSurface.castShadow = fridgeSurface.receiveShadow = false;
+        scene.add(fridgeSurface);
+        env.surfaces.push(fridgeSurface);
+        fridgeSurfaces.push(fridgeSurface);
+      };
+      addFridgeSurface('bottom', 0.18);
+      addFridgeSurface('middle', 0.58);
+      const leftDoorHb = addI(hitbox(0.74, 0.82, 0.14, cx + 0.39, 0.50, -1.42, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
+      const rightDoorHb = addI(hitbox(0.74, 0.82, 0.14, cx - 0.39, 0.50, -1.42, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
+      function syncMilkFridgeDoorHitboxes() {
+        const open = !!(env.machines.milkFridge && env.machines.milkFridge.open);
+        const leftX = open ? cx + 0.79 : cx + 0.39;
+        const rightX = open ? cx - 0.79 : cx - 0.39;
+        leftDoorHb.position.set(leftX, 0.50, -1.42);
+        rightDoorHb.position.set(rightX, 0.50, -1.42);
+        leftDoorHb.rotation.y = open ? Math.PI / 2.15 : 0;
+        rightDoorHb.rotation.y = open ? -Math.PI / 2.15 : 0;
+        leftDoorHb.userData.outlineRoot = fridgeRoot.userData.leftDoor;
+        rightDoorHb.userData.outlineRoot = fridgeRoot.userData.rightDoor;
+      }
+      const milkHb = addI(hitbox(1.35, 0.6, 0.24, cx, 0.55, -1.43, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
+      milkHb.userData.outlineRoot = milkRoot;
+      milkHb.userData.interactDisabled = true;
+      env.machines.milkFridge = { root: fridgeRoot, milkRoot, milkCartons, milkVisibleCount: milkCartons.length, doorHitboxes: [leftDoorHb, rightDoorHb], milkHitbox: milkHb, surfaces: fridgeSurfaces, open: false };
+      syncMilkFridgeDoorHitboxes();
+      env.setMilkFridgeMilkCount = function (count) {
+        const f = env.machines.milkFridge;
+        if (!f) return;
+        const visibleCount = Math.max(0, Math.min(f.milkCartons.length, Math.floor(Number(count) || 0)));
+        f.milkVisibleCount = visibleCount;
+        f.milkCartons.forEach((milk, i) => { milk.visible = i < visibleCount; });
+        f.milkHitbox.userData.interactDisabled = !f.open || visibleCount <= 0;
+      };
+      env.setMilkFridgeOpen = function (open) {
+        const f = env.machines.milkFridge;
+        if (!f || f.open === !!open) return;
+        f.open = !!open;
+        scene.remove(fridgeRoot);
+        fridgeRoot = makeMilkFridgeMesh(f.open);
+        fridgeRoot.position.copy(fridgePos);
+        fridgeRoot.rotation.y = Math.PI;
+        scene.add(fridgeRoot);
+        f.root = fridgeRoot;
+        syncMilkFridgeDoorHitboxes();
+        f.milkRoot.visible = f.open;
+        f.milkHitbox.userData.interactDisabled = !f.open || f.milkVisibleCount <= 0;
+      };
     })();
 
     /* ============================================================
@@ -955,15 +1168,30 @@ const WORLD = (() => {
     // 기본 밀크 스티머는 에스프레소 머신에 통합됨(위 buildEspresso의 스팀 완드).
     // buildSteamer는 영업 준비 단계에서 '추가 스티머'를 구매·배치할 때 재사용된다.
 
-    /* ---------- 스팀 피처 거치대 (재사용 무료 도구 — 우유를 데워 컵에 붓는다) ---------- */
-    (function pitcherStand() {
-      const x = -2.85, z = -4.05, y = 1.42;   // 에스프레소 머신 갈색 작업 받침대 위 — 우측
-      const r = new THREE.Group();
-      r.position.set(x, y, z);
-      scene.add(r);
-      r.add(makePitcherMesh(0, 0));        // 데모용 빈 피처 (머신 상판 위 — 이름표 불필요)
-      addI(hitbox(0.18, 0.22, 0.2, x, y + 0.09, z, { id: 'pitcherrack' })).userData.outlineRoot = r;   // 피처 크기에 맞게
-    })();
+    env.clearPitchers = function () {
+      env.pitcherViews.forEach(v => {
+        scene.remove(v.mesh);
+        scene.remove(v.hitbox);
+        const i = env.interactables.indexOf(v.hitbox);
+        if (i >= 0) env.interactables.splice(i, 1);
+      });
+      env.pitcherViews = [];
+    };
+    env.syncPitchers = function (pitchers) {
+      env.clearPitchers();
+      const list = (pitchers || []).slice().sort((a, b) => (a.slot || 0) - (b.slot || 0));
+      const base = { x: -2.85, y: 1.42, z: -4.05 };
+      list.forEach((p, i) => {
+        const mesh = makePitcherMesh(p.rawMilk || p.milk, p.foam);
+        mesh.position.set(base.x, base.y + i * 0.16, base.z);
+        mesh.rotation.y = -0.18;
+        scene.add(mesh);
+        const hb = hitbox(0.2, 0.24, 0.22, base.x, base.y + i * 0.16 + 0.1, base.z, { id: 'pitcherSpot', pitcherId: p.id, slot: p.slot });
+        hb.userData.outlineRoot = mesh;
+        addI(hb);
+        env.pitcherViews.push({ id: p.id, mesh, hitbox: hb });
+      });
+    };
 
     /* ---------- 온수/냉수 디스펜서 ---------- */
     env.machines.waterJobs = {};
@@ -1130,23 +1358,29 @@ const WORLD = (() => {
         { rack: 3, z: -1.02 },
       ];
       addCol(Cx - 0.35, Cx + 0.35, -4.85, -0.55);        // 창고 구역 진입 차단
-      env.storageSlots = {};
-      env.storageViews.all = { slots: [], meshes: [], hitboxes: [], previewSlot: null };
+      env.storageViews.all = { surfaces: [], meshes: [], hitboxes: [] };
       STORAGE_RACKS.forEach(r => {
         const slots = STORAGE_SLOT_LEVELS.map(s => {
           const slotId = `r${r.rack}s${s.slot}`;
-          const hb = addI(hitbox(0.85, 0.42, 0.9, Cx, s.y + 0.2, r.z, { id: 'restock', rack: r.rack, slot: s.slot, slotId }));
-          const slot = { slot: s.slot, rack: r.rack, slotId, x: Cx, y: s.y, z: r.z, rot: Math.PI / 2, hitbox: hb };
-          slot.hitbox.userData.storagePlaceSlot = true;
-          slot.hitbox.userData.interactDisabled = true;
-          env.storageSlots[slotId] = slot;
-          env.storageViews.all.slots.push(slot);
-          return slot;
+          const surfaceTopY = s.y + STORAGE_BOX_Y_OFFSET;
+          const storageSurface = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.82),
+            new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+          storageSurface.rotation.x = -Math.PI / 2;
+          storageSurface.position.set(Cx, surfaceTopY, r.z);
+          storageSurface.userData.surfaceTopY = surfaceTopY;
+          storageSurface.userData.storageSurface = true;
+          storageSurface.userData.storageSlotId = slotId;
+          storageSurface.userData.storageRack = r.rack;
+          storageSurface.userData.storageSlot = s.slot;
+          storageSurface.userData.storageRot = Math.PI / 2;
+          scene.add(storageSurface);
+          env.surfaces.push(storageSurface);
+          env.storageViews.all.surfaces.push(storageSurface);
+          return { slot: s.slot, rack: r.rack, slotId, x: Cx, y: s.y, z: r.z, rot: Math.PI / 2, surface: storageSurface };
         });
-        env.storageViews[`rack${r.rack}`] = { rack: r.rack, slots, hitbox: slots[0].hitbox, meshes: [], previewSlot: slots[0] };
+        env.storageViews[`rack${r.rack}`] = { rack: r.rack, slots, meshes: [] };
       });
-      env.storageViews.all.previewSlot = env.storageViews.all.slots[0];
-      env.syncStorageBoxes = function (storage) {
+      env.clearStorageShelfVisuals = function () {
         Object.keys(env.storageViews).forEach(k => {
           const v = env.storageViews[k];
           v.meshes.forEach(m => scene.remove(m));
@@ -1160,66 +1394,6 @@ const WORLD = (() => {
             v.hitboxes = [];
           }
         });
-        Object.values(env.storageSlots).forEach(s => {
-          s.occupied = false;
-          s.hitbox.userData.outlineMeshes = null;
-        });
-        Object.keys(storage || {}).forEach(k => {
-          const boxes = Array.isArray(storage[k]) ? storage[k] : [];
-          boxes.forEach(box => {
-            if (!box || box.amount <= 0) return;
-            const slot = env.storageSlots[box.slotId] || env.storageSlots[`r${box.rack || 0}s${box.slot || 0}`];
-            if (!slot) return;
-            slot.occupied = true;
-            const bm = makeBoxMesh(box.kind);
-            const storageBoxY = slot.y + STORAGE_BOX_Y_OFFSET;
-            bm.position.set(slot.x, storageBoxY, slot.z);
-            bm.rotation.y = slot.rot;
-            const count = new THREE.Mesh(
-              new THREE.PlaneGeometry(0.22, 0.09),
-              textLabel(`x${box.amount}`, 128, 48, '700 28px "Malgun Gothic"', '#f5ead8', '#3a2416')
-            );
-            count.position.set(0, 0.34, 0.17);
-            bm.add(count);
-            scene.add(bm);
-            const boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, storageBoxY + 0.17, slot.z, { id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true });
-            boxHitbox.rotation.y = slot.rot;
-            boxHitbox.userData.outlineMeshes = [bm];
-            boxHitbox.userData.storageBoxHitbox = true;
-            scene.add(boxHitbox);
-            env.interactables.push(boxHitbox);
-            env.storageViews.all.meshes.push(bm);
-            env.storageViews.all.hitboxes.push(boxHitbox);
-          });
-        });
-      };
-      env.setStoragePlacementMode = function (active) {
-        Object.values(env.storageSlots).forEach(slot => {
-          slot.hitbox.userData.interactDisabled = !active || !!slot.occupied;
-        });
-      };
-      env.setStoragePreview = function (slotId, ok = true) {
-        if (!env.storagePreview) {
-          const g = new THREE.Group();
-          const mat = new THREE.MeshBasicMaterial({
-            color: 0x7fb069, transparent: true, opacity: 0.3, depthWrite: false,
-          });
-          const body = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.31, 0.34), mat);
-          body.position.y = 0.155;
-          g.add(body);
-          g.visible = false;
-          g.renderOrder = 8;
-          scene.add(g);
-          env.storagePreview = { root: g, body, mat };
-        }
-        const p = env.storagePreview;
-        const slot = env.storageSlots[slotId];
-        if (!slot) { p.root.visible = false; return; }
-        p.root.position.set(slot.x, slot.y + STORAGE_BOX_Y_OFFSET, slot.z);
-        p.root.rotation.y = slot.rot;
-        p.mat.color.setHex(ok ? 0x7fb069 : 0xd9534f);
-        p.mat.opacity = ok ? 0.3 : 0.2;
-        p.root.visible = true;
       };
       // ShelvingRack(폭0.9 Z·깊이0.44 X, 90° 회전 정면 +X) — 형상 중심이 (Cx,cz)에 오도록 spawn 보정
       if (window.Assets && window.Assets.ready) {
@@ -1574,5 +1748,5 @@ const WORLD = (() => {
   // 분쇄도 바늘 회전 (frac 0 가늚=숫자1 ~ 1 굵음=숫자7, 0.5=숫자4 위). ±135° 스윕
   function setGrinderDial(mark, frac) { if (mark) mark.rotation.z = (6 * frac - 3) * (Math.PI / 4); }
 
-  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makeSupplyMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
+  return { build, makeDrinkMesh, makeDessertMesh, makeBoxMesh, makeSupplyMesh, makeMilkCartonMesh, makePitcherMesh, makePortafilterMesh, setPortafilterState, setPortafilterFill, makeBrewLiquid, setBrewFill, setGrinderDial, drinkColor, ROOM };
 })();

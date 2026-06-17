@@ -37,14 +37,15 @@ const UI = (() => {
       const info = h.filled ? '에스프레소 — 컵에 따르세요' : '비어 있음 — 머신에서 샷을 받으세요';
       el.innerHTML = `<b style="color:var(--accent2)">샷잔</b><div class="ing">${info}</div>`;
     } else if (h.type === 'pitcher') {
-      const info = h.foam ? '우유+거품 — 컵에 부으세요' : h.milk ? '데운 우유 — 컵에 부으세요' : '비어 있음 — 스티머에서 데우세요';
+      const info = h.foam ? '우유+거품 — 컵에 부으세요' : h.milk ? '데운 우유 — 컵에 부으세요' : h.rawMilk ? '차가운 우유 — 스팀봉에서 데우세요' : '비어 있음 — 냉장고 우유를 부으세요';
       el.innerHTML = `<b style="color:var(--accent2)">스팀 피처</b><div class="ing">${info}</div>`;
+    } else if (h.type === 'milkCarton') {
+      const name = h.crumpled ? '구겨진 우유곽' : h.spoiled ? '상한 우유' : '우유 카톤';
+      const info = h.crumpled ? '다 쓴 우유곽입니다' : h.spoiled ? '상해서 사용할 수 없습니다' : `빈 스팀피처에 부으세요 · ${h.servings ?? 3}/3 남음`;
+      el.innerHTML = `<b style="color:var(--accent2)">${name}</b><div class="ing">${info}</div>`;
     } else if (h.type === 'deliveryBox') {
       const r = RESTOCK[h.kind];
-      el.innerHTML = `<b style="color:var(--accent2)">${r.name} 택배박스</b><div class="ing">창고 ${r.name} 칸에 넣기 · ${h.amount}개</div>`;
-    } else if (h.type === 'supply') {
-      const r = RESTOCK[h.kind];
-      el.innerHTML = `<b style="color:var(--accent2)">${r.name} 1개</b><div class="ing">사용처에 보충하세요</div>`;
+      el.innerHTML = `<b style="color:var(--accent2)">${r.name} 택배박스</b><div class="ing">빈 표면에 내려놓기 · ${h.amount}개</div>`;
     } else {
       el.innerHTML = `<b style="color:var(--accent2)">${DESSERTS[h.kind].name}</b>`;
     }
@@ -86,11 +87,6 @@ const UI = (() => {
     const held = ctx.held(), env = ctx.env(), S = ctx.S(), fmt = ctx.fmt, itemLabel = ctx.itemLabel;
     if (!it) return null;
     const E = '<b>[E]</b> ';
-    const target = { grinder: 'beans', pitcherrack: 'milk', cupHot: 'cups', cupIce: 'cups', cupEsp: 'cups', dessert: 'dessert' }[it.id];
-    if (held && held.type === 'supply' && target) {
-      const r = RESTOCK[target];
-      return held.kind === target ? E + `${r.name} 사용처 보충` : `${RESTOCK[held.kind].name}은(는) 여기 보충할 수 없어요`;
-    }
     switch (it.id) {
       case 'deliveryBox': {
         const box = S.deliveryBoxes.find(b => b.id === it.boxId);
@@ -102,13 +98,25 @@ const UI = (() => {
       case 'door': return E + (env.door && env.door.open ? '문 닫기' : '문 열기');
       case 'placedItem': {
         const tgt = it.rec.item;
+        if (held && held.type === 'milkCarton') {
+          if (held.crumpled) return '구겨진 우유곽이라 부을 수 없어요';
+          if (held.spoiled) return '상한 우유라 부을 수 없어요';
+          if (tgt.type !== 'pitcher') return '우유는 피처에만 부을 수 있어요';
+          return (tgt.rawMilk || tgt.milk || tgt.foam) ? '이미 내용물이 있는 피처예요' : E + `피처에 차가운 우유 붓기 (${held.servings ?? 3}/3)`;
+        }
         if (held && held.type === 'shotglass') {
           if (!held.filled) return '샷잔이 비어 있어요 — 머신에서 샷을 받으세요';
           if (tgt.type !== 'drink' || tgt.drink.cup === 'shot') return '샷은 컵에만 따를 수 있어요';
           return tgt.drink.espresso ? '이미 샷이 들어 있는 컵이에요' : E + '샷 붓기 ☕';
         }
         if (held && held.type === 'pitcher') {
-          if (!held.milk && !held.foam) return '피처가 비어 있어요 — 스티머에서 우유를 데우세요';
+          if (tgt.type === 'milkCarton') {
+            if (tgt.crumpled) return '구겨진 우유곽이라 부을 수 없어요';
+            if (tgt.spoiled) return '상한 우유라 부을 수 없어요';
+            return (held.rawMilk || held.milk || held.foam) ? '이미 내용물이 있는 피처예요' : E + `피처에 차가운 우유 붓기 (${tgt.servings ?? 3}/3)`;
+          }
+          if (held.rawMilk) return '차가운 우유예요 — 스팀봉에서 먼저 데우세요';
+          if (!held.milk && !held.foam) return '피처가 비어 있어요 — 냉장고 우유를 붓고 스팀하세요';
           if (tgt.type !== 'drink' || tgt.drink.cup === 'shot') return '우유는 컵에만 부을 수 있어요';
           return tgt.drink.milk ? '이미 우유가 들어 있는 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
         }
@@ -122,10 +130,24 @@ const UI = (() => {
           return held.filled ? '샷이 들어있어요 — 컵에 따르세요' : E + '샷잔 반납';
         return held ? '손을 비우면 샷잔을 집을 수 있어요' : E + '샷잔 집기 (재사용 도구)';
       }
-      case 'pitcherrack': {
-        if (held && held.type === 'pitcher')
-          return (held.milk || held.foam) ? '우유가 들어있어요 — 컵에 부으세요' : E + '스팀 피처 반납';
-        return held ? '손을 비우면 피처를 집을 수 있어요' : E + '스팀 피처 집기 (재사용 도구)';
+      case 'milkFridgeDoor':
+      case 'milkFridge': {
+        const open = env.machines.milkFridge && env.machines.milkFridge.open;
+        if (held && held.type === 'milkCarton') return open ? E + '우유 냉장고에 넣기' : '냉장고를 먼저 열어주세요';
+        return held ? '손을 비우면 냉장고를 열 수 있어요' : E + (open ? '우유 냉장고 닫기' : '우유 냉장고 열기');
+      }
+      case 'milkFridgeMilk': {
+        if (held && held.type === 'milkCarton') return E + '우유 냉장고에 넣기';
+        if (!held) {
+          const fridgeMilk = typeof Pitchers !== 'undefined' ? Pitchers.milkLocationCount(S, 'fridge') : S.stocks.milk;
+          return fridgeMilk <= 0 ? '냉장고 안 우유 없음 - 창고 선반 우유를 넣으세요' : E + `우유 카톤 집기 (${fridgeMilk}개)`;
+        }
+        if (held) return '손을 비우면 우유를 집을 수 있어요';
+        return '손을 비우면 우유를 집을 수 있어요';
+      }
+      case 'pitcherSpot': {
+        if (held && held.type === 'milkCarton') return held.crumpled ? '구겨진 우유곽이라 부을 수 없어요' : held.spoiled ? '상한 우유라 부을 수 없어요' : E + `피처에 차가운 우유 붓기 (${held.servings ?? 3}/3)`;
+        return held ? '손을 비우면 피처를 집을 수 있어요' : E + '스팀피처 집기';
       }
       case 'ice': return E + '얼음 담기';
       case 'grinder': {
@@ -149,7 +171,7 @@ const UI = (() => {
         if (canPour && held && held.type === 'shotglass')
           return !held.filled ? '샷잔이 비어 있어요' : slot.drink.espresso ? '이미 샷이 든 컵이에요' : E + '샷 붓기 ☕';
         if (canPour && held && held.type === 'pitcher')
-          return (!held.milk && !held.foam) ? '피처가 비어 있어요' : slot.drink.milk ? '이미 우유가 든 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
+          return held.rawMilk ? '차가운 우유예요 — 먼저 스팀하세요' : (!held.milk && !held.foam) ? '피처가 비어 있어요' : slot.drink.milk ? '이미 우유가 든 컵이에요' : E + (held.foam ? '우유+거품 붓기 🥛' : '우유 붓기 🥛');
         if (slot.busy) return slot.done ? E + '에스프레소 꺼내기 ☕' : `추출 중… ${Math.ceil(slot.dur - slot.t)}s`;
         if (held && held.type === 'drink')
           return held.drink.espresso ? '이미 샷이 든 컵이에요' : slot.cupMesh ? '이미 컵이 올라가 있어요' : E + '컵 올리기';
@@ -180,7 +202,7 @@ const UI = (() => {
       }
       case 'steamwand': {
         if (held && held.type === 'pitcher')
-          return held.foam ? '이미 거품까지 만들었어요 — 컵에 부으세요' : held.milk ? E + '꾹 눌러 우유 거품(마이크로폼)' : E + '꾹 눌러 우유 스팀';
+          return held.foam ? '이미 거품까지 만들었어요 — 컵에 부으세요' : held.milk ? E + '꾹 눌러 우유 거품(마이크로폼)' : held.rawMilk ? E + '꾹 눌러 차가운 우유 스팀' : '피처가 비어 있어요 — 냉장고 우유를 부으세요';
         if (held && held.type === 'drink') return '컵에 직접 스팀 불가 — 스팀 피처를 사용하세요';
         return held ? '스팀 피처를 들고 오세요' : E + '스팀 분사';
       }
@@ -222,22 +244,6 @@ const UI = (() => {
           return held.state === 'used' ? E + '사용한 가루 털어내기 (포터필터는 유지됩니다)' : '⛔ 포터필터는 버릴 수 없어요';
         return E + '버리기';
       }
-      case 'restock': {
-        const box = Logistics.storageSlotBox(S, it.slotId);
-        const slotLabel = typeof it.slot === 'number' ? `선반 ${it.rack + 1} · 아래서 ${it.slot + 1}번째 칸` : '창고칸';
-        if (held && held.type === 'deliveryBox') {
-          const r = RESTOCK[held.kind];
-          if (box) return `${slotLabel}에는 이미 박스가 있어요`;
-          return E + `${r.name} 박스 ${slotLabel} 입고 +${held.amount}`;
-        }
-        if (held) return '손을 비우면 창고에서 꺼낼 수 있어요';
-        if (box) {
-          const r = RESTOCK[box.kind];
-          const total = Logistics.storageTotal(S, box.kind);
-          return E + `${r.name} 1개 꺼내기 (${slotLabel} ${box.amount} · 창고 ${total})`;
-        }
-        if (!box) return null;
-      }
     }
     return null;
   }
@@ -259,18 +265,13 @@ const UI = (() => {
       $('xpBar').style.width = ((S.xp - prev) / (next - prev) * 100) + '%';
       $('xpTxt').textContent = `${S.xp}/${next} XP`;
     }
+    if (typeof Pitchers !== 'undefined') Pitchers.ensureMilkState(S);
     const st = S.stocks;
-    const wh = {
-      beans: Logistics.storageTotal(S, 'beans'),
-      milk: Logistics.storageTotal(S, 'milk'),
-      cups: Logistics.storageTotal(S, 'cups'),
-      dessert: Logistics.storageTotal(S, 'dessert'),
-    };
     $('stocks').innerHTML =
-      `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span> <span style="opacity:.55">창고 ${wh.beans || 0}</span><br>` +
-      `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span> <span style="opacity:.55">창고 ${wh.milk || 0}</span><br>` +
-      `<span class="${st.cups <= 6 ? 'low' : ''}">🥤 컵 <span class="val">${st.cups}</span></span> <span style="opacity:.55">창고 ${wh.cups || 0}</span><br>` +
-      `<span class="${st.dessert <= 2 ? 'low' : ''}">🍰 디저트 <span class="val">${st.dessert}</span></span> <span style="opacity:.55">창고 ${wh.dessert || 0}</span>`;
+      `<span class="${st.beans <= 5 ? 'low' : ''}">☕ 원두 <span class="val">${st.beans}</span></span><br>` +
+      `<span class="${st.milk <= 4 ? 'low' : ''}">🥛 우유 <span class="val">${st.milk}</span></span><br>` +
+      `<span class="${st.cups <= 6 ? 'low' : ''}">🥤 컵 <span class="val">${st.cups}</span></span><br>` +
+      `<span class="${st.dessert <= 2 ? 'low' : ''}">🍰 디저트 <span class="val">${st.dessert}</span></span>`;
   }
 
   function clock() {

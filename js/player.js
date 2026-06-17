@@ -111,18 +111,20 @@ const Player = (() => {
     const hits = ray.intersectObjects(env.interactables, false);
     // 겹친 박스 중 '점이 가장 정확히 향한' 것 선택 — 박스 중심이 조준선에 가장 가까운 대상
     // (픽업대 위 놓인 컵 등 작은 박스가 큰 카운터 박스에 가려지는 문제도 함께 해결)
-    let best = null, bestPerp = Infinity;
+    let best = null, bestHit = null, bestPerp = Infinity;
     _aimO.copy(ray.ray.origin); _aimD.copy(ray.ray.direction);
     for (const h of hits) {
-      if (!h.object.userData.interact || h.object.userData.interactDisabled) continue;
+      const d = h.object.userData.interact;
+      if (!d || h.object.userData.interactDisabled) continue;
+      if (d.staffSideOnly && pos.z > (d.staffSideZ ?? -1.2)) continue;
       h.object.getWorldPosition(_aimC);
       _aimV.copy(_aimC).sub(_aimO);
       const proj = _aimV.dot(_aimD);
       const perp2 = Math.max(0, _aimV.lengthSq() - proj * proj);   // 조준선~박스중심 수직거리²
-      if (perp2 < bestPerp) { bestPerp = perp2; best = h.object; }
+      if (perp2 < bestPerp) { bestPerp = perp2; best = h.object; bestHit = h; }
     }
     lastAimHit = best;
-    return best ? best.userData.interact : null;
+    return best ? Object.assign({}, best.userData.interact, { point: bestHit.point.clone() }) : null;
   }
 
   /* 조준 중인 배치 가능 표면의 윗면 지점 (없으면 null) */
@@ -130,7 +132,26 @@ const Player = (() => {
     ray.setFromCamera({ x: 0, y: 0 }, camera);
     const hits = ray.intersectObjects(env.surfaces, false);
     for (const h of hits) {
-      if (h.face && h.face.normal.y > 0.7) return h.point; // 윗면만 허용
+      if (h.object.userData.fridgeSurface && (!env.machines.milkFridge || !env.machines.milkFridge.open)) continue;
+      if (!h.face) continue;
+      const normal = h.face.normal.clone().transformDirection(h.object.matrixWorld);
+      if (normal.y > 0.7) {
+        const p = h.point.clone();
+        if (h.object.userData.storageSurface) {
+          if (Number.isFinite(h.object.userData.surfaceTopY)) p.y = h.object.userData.surfaceTopY;
+          p.storageSurface = true;
+          p.storageSlotId = h.object.userData.storageSlotId;
+          p.storageRack = h.object.userData.storageRack;
+          p.storageSlot = h.object.userData.storageSlot;
+          p.rot = h.object.userData.storageRot;
+        }
+        if (h.object.userData.fridgeSurface) {
+          p.fridgeSurface = true;
+          p.fridgeLevel = h.object.userData.fridgeLevel;
+          p.rot = h.object.userData.storageRot;
+        }
+        return p;
+      } // 윗면만 허용
     }
     return null;
   }

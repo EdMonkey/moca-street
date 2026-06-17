@@ -1,7 +1,7 @@
 /* ============================================================
  * main.js — 부트스트랩 · 렌더러 · 파티클 · 메인 루프
  * ============================================================ */
-(() => {
+(async () => {
   /* ---------- 렌더러 ---------- */
   const canvas = $('c');
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -83,6 +83,23 @@
   };
 
   /* ---------- 월드 & 시스템 초기화 ---------- */
+  const btnNew = $('btnNew');
+  const btnContinue = $('btnContinue');
+  const loadingNote = $('loadingNote');
+  if (btnNew) btnNew.disabled = true;
+  if (btnContinue) btnContinue.disabled = true;
+  if (loadingNote) loadingNote.textContent = '에셋 로딩 중...';
+  if (window.Assets && window.Assets.ready) {
+    try {
+      await window.Assets.ready;
+      if (loadingNote) loadingNote.textContent = '로딩 완료. 게임을 시작할 수 있어요.';
+    } catch (e) {
+      if (loadingNote) loadingNote.textContent = '에셋 로딩 실패. 새로고침 후 다시 시도해주세요.';
+      console.error('[Assets] 게임 시작 전 로딩 실패:', e);
+      return;
+    }
+  }
+
   TEX.build();
   // 환경맵 반사 강도: 금속/대리석은 강하게, 무광 표면은 은은하게
   Object.values(TEX.M).forEach(m => { if (m.isMeshStandardMaterial) m.envMapIntensity = 0.45; });
@@ -97,6 +114,8 @@
     onAngryLeave: c => { if (Game.mode === 'playing' || Game.mode === 'closing') Game.onAngryLeave(c); },
   });
   Editor.init(scene, env, camera);
+  if (btnNew) btnNew.disabled = false;
+  if (btnContinue) btnContinue.disabled = false;
 
   /* ---------- 증기 파티클 ---------- */
   const steam = (() => {
