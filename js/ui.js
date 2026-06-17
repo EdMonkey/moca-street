@@ -26,7 +26,8 @@ const UI = (() => {
     el.classList.remove('hidden');
     if (h.type === 'drink') {
       const match = Object.keys(RECIPES).find(k => ctx.matchesRecipe(h.drink, k));
-      const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}</b>` : '제조 중인 음료';
+      const shotTag = (h.drink.shots || 1) >= 2 ? ' · 샷 추가' : '';
+      const name = match ? `<b style="color:var(--accent2)">${RECIPES[match].name}${shotTag}</b>` : '제조 중인 음료';
       el.innerHTML = `${name}<div class="ing">${ctx.drinkIngredients(h.drink).join(' + ')}</div>`;
     } else if (h.type === 'portafilter') {
       const info = h.state === 'filled' ? '원두 채움 — 머신에 장착하세요'
@@ -67,8 +68,12 @@ const UI = (() => {
   function renderTicketItems(o) {
     const itemName = ctx.itemName;
     o.itemsEl.innerHTML = o.items.map(it => {
-      const hint = (!it.done && it.type === 'drink')
-        ? `<div class="thint">${RECIPES[it.recipeId].steps.join(' → ')}</div>` : '';
+      let hint = '';
+      if (!it.done && it.type === 'drink') {
+        const steps = RECIPES[it.recipeId].steps.slice();
+        if (it.extraShot) steps.push('에스프레소 샷 1잔 더 (샷 추가)');
+        hint = `<div class="thint">${steps.join(' → ')}</div>`;
+      }
       return `<div class="${it.done ? 'done' : ''}">· ${itemName(it)}</div>${hint}`;
     }).join('');
   }
@@ -183,7 +188,7 @@ const UI = (() => {
       case 'pfSlot': {
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
-        if (slot.busy) return '추출 중…';
+        if (slot.busy && !slot.done) return '추출 중…';   // 완료 후엔 컵 없이도 분리 안내
         if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
         if (held) return '포터필터를 들고 오세요';
         if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
@@ -227,10 +232,10 @@ const UI = (() => {
       case 'dessert': return E + DESSERTS[it.kind].name + ' 꺼내기 (' + fmt(DESSERTS[it.kind].price) + ')';
       case 'knockbox': {
         if (held && held.type === 'portafilter') {
-          if (held.state === 'used') return E + '사용한 가루 털어내기';
-          return (held.state === 'filled' || held.state === 'tamped') ? '추출 전이에요 — 머신에 장착하세요' : '비울 가루가 없어요';
+          if (held.state && held.state !== 'empty' && held.state !== 'none') return E + '원두 털어내기';
+          return '비울 가루가 없어요';
         }
-        return '사용한 포터필터를 들고 오세요';
+        return '포터필터를 들고 오세요';
       }
       case 'tamp': {
         if (!held || held.type !== 'portafilter') return '분쇄된 포터필터를 들고 오세요';

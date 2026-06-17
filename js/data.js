@@ -57,38 +57,116 @@ const DATA = (() => {
     cups:    { name: '컵',     amount: 40, price: 5000 },
     dessert: { name: '디저트', amount: 12, price: 9000 },
   };
-  const DAY_LEN = 300;            // 실제 5분 = 게임 9시간 (09:00~18:00)
   const SAVE_KEY = 'mochaStreetSave_v1';
+  // 하루 길이·임대료·목표·손님 흐름·인내심은 아래 BALANCE(economy/flow/patience)에 모음
 
-  // 경영(Stage 3): 임대료 = 고정 지출, 일일 목표 = 동기, 폐업 = 소프트 실패
-  const RENT_BASE = 8000, RENT_PER_DAY = 2000;
-  const BANKRUPT_LIMIT = -50000;
-  const rentFor = day => RENT_BASE + (day - 1) * RENT_PER_DAY;
-  const dailyGoalFor = day => 5000 + day * 2500;   // 임대료 차감 후 목표 순이익
+  // ============================================================
+  // BALANCE — 게임플레이 밸런스 단일 표. 여기 숫자만 고치면 튜닝됨.
+  // ============================================================
+  const BALANCE = {
+    // ── 그라인더 분쇄도 (게이지 0 가늘 ~ 1 굵음) ──
+    grind: {
+      dur: 1.8,                        // 분쇄 게이지 시간(초)
+      idealMin: 0.46, idealMax: 0.54,  // 이상 분쇄도 구간(눈금 ~4)
+      qualityFalloff: 0.40,            // 이상 밖으로 이만큼 벗어나면 품질 0 → 만족도 감점
+      speedFine: 1.5,                  // 가늚: (idealMin-grind)당 추출시간 ↑ 계수
+      speedCoarse: 0.8,                // 굵음: (grind-idealMax)당 추출시간 ↓ 계수
+      tipPerfect: 0.10,                // 이상 분쇄 팁 보너스(가격 대비)
+    },
+    // ── 탬핑 강도 (게이지 0~1, 위=강하게 다짐) ──
+    tamp: {
+      dur: 2.2,                        // 탬핑 게이지 시간(초)
+      zoneW: 0.10,                     // 퍼펙트(초록) 존 폭
+      zoneMin: 0.40, zoneMax: 0.50,    // 존 시작 위치 랜덤 범위(중앙)
+      fail: 0.15,                      // 이보다 약하게 떼면 실패(재시도)
+      strong1: 1.25, strong2: 1.6,     // 강함 1·2단계 추출시간 배율(느림)
+      weak1: 0.82, weak2: 0.62,        // 약함 1·2단계 배율(빠름)
+      strong2Over: 0.18,               // 존 위로 이만큼 넘으면 강 2단계
+      weak2Under: 0.15,                // 존 아래로 이만큼이면 약 2단계
+    },
+    // ── 에스프레소 추출 ──
+    extract: {
+      baseDur: 3.4, fastDur: 2.0,      // 기본/고속보일러 추출시간(초)
+      speedFloor: 0.4,                 // 추출시간 최소 배율(너무 빨라지지 않게)
+      channelPenalty: 0.2,             // 탬핑 불완전(채널링) → 추출 컨디션 감점
+      grindPenalty: 0.4,               // 분쇄 빗나감 최대 추출 컨디션 감점
+    },
+    // ── 손님 만족도 → 표정 + 평판 (만족도 0~1) ──
+    satisfaction: {
+      freshBase: 0.4,                  // 만족도 = 추출컨디션 × (freshBase + (1-freshBase)×신선도)
+      shotMismatch: 0.55,              // 주문과 샷 수 다름 → 만족도 감점
+      waitFrac: 0.25, waitPenalty: 0.2,   // 인내심 이 비율 미만이면 감점
+      fastFrac: 0.6,  fastBonus: 0.05,    // 인내심 이 비율 초과면 가산
+      moodGreat: 0.9, moodOk: 0.6,     // 표정 임계값(만족/보통, 그 외 불만)
+      repGreat: 2, repOk: 1, repBad: -1, repTerrible: -2,  // 만족도 구간별 평판 변화
+      repTerribleAt: 0.4,              // 만족도 이 미만이면 repTerrible
+      repBonusOrder: 1, repBonusArt: 1,   // 정확 순서·라떼아트 퍼펙트 평판 보너스
+    },
+    // ── 팁 (가격 대비 비율) ──
+    tip: {
+      base: 0.3,                       // 기본 팁 = 가격 × base × 인내심 × 평판계수
+      repCoef: 250,                    // 평판 팁 계수 (0.7 + rep/repCoef)
+      masterBonus: 1.12,               // 마스터 바리스타(최대 레벨) 팁 배율
+      perfect: 0.15, order: 0.15, foam: 0.15,  // 크레마·정확순서·마이크로폼 보너스
+      artPerfect: 0.15, artGood: 0.08, // 라떼아트
+      dosePerfect: 0.08,               // 시럽/휘핑 정량
+      shotMismatch: 0.4,               // 샷 불일치 시 팁 배율(대폭 감소)
+    },
+    // ── 신선도 (음료가 식는 시간) ──
+    freshness: { full: 30, dead: 90 }, // full초까지 신선 → dead초에 최저
+    // ── 주문/메뉴 ──
+    order: { extraShotPrice: 500, extraShotChance: 0.25, dessertChance: 0.32 },
+    // ── 손님 흐름 (스폰 간격, 초) ──
+    flow: {
+      spawnBase: 20, spawnDayStep: 0.6,       // 기준 간격 = spawnBase − day×spawnDayStep
+      spawnAds: 0.72,                          // SNS 광고 업그레이드 시 간격 배율
+      spawnRepHigh: 0.85, spawnRepLow: 1.3,    // 평판 ≥70 / ≤30 간격 배율
+      spawnFloor: 8,                           // 최소 간격(초)
+      spawnRandMin: 0.7, spawnRandSpan: 0.6,   // 실제 간격 = 기준 × (min ~ min+span)
+    },
+    // ── 손님 인내심 (대기 가능 시간) ──
+    patience: { base: 80, dayStep: 1.5, interiorBonus: 1.35, floor: 45 },
+    // ── 경영 ──
+    economy: {
+      dayLen: 300,                             // 하루 길이(초) = 실제 5분
+      rentBase: 8000, rentPerDay: 2000,        // 임대료 = rentBase + (day−1)×rentPerDay
+      bankruptLimit: -50000,                   // 폐업 한도(원)
+      goalBase: 5000, goalPerDay: 2500,        // 일일 목표 = goalBase + day×goalPerDay
+    },
+    // ── 기타 미니게임 (스팀·도징·라떼아트) ──
+    minigame: {
+      perfW: 0.10, perfMin: 0.55, perfMax: 0.80,    // 스팀·도징 공용 퍼펙트 존(폭/시작범위)
+      doseDur: 1.6, doseMin: 0.30,                  // 도징 게이지(시간/최소)
+      artVol: 3.2, artPerfect: 0.70, artGood: 0.42, // 라떼아트(우유양/점수 임계)
+    },
+  };
 
-  // 탬핑 미니게임 밸런스
-  const TAMP_DUR = 2.2;           // 게이지가 끝까지 차는 시간(초)
-  const TAMP_MIN = 0.45;          // 이보다 일찍 떼면 약하게 눌림(재시도)
-  const TAMP_PERF_W = 0.10;       // 퍼펙트 존 폭
-  const TAMP_PERF_MIN = 0.55, TAMP_PERF_MAX = 0.80; // 퍼펙트 존 시작 위치 랜덤 범위
+  // balance.html(밸런스 에디터)에서 저장한 오버라이드를 덮어씀 (알려진 숫자 키만 — 안전)
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const ov = JSON.parse(localStorage.getItem('mochaBalance') || 'null');
+      if (ov) for (const sec in ov) if (BALANCE[sec]) for (const k in ov[sec])
+        if (k in BALANCE[sec] && typeof ov[sec][k] === 'number' && isFinite(ov[sec][k])) BALANCE[sec][k] = ov[sec][k];
+    }
+  } catch (e) { /* 무시 — 기본값 사용 */ }
 
-  // 라떼아트 미니게임 밸런스 (자유 푸어 — 우유를 흔들며 흐름을 만들어 무늬를 그린다)
-  const ART_VOL = 3.2;            // 한 번에 부을 수 있는 우유 양(초). 다 떨어지면 판정.
-  const ART_PERFECT = 0.70, ART_GOOD = 0.42;   // 종합 점수 임계값 (perfect / good)
-  const ART_TIP_PERFECT = 0.15, ART_TIP_GOOD = 0.08;  // 팁 보너스 비율
-
-  // 시럽/휘핑 도징 미니게임 (정량 — [E]를 눌러 게이지를 퍼펙트 존에서 멈추면 보너스)
-  // 탬핑·스팀과 같은 게이지를 공유하므로 퍼펙트 존(폭/위치)은 TAMP_PERF_* 를 재사용한다.
-  const DOSE_DUR = 1.6;           // 게이지가 끝까지 차는 시간(초)
-  const DOSE_MIN = 0.30;          // 이보다 적게 넣으면 부족(재시도)
-  const DOSE_TIP_PERFECT = 0.08;  // 퍼펙트 도징 팁 보너스 비율 (시럽/휘핑 각각)
-
-  // 분쇄도(그라인더) — [E]를 꾹 눌러 게이지를 멈춘 위치가 분쇄도(0 가늘 ~ 1 굵음).
-  // 이상 구간에서 멈추면 완벽 추출(꾸준한 줄기). 너무 가늘면 추출이 느려 뚝뚝 떨어지고(과다 추출),
-  // 너무 굵으면 빨라져 분사된다(부족 추출).
-  const GRIND_DUR = 1.8;          // 게이지가 끝까지(가장 굵게) 차는 시간(초)
-  const GRIND_IDEAL_MIN = 0.46, GRIND_IDEAL_MAX = 0.54;   // 이상 분쇄도 구간 — 좁은 스트라이크존(눈금 ~3.8~4.2)
-  const GRIND_TIP_PERFECT = 0.10; // 이상 분쇄도 추출 팁 보너스 비율
+  // 평면 상수 → 모두 BALANCE를 가리킴 (하위 호환, 단일 소스)
+  const TAMP_MIN = 0.45;   // (현재 탬핑은 BALANCE.tamp.fail 사용 — 미사용)
+  const TAMP_PERF_W = BALANCE.minigame.perfW;
+  const TAMP_PERF_MIN = BALANCE.minigame.perfMin, TAMP_PERF_MAX = BALANCE.minigame.perfMax;
+  const ART_VOL = BALANCE.minigame.artVol, ART_PERFECT = BALANCE.minigame.artPerfect, ART_GOOD = BALANCE.minigame.artGood;
+  const DOSE_DUR = BALANCE.minigame.doseDur, DOSE_MIN = BALANCE.minigame.doseMin;
+  const TAMP_DUR = BALANCE.tamp.dur, GRIND_DUR = BALANCE.grind.dur;
+  const GRIND_IDEAL_MIN = BALANCE.grind.idealMin, GRIND_IDEAL_MAX = BALANCE.grind.idealMax;
+  const GRIND_TIP_PERFECT = BALANCE.grind.tipPerfect;
+  const ART_TIP_PERFECT = BALANCE.tip.artPerfect, ART_TIP_GOOD = BALANCE.tip.artGood;
+  const DOSE_TIP_PERFECT = BALANCE.tip.dosePerfect;
+  // 경영·하루 (BALANCE.economy)
+  const DAY_LEN = BALANCE.economy.dayLen;
+  const RENT_BASE = BALANCE.economy.rentBase, RENT_PER_DAY = BALANCE.economy.rentPerDay;
+  const BANKRUPT_LIMIT = BALANCE.economy.bankruptLimit;
+  const rentFor = day => BALANCE.economy.rentBase + (day - 1) * BALANCE.economy.rentPerDay;
+  const dailyGoalFor = day => BALANCE.economy.goalBase + day * BALANCE.economy.goalPerDay;
 
   return {
     RECIPES, DESSERTS, LEVEL_XP, MAX_LVL, UPGRADES, EQUIPMENT, RESTOCK,
@@ -97,5 +175,6 @@ const DATA = (() => {
     ART_VOL, ART_PERFECT, ART_GOOD, ART_TIP_PERFECT, ART_TIP_GOOD,
     DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
     GRIND_DUR, GRIND_IDEAL_MIN, GRIND_IDEAL_MAX, GRIND_TIP_PERFECT,
+    BALANCE,
   };
 })();

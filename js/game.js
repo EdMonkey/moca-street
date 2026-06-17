@@ -15,6 +15,7 @@ const Game = (() => {
     DOSE_DUR, DOSE_MIN, DOSE_TIP_PERFECT,
     GRIND_DUR, GRIND_IDEAL_MIN, GRIND_IDEAL_MAX, GRIND_TIP_PERFECT,
   } = DATA;
+  const BAL = DATA.BALANCE;   // 밸런스 단일 표 (data.js)
 
   /* ===== 상태 ===== */
   let env = null, scene = null;
@@ -39,6 +40,12 @@ const Game = (() => {
   let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
   let milkFridgeOpen = false;      // 디저트 쇼케이스 아래 우유 냉장고 문 상태
   let milkFridgeVisibleCount = null;
+  // 머신 위 재사용 샷잔 수량 제한 — 거치대에 있는(가용) 개수. grab시 --, 반납시 ++
+  const SHOT_MAX = 2;
+  let shotAvail = SHOT_MAX;
+  function updateRackVisuals() {
+    if (env && env.shotRack) env.shotRack.glasses.forEach((g, i) => { g.visible = i < shotAvail; });
+  }
 
   function freshState(starter = true) {
     const base = {
@@ -195,11 +202,21 @@ const Game = (() => {
     return true;
   }
 
-  function canonical(d) {
-    return [d.cup, +!!d.ice, +!!d.espresso, d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
+  /* ===== 음료 비교 ===== */
+  function canonical(d) {   // 정확 비교 — 샷 수 포함 (주문 매칭)
+    const shots = (d.shots != null) ? d.shots : (d.espresso ? 1 : 0);
+    return [d.cup, +!!d.ice, shots, d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
   }
-  function matchesRecipe(drink, recipeId) {
-    return canonical(drink) === canonical(RECIPES[recipeId].target);
+  function baseCanonical(d) {   // 느슨 비교 — 샷 수 무시 (음료 종류 식별용)
+    return [d.cup, +!!d.ice, +(!!d.espresso || (d.shots || 0) > 0), d.water || '', +!!d.milk, +!!d.foam, d.syrup || '', +!!d.whip].join('|');
+  }
+  function matchesRecipe(drink, recipeId) {   // 음료 종류 식별 (샷 수 무시)
+    return baseCanonical(drink) === baseCanonical(RECIPES[recipeId].target);
+  }
+  function matchesOrderItem(drink, item) {    // 주문 정확 매칭 — '샷 추가' 반영
+    const t = RECIPES[item.recipeId].target;
+    const shots = (t.espresso ? 1 : 0) + (item.extraShot ? 1 : 0);
+    return canonical(drink) === canonical(Object.assign({}, t, { shots }));
   }
 
   /* ===== 제조 순서 ===== */
@@ -211,7 +228,7 @@ const Game = (() => {
 
   /* ===== 신선도(spoilage) ===== 받아진 뜨거운 물·에스프레소·얼음·스팀우유는 시간이 지나면 신선도 하락 */
   const FRESH_KEYS = ['ice', 'water', 'espresso', 'milk', 'foam'];
-  const FRESH_FULL = 30, FRESH_DEAD = 90;   // 30초까지 신선 → 90초에 최저
+  const FRESH_FULL = BAL.freshness.full, FRESH_DEAD = BAL.freshness.dead;   // 신선 유지 → 최저(초)
   function stampFresh(obj) { if (obj && obj.freshAt == null) obj.freshAt = timeSec; }   // 첫 내용물 시점만 기록(이후 유지)
   function carryFresh(dst, src) {            // 부을 때 더 오래된(상한) 쪽을 인계
     if (src && src.freshAt != null) dst.freshAt = (dst.freshAt == null) ? src.freshAt : Math.min(dst.freshAt, src.freshAt);
@@ -256,11 +273,11 @@ const Game = (() => {
   function correctOrder(drink, recipeId) {
     const seq = RECIPES[recipeId].seq;
     if (!seq) return false;
-    const order = (drink.order || []).filter(k => seq.includes(k));
+    const seen = new Set();   // 중복(샷 추가로 'espresso' 2번 등) 제거 — 첫 등장 순서로 판정
+    const order = (drink.order || []).filter(k => seq.includes(k) && !seen.has(k) && seen.add(k));
     return order.length === seq.length && order.every((k, i) => k === seq[i]);
   }
 
-  /* ===== 손에 든 것 ===== */
   function setHeld(h) {
     const equip = !held && !!h;   // 빈손 → 물건: 새로 집은 경우만 끌어당기는 연출(재료 추가 등 갱신엔 X)
     held = h;
@@ -295,13 +312,14 @@ const Game = (() => {
       Player.setHeld(m, equip);
     }
     syncPitchers();
+    clearItemPlacePreview();
     UI.held();
   }
   function drinkIngredients(d) {
     const out = [];
     out.push(d.cup === 'ice' ? '아이스컵' : d.cup === 'espresso' ? '에스프레소 잔' : '머그컵');
     if (d.ice) out.push('얼음');
-    if (d.espresso) out.push('샷');
+    if (d.espresso) out.push((d.shots || 1) >= 2 ? '샷 ×2' : '샷');
     if (d.water) out.push(d.water === 'hot' ? '온수' : '냉수');
     if (d.milk) out.push('우유');
     if (d.foam) out.push('거품');
@@ -774,8 +792,8 @@ const Game = (() => {
   function pourHeldInto(drink, refresh) {
     if (held.type === 'shotglass') {
       if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
-      if (drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-      drink.espresso = 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
+      if ((drink.shots || 0) >= 2) { toast('샷은 최대 2잔까지예요'); return; }
+      drink.espresso = 1; drink.shots = (drink.shots || 0) + 1; addStep(drink, 'espresso'); drink.perfect = !!held.perfect; drink.grindPerfect = !!held.grindPerfect; drink.grindQ = held.grindQ;
       carryFresh(drink, held);   // 샷잔이 오래됐으면 컵도 그만큼 상함
       refresh();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
@@ -814,8 +832,12 @@ const Game = (() => {
     const recipeId = pool[(Math.random() * pool.length) | 0];
     const items = [{ type: 'drink', recipeId, done: false }];
     let total = drinkPrice(recipeId);
+    if (RECIPES[recipeId].target.espresso && Math.random() < BAL.order.extraShotChance) {   // 에스프레소 음료에 가끔 '샷 추가'
+      items[0].extraShot = true;
+      total += BAL.order.extraShotPrice;
+    }
     const dPool = unlockedDesserts();
-    if (dPool.length && Math.random() < 0.32) {
+    if (dPool.length && Math.random() < BAL.order.dessertChance) {
       const kind = dPool[(Math.random() * dPool.length) | 0];
       items.push({ type: 'dessert', kind, done: false });
       total += DESSERTS[kind].price;
@@ -824,7 +846,8 @@ const Game = (() => {
   }
 
   function itemName(it) {
-    return it.type === 'drink' ? RECIPES[it.recipeId].name : DESSERTS[it.kind].name;
+    if (it.type !== 'drink') return DESSERTS[it.kind].name;
+    return RECIPES[it.recipeId].name + (it.extraShot ? ' + 샷 추가' : '');
   }
 
   /* 손님 영어 음성 주문 */
@@ -909,9 +932,9 @@ const Game = (() => {
   }
 
   function patienceForNew() {
-    let p = 80 - S.day * 1.5;
-    if (S.upgrades.interior) p *= 1.35;
-    return Math.max(45, p);
+    let p = BAL.patience.base - S.day * BAL.patience.dayStep;
+    if (S.upgrades.interior) p *= BAL.patience.interiorBonus;
+    return Math.max(BAL.patience.floor, p);
   }
 
   function interact(it) {
@@ -1024,10 +1047,13 @@ const Game = (() => {
       if (held && held.type === 'shotglass') {
         if (held.filled) { toast('샷이 들어있어요 — 컵에 따른 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
         setHeld(null);
+        shotAvail = Math.min(SHOT_MAX, shotAvail + 1); updateRackVisuals();   // 반납
         AudioFX.cupClink(0.4);
         return;
       }
       if (held) { toast('손이 비어있어야 샷잔을 집을 수 있어요'); return; }
+      if (shotAvail <= 0) { toast(`샷잔이 모두 사용 중이에요 (최대 ${SHOT_MAX}개) — 다 쓴 샷잔을 거치대에 반납하세요`, 'bad'); AudioFX.err(); return; }
+      shotAvail--; updateRackVisuals();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
       AudioFX.cupClink(0.45);
       return;
@@ -1129,11 +1155,12 @@ const Game = (() => {
     if (id === 'pfSlot') {
       const slot = env.machines.espressoSlots[it.slot];
       if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
-      if (slot.busy) { toast('추출 중입니다…'); return; }
+      if (slot.busy && !slot.done) { toast('추출 중입니다…'); return; }   // 추출 완료 후엔 컵을 안 빼도 포터필터 분리 가능
       if (held && held.type === 'portafilter') {
         if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
         slot.pfState = held.state || 'empty';
         slot.tampPerfect = !!held.tampPerfect;
+        slot.tampSpeed = held.tampSpeed != null ? held.tampSpeed : 1;   // 탬핑 강도 단계 인계(추출 속도)
         slot.grind = held.grind;   // 분쇄도 인계 (추출 시 줄기/시간/품질에 반영)
         WORLD.setPortafilterState(slot.pf, slot.pfState);
         slot.pf.rotation.y = PF_MOUNT_TWIST;   // 왼쪽으로 틀어진 채 시작 → updateSlots가 잠금 회전
@@ -1146,8 +1173,8 @@ const Game = (() => {
       const state = slot.pfState;     // 빈손 → 분리
       slot.pfState = 'none';
       WORLD.setPortafilterState(slot.pf, 'none');
-      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect, grind: slot.grind });
-      slot.tampPerfect = false; slot.grind = undefined; AudioFX.metalClack();
+      setHeld({ type: 'portafilter', state, tampPerfect: slot.tampPerfect, tampSpeed: slot.tampSpeed, grind: slot.grind });
+      slot.tampPerfect = false; slot.tampSpeed = 1; slot.grind = undefined; AudioFX.metalClack();
       return;
     }
 
@@ -1165,17 +1192,22 @@ const Game = (() => {
         AudioFX.err();
         return;
       }
-      // 분쇄도 → 추출 속도(시간), 탬핑 → 채널링(물총). 둘 다 추출 줄기 비주얼에 반영
+      // 분쇄도 + 탬핑 강도 → 추출 속도(시간)·줄기 비주얼
       const grind = (slot.grind == null) ? (GRIND_IDEAL_MIN + GRIND_IDEAL_MAX) / 2 : slot.grind;
       const idealGrind = grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX;
       slot.grindPerfect = idealGrind && slot.grind != null;
       slot.grindQ = grindQuality(grind);   // 빗나간 정도(1 이상 ~ 0 최악) — 만족도 비례 감점용
-      // 물총(채널링): 탬핑이 완벽하지 않으면 퍽이 고르지 않아 줄기가 비스듬히 튄다(분쇄도와 무관)
-      slot.extractMode = !slot.tampPerfect ? 'channel'
-        : idealGrind ? 'ideal' : (grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse');
-      let dur = S.upgrades.fastShot ? 2.0 : 3.4;
-      if (grind < GRIND_IDEAL_MIN) dur *= 1 + (GRIND_IDEAL_MIN - grind) * 1.5;     // 가늚: 추출 지연(과다)
-      else if (grind > GRIND_IDEAL_MAX) dur *= 1 - (grind - GRIND_IDEAL_MAX) * 0.8;  // 굵음: 추출 단축(부족)
+      const tampSpeed = slot.tampSpeed != null ? slot.tampSpeed : 1;   // 탬핑 강도 단계 배율(>1 느림 / <1 빠름)
+      let speed = 1;   // 추출 시간 배율(>1 느림 / <1 빠름)
+      if (grind < GRIND_IDEAL_MIN) speed *= 1 + (GRIND_IDEAL_MIN - grind) * BAL.grind.speedFine;        // 가늚: 과다(느림)
+      else if (grind > GRIND_IDEAL_MAX) speed *= 1 - (grind - GRIND_IDEAL_MAX) * BAL.grind.speedCoarse; // 굵음: 부족(빠름)
+      speed *= tampSpeed;                  // 강한 탬핑=느림(2단계) / 약한 탬핑=빠름(2단계)
+      speed = Math.max(BAL.extract.speedFloor, speed);
+      let dur = (S.upgrades.fastShot ? BAL.extract.fastDur : BAL.extract.baseDur) * speed;
+      // 줄기 비주얼: 퍼펙트 탬핑이면 분쇄도 기준, 아니면 종합 속도(느림=뚝뚝/빠름=분사, 강도차 작으면 물총)
+      slot.extractMode = slot.tampPerfect
+        ? (idealGrind ? 'ideal' : grind < GRIND_IDEAL_MIN ? 'fine' : 'coarse')
+        : (speed > 1.12 ? 'fine' : speed < 0.88 ? 'coarse' : 'channel');
       slot.busy = true; slot.done = false; slot.t = 0;
       slot.dur = dur;
       slot.stream.visible = true;
@@ -1221,8 +1253,8 @@ const Game = (() => {
         // 물 완료된 컵에 그 자리에서 바로 샷 붓기 (꺼내 옮길 필요 없이)
         if (held && held.type === 'shotglass') {
           if (!held.filled) { toast('샷잔이 비어 있어요 — 머신에서 샷을 받으세요', 'bad'); AudioFX.err(); return; }
-          if (job.drink.espresso) { toast('이미 샷이 들어 있는 컵이에요'); return; }
-          job.drink.espresso = 1;
+          if ((job.drink.shots || 0) >= 2) { toast('샷은 최대 2잔까지예요'); return; }
+          job.drink.espresso = 1; job.drink.shots = (job.drink.shots || 0) + 1;
           addStep(job.drink, 'espresso');
           job.drink.perfect = !!held.perfect;
           job.drink.grindPerfect = !!held.grindPerfect;
@@ -1284,12 +1316,10 @@ const Game = (() => {
 
     /* --- 넉박스: 사용한 포터필터 가루 비우기 --- */
     if (id === 'knockbox') {
-      if (!held || held.type !== 'portafilter') { toast('사용한 포터필터를 들고 오세요'); return; }
-      if (held.state !== 'used') {
-        toast((held.state === 'filled' || held.state === 'tamped') ? '아직 추출 전이에요 — 머신에 장착해 사용하세요' : '비울 가루가 없어요');
-        return;
-      }
-      held.state = 'empty';
+      if (!held || held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
+      if (!held.state || held.state === 'empty' || held.state === 'none') { toast('비울 가루가 없어요'); return; }
+      held.state = 'empty';   // 담긴 원두는 상태 무관(분쇄·탬핑·사용)하고 모두 털어냄
+      held.tampPerfect = false; held.tampSpeed = 1; held.grindPerfect = false; held.grindQ = undefined; held.grind = undefined;
       setHeld(held);
       toast('가루를 털어냈어요 — 다시 분쇄할 수 있어요');
       AudioFX.knock();
@@ -1349,12 +1379,15 @@ const Game = (() => {
       if (o.customer.state !== 'waitDrink' && o.customer.state !== 'toPickup') continue;
       for (const item of o.items) {
         if (item.done) continue;
-        let match = false;
-        if (held.type === 'drink' && item.type === 'drink') match = matchesRecipe(held.drink, item.recipeId);
+        let match = false, shotMismatch = false;
+        if (held.type === 'drink' && item.type === 'drink') {
+          if (matchesOrderItem(held.drink, item)) match = true;
+          else if (matchesRecipe(held.drink, item.recipeId)) { match = true; shotMismatch = true; }   // 종류는 맞고 샷 수만 다름 → 서빙은 되되 평판 페널티
+        }
         if (held.type === 'dessert' && item.type === 'dessert') match = held.kind === item.kind;
         if (!match) continue;
         // 서빙 성공
-        if (held.type === 'drink') held.drink.orderOk = correctOrder(held.drink, item.recipeId);
+        if (held.type === 'drink') { held.drink.orderOk = !shotMismatch && correctOrder(held.drink, item.recipeId); held.drink.shotMismatch = shotMismatch; }
         item.done = true;
         const servedDrink = held.type === 'drink' ? held.drink : null;
         // 픽업대에 컵/디저트를 내려놓는 연출용 메시
@@ -1392,22 +1425,22 @@ const Game = (() => {
     if (grind == null) return 1;
     if (grind >= GRIND_IDEAL_MIN && grind <= GRIND_IDEAL_MAX) return 1;
     const d = grind < GRIND_IDEAL_MIN ? GRIND_IDEAL_MIN - grind : grind - GRIND_IDEAL_MAX;
-    return Math.max(0, 1 - d / 0.40);   // 이상에서 0.40 이상 벗어나면 0
+    return Math.max(0, 1 - d / BAL.grind.qualityFalloff);   // 이상에서 이만큼 벗어나면 0
   }
   function completeOrder(o, servedDrink) {
     const c = o.customer;
     const frac = Math.max(0, c.patience / c.patienceMax);
-    const masterBonus = S.level >= MAX_LVL ? 1.12 : 1;   // 마스터 바리스타 팁 +12%
-    let tip = Math.floor(o.total * 0.3 * frac * (0.7 + S.rep / 250) * masterBonus / 100) * 100;
-    // 퍼펙트 탬핑 보너스 — 음료에 크레마가 살아 팁 +15%
+    const masterBonus = S.level >= MAX_LVL ? BAL.tip.masterBonus : 1;   // 마스터 바리스타 팁 보너스
+    let tip = Math.floor(o.total * BAL.tip.base * frac * (0.7 + S.rep / BAL.tip.repCoef) * masterBonus / 100) * 100;
+    // 퍼펙트 탬핑 보너스 — 음료에 크레마가 살아 팁 보너스
     const perfect = !!(servedDrink && servedDrink.perfect);
-    if (perfect) tip += Math.round(o.total * 0.15 / 100) * 100;
-    // 정확한 제조 순서 보너스 — 팁 +15% + 평판 +1
+    if (perfect) tip += Math.round(o.total * BAL.tip.perfect / 100) * 100;
+    // 정확한 제조 순서 보너스 — 팁 + 평판
     const orderOk = !!(servedDrink && servedDrink.orderOk);
-    if (orderOk) tip += Math.round(o.total * 0.15 / 100) * 100;
-    // 퍼펙트 마이크로폼(스팀 미니게임) 보너스 — 팁 +15%
+    if (orderOk) tip += Math.round(o.total * BAL.tip.order / 100) * 100;
+    // 퍼펙트 마이크로폼(스팀 미니게임) 보너스 — 팁
     const foamPerfect = !!(servedDrink && servedDrink.foamPerfect);
-    if (foamPerfect) tip += Math.round(o.total * 0.15 / 100) * 100;
+    if (foamPerfect) tip += Math.round(o.total * BAL.tip.foam / 100) * 100;
     // 라떼아트(자유 푸어) 보너스 — perfect +15% / good +8%, perfect는 평판 +1
     const artTier = servedDrink && servedDrink.artTier;
     if (artTier === 'perfect') tip += Math.round(o.total * ART_TIP_PERFECT / 100) * 100;
@@ -1423,32 +1456,40 @@ const Game = (() => {
     // 추출 컨디션 → 손님 만족도: 채널링(물총=탬핑 불균일)·과/부족 추출(분쇄도)이면 감점
     let extractQ = 1;
     if (servedDrink && servedDrink.espresso) {
-      if (!perfect) extractQ -= 0.2;        // 물총(채널링) — 고르지 않은 추출
+      if (!perfect) extractQ -= BAL.extract.channelPenalty;   // 물총(채널링) — 고르지 않은 추출
       const grindQ = servedDrink.grindQ == null ? 1 : servedDrink.grindQ;
-      extractQ -= (1 - grindQ) * 0.4;       // 분쇄도 빗나간 정도에 비례 (이상=0, 최악=−0.4)
+      extractQ -= (1 - grindQ) * BAL.extract.grindPenalty;    // 분쇄도 빗나간 정도에 비례
     }
     if (extractQ < 1) tip = Math.round(tip * extractQ / 100) * 100;
     // 신선도: 오래된 음료는 팁/평판 감소 (30초까지 신선 → 90초 최저)
     const fresh = freshness01(servedDrink);
     if (fresh < 1) tip = Math.round(tip * (0.4 + 0.6 * fresh) / 100) * 100;   // 상해도 최소 40%
+    const shotMismatch = !!(servedDrink && servedDrink.shotMismatch);   // 주문과 샷 수가 다름(실수로 1↔2샷)
+    if (shotMismatch) tip = Math.round(tip * BAL.tip.shotMismatch / 100) * 100;   // 팁 대폭 감소
     S.money += o.total + tip;
     dayStats.revenue += o.total;
     dayStats.tips += tip;
     dayStats.served++;
-    let repDelta = (frac > 0.5 ? 2 : 1) + (orderOk ? 1 : 0) + (artTier === 'perfect' ? 1 : 0);
-    if (extractQ < 0.7) repDelta -= 1;     // 추출 컨디션 나쁨(채널링+분쇄 빗나감): 평판 손해
-    if (fresh < 0.5) repDelta -= 2;        // 많이 상함: 평판 손해
-    else if (fresh < 1) repDelta -= 1;     // 약간 상함: 평판 이득 감소
+    // === 종합 만족도(0~1) — 표정과 평판을 같은 기준으로 ===
+    // 추출 컨디션 × 신선도 기반, 샷 불일치·대기 시간 반영
+    const SAT = BAL.satisfaction;
+    let sat = extractQ * (SAT.freshBase + (1 - SAT.freshBase) * fresh);
+    if (shotMismatch) sat -= SAT.shotMismatch;   // 주문과 샷 수가 다름 — 큰 불만
+    if (frac < SAT.waitFrac) sat -= SAT.waitPenalty;       // 거의 다 기다리게 함
+    else if (frac > SAT.fastFrac) sat += SAT.fastBonus;    // 빠른 응대 — 약간 가산
+    sat = Math.max(0, Math.min(1, sat));
+    const mood = sat >= SAT.moodGreat ? 'great' : sat >= SAT.moodOk ? 'ok' : 'bad';
+    // 평판: 만족도와 같은 방향(만족=+, 보통=+, 불만=−) + 정확 순서·라떼아트 보너스
+    let repDelta = sat >= SAT.moodGreat ? SAT.repGreat : sat >= SAT.moodOk ? SAT.repOk : sat >= SAT.repTerribleAt ? SAT.repBad : SAT.repTerrible;
+    if (orderOk) repDelta += SAT.repBonusOrder;
+    if (artTier === 'perfect') repDelta += SAT.repBonusArt;
     S.rep = Math.max(0, Math.min(100, S.rep + repDelta));
-    if (extractQ <= 0.8) toast('☕ 추출 컨디션 미흡 — 손님 만족도 하락', 'bad', 2000);
-    if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁·평판 감소`, 'bad', 2200);
+    if (mood === 'bad')
+      toast(shotMismatch ? '⚠️ 주문과 샷 수가 달라요 — 손님 불만 · 평판 하락' : '😖 손님 불만 — 평판 하락', 'bad', 2200);
+    else if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁 감소`, 'bad', 1800);
     gainXP(Math.round(o.total / 100));
     UI.removeTicket(o);
     orders.splice(orders.indexOf(o), 1);
-    // 손님 만족도 종합(추출 컨디션·신선도·응대 속도) → 표정 + 한마디 반응
-    let sat = extractQ * (0.4 + 0.6 * fresh);
-    if (frac < 0.25) sat -= 0.15;          // 오래 기다리게 함
-    const mood = sat >= 0.95 ? 'great' : sat >= 0.7 ? 'ok' : 'bad';
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 떠남
     Customers.serve(c, null, mood);
     const anyPerfect = perfect || foamPerfect || artTier === 'perfect' || syrupPerfect || whipPerfect || grindPerfect;
@@ -1552,7 +1593,7 @@ const Game = (() => {
         if (slot.sound) { slot.sound.stop(); slot.sound = null; }
         slot.progress.draw(1, true);
         slot.stream.visible = false;
-        slot.drink.espresso = 1;
+        slot.drink.espresso = 1; slot.drink.shots = (slot.drink.shots || 0) + 1;
         addStep(slot.drink, 'espresso');
         slot.drink.perfect = !!slot.tampPerfect;   // 퍼펙트 탬핑 → 이 샷에 크레마 보너스
         slot.drink.grindPerfect = !!slot.grindPerfect;   // 이상 분쇄도 → 추출 품질 보너스
@@ -1643,12 +1684,11 @@ const Game = (() => {
     return `linear-gradient(180deg,${c[0]},${c[1]})`;
   }
   function startTampGame() {
-    // 퍼펙트 존 시작 위치를 매번 살짝 랜덤화 (외워지지 않도록)
-    const lo = TAMP_PERF_MIN + Math.random() * (TAMP_PERF_MAX - TAMP_PERF_MIN);
-    // 누르는 즉시 채워지는 press-and-hold (떼면 그 지점으로 판정)
-    tampGame = { fill: 0, locked: null, perfect: [lo, lo + TAMP_PERF_W], sound: AudioFX.tampHold(TAMP_DUR) };
-    gaugeBottomUp(lo);
-    setGaugeText('🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기', '퍼펙트 존(초록)에서 손을 떼면 크레마(팁) 보너스 · 끝까지 눌러도 성공');
+    // 탬핑 전용: 좁은 퍼펙트 존을 중앙 부근에서 랜덤 배치 (스팀·도징과 별개)
+    const TW = BAL.tamp.zoneW, lo = BAL.tamp.zoneMin + Math.random() * (BAL.tamp.zoneMax - BAL.tamp.zoneMin);   // 좁은 중앙 존
+    tampGame = { fill: 0, locked: null, perfect: [lo, lo + TW], sound: AudioFX.tampHold(TAMP_DUR) };
+    gaugeBottomUp(lo, TW);
+    setGaugeText('🔧 탬핑 — <b>[E]</b>를 누르고 있어 다지기', '초록 존=크레마 보너스 · 위로 갈수록 강하게(추출 느림) / 아래일수록 약하게(추출 빠름)');
     clearHitFx();
     $('tampGame').classList.remove('hidden');
   }
@@ -1675,20 +1715,34 @@ const Game = (() => {
     stopTampSound();
     const pz = tampGame.perfect;
     const result = (fill >= pz[0] && fill <= pz[1]) ? 'perfect'
-      : (fill >= TAMP_MIN) ? 'good' : 'weak';
+      : (fill >= BAL.tamp.fail) ? 'good' : 'weak';
     if (result === 'weak') {
       AudioFX.err();
-      toast('약하게 눌렀어요 — 다시 꾹 눌러 다지세요', 'bad', 1500);
+      toast('너무 약해요 — 더 꾹 눌러 다지세요', 'bad', 1500);
       endTampGame();
     } else {
       pressTamper();
       AudioFX.tampDone();
       if (result === 'perfect') AudioFX.tampPerfectSfx();
-      finishTamp(result === 'perfect', result === 'perfect' ? '✨ 퍼펙트 탬핑! 크레마 보너스' : '탬핑 성공 — 약간 불균일(추출 시 물총 주의)', result === 'perfect' ? 'gold' : 'good');
+      // 추출 속도 배율 — 존 밖은 강/약 각각 2단계 (조금만 넘으면 1단계로 완만하게)
+      let tampSpeed = 1, sMsg = '✨ 퍼펙트 탬핑! 크레마 보너스';
+      if (result !== 'perfect') {
+        if (fill > pz[1]) {                 // 강함(over)
+          const over = fill - pz[1];
+          if (over > BAL.tamp.strong2Over) { tampSpeed = BAL.tamp.strong2; sMsg = '강하게 다짐 — 추출이 많이 느려져요'; }
+          else { tampSpeed = BAL.tamp.strong1; sMsg = '살짝 강하게 — 추출이 조금 느려져요'; }
+        } else {                            // 약함(under)
+          const under = pz[0] - fill;
+          if (under > BAL.tamp.weak2Under) { tampSpeed = BAL.tamp.weak2; sMsg = '약하게 다짐 — 추출이 많이 빨라져요'; }
+          else { tampSpeed = BAL.tamp.weak1; sMsg = '살짝 약하게 — 추출이 조금 빨라져요'; }
+        }
+      }
+      finishTamp(result === 'perfect', tampSpeed, sMsg, result === 'perfect' ? 'gold' : 'good');
     }
   }
-  function finishTamp(perfect, msg, cls) {
+  function finishTamp(perfect, tampSpeed, msg, cls) {
     held.tampPerfect = perfect;
+    held.tampSpeed = tampSpeed;   // 추출 속도 배율(>1 느림 / <1 빠름)
     held.state = 'tamped';
     setHeld(held);
     toast(msg, cls);
@@ -1947,7 +2001,9 @@ const Game = (() => {
     setHeld(null);
     clearPlacedItems({ keepPrepTools: !!opts.keepPrepTools });
     Effects.clear();
+    shotAvail = SHOT_MAX; updateRackVisuals();   // 모든 샷잔 거치대로 복귀
     env.placeIndicator.visible = false;
+    clearItemPlacePreview();
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     milkFridgeOpen = false;
     if (env.setMilkFridgeOpen) env.setMilkFridgeOpen(false);
@@ -1956,7 +2012,7 @@ const Game = (() => {
       if (s.cupMesh) s.st.root.remove(s.cupMesh);
       if (s.sound) { s.sound.stop(); s.sound = null; }
       s.busy = s.done = false; s.cupMesh = null; s.drink = null; s.brewLiquid = null; s.stream.visible = false;
-      s.pfState = 'empty'; s.tampPerfect = false; WORLD.setPortafilterState(s.pf, 'empty');
+      s.pfState = 'empty'; s.tampPerfect = false; s.tampSpeed = 1; WORLD.setPortafilterState(s.pf, 'empty');
       s.progress.hide();
     });
     machineJobs().forEach(j => j && resetJob(j));
@@ -2054,12 +2110,12 @@ const Game = (() => {
   }
 
   function spawnInterval() {
-    let base = 20 - S.day * 0.6;
+    let base = BAL.flow.spawnBase - S.day * BAL.flow.spawnDayStep;
     base *= earlyEaseFactor();      // 초반 적응 구간 완화
-    if (S.upgrades.ads) base *= 0.72;
-    base *= S.rep >= 70 ? 0.85 : S.rep <= 30 ? 1.3 : 1;
-    base = Math.max(8, base);
-    return base * (0.7 + Math.random() * 0.6);
+    if (S.upgrades.ads) base *= BAL.flow.spawnAds;
+    base *= S.rep >= 70 ? BAL.flow.spawnRepHigh : S.rep <= 30 ? BAL.flow.spawnRepLow : 1;
+    base = Math.max(BAL.flow.spawnFloor, base);
+    return base * (BAL.flow.spawnRandMin + Math.random() * BAL.flow.spawnRandSpan);
   }
 
   function endDay() {
@@ -2071,6 +2127,7 @@ const Game = (() => {
     if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
     env.placeIndicator.visible = false;
+    clearItemPlacePreview();
     if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
     const rent = rentFor(S.day);
@@ -2544,6 +2601,7 @@ const Game = (() => {
         else { placePoint = pt; p = '<b>[E]</b> 내려놓기 · <b>[R]</b> 회전'; }
       }
     }
+    // 고스트 표시 — 표면 배치(placePoint) 또는 상호작용 위치(ghostInteract)
     const ind = env.placeIndicator;
     if (placePoint) {
       ind.visible = false;
@@ -2689,6 +2747,7 @@ const Game = (() => {
       if (on) {
         // 내려놓기 표시·레시피북·조준 아웃라인 숨김 (머신 작업은 계속 표시되며 시간만 정지)
         env.placeIndicator.visible = false;
+        clearItemPlacePreview();
         if (env.aimHighlight) env.aimHighlight.visible = false;
         clearOutline();
         $('prompt').classList.add('hidden');

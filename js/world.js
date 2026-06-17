@@ -1296,11 +1296,17 @@ const WORLD = (() => {
       const r = new THREE.Group();
       r.position.set(x, y, z);
       scene.add(r);
-      // 투명 유리 샷잔 1개 (위가 살짝 넓은 텀블러 형태)
-      const glass = cyl(0.03, 0.023, 0.075, M().cupClear, 0, 0.0415, 0, 18, { cast: false });
-      r.add(glass);
-      r.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽 (머신 상판 위 — 이름표 불필요)
-      addI(hitbox(0.13, 0.18, 0.15, x, y + 0.07, z, { id: 'shotrack' })).userData.outlineRoot = r;   // 샷잔 크기에 맞게
+      // 투명 유리 샷잔 2개 (가용 수량만큼 표시 — game.js가 visible 토글)
+      const makeShot = () => {
+        const gg = new THREE.Group();
+        gg.add(cyl(0.03, 0.023, 0.075, M().cupClear, 0, 0.0415, 0, 18, { cast: false }));
+        gg.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽
+        return gg;
+      };
+      const g1 = makeShot(); g1.position.x = -0.032; r.add(g1);
+      const g2 = makeShot(); g2.position.x = 0.032; r.add(g2);
+      env.shotRack = { glasses: [g1, g2] };
+      addI(hitbox(0.2, 0.18, 0.16, x, y + 0.07, z, { id: 'shotrack' })).userData.outlineRoot = r;
     })();
 
     /* ---------- 탬핑 스테이션 (분쇄된 원두를 평평하게 다짐) ---------- */
