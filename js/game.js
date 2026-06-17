@@ -34,6 +34,13 @@ const Game = (() => {
   let grindGame = null;           // 분쇄도 다이얼 미니게임 상태 (비활성 시 null)
   let useDown = false;            // [E]/좌클릭을 누르고 있는 중
   let deliveryPlaceRot = 0;       // 택배박스 바닥 배치 회전(90도 단위)
+  // 머신 위 재사용 도구 수량 제한 — 거치대에 있는(가용) 개수. grab시 --, 반납시 ++
+  const SHOT_MAX = 2, PITCHER_MAX = 1;
+  let shotAvail = SHOT_MAX, pitcherAvail = PITCHER_MAX;
+  function updateRackVisuals() {
+    if (env && env.shotRack) env.shotRack.glasses.forEach((g, i) => { g.visible = i < shotAvail; });
+    if (env && env.pitcherRack) env.pitcherRack.mesh.visible = pitcherAvail > 0;
+  }
 
   function freshState(starter = true) {
     const base = {
@@ -299,6 +306,51 @@ const Game = (() => {
     mesh.userData.ghostMat = ghostMat;
     placeGhost = mesh;
     scene.add(mesh);
+  }
+
+  // 상호작용 히트박스에 조준 시, 실제 상호작용으로 오브젝트가 놓일 월드 위치(+회전). 유효할 때만 반환(파란 고스트).
+  function interactGhostTarget(it, aimMesh) {
+    if (!held || !it) return null;
+    const M = env.machines;
+    if (it.id === 'knockbox') {                      // 넉박스 — 원두 담긴 포터필터 가루 비우기(상태 무관)
+      if (held.type !== 'portafilter' || !held.state || held.state === 'empty' || held.state === 'none') return null;
+      const st = aimMesh && aimMesh.userData.station;
+      if (!st) return null;
+      return { pos: st.root.localToWorld(new THREE.Vector3(0, 0.28, 0)), rotY: st.root.rotation.y };
+    }
+    if (it.id === 'espCup') {                       // 머신 컵 자리 — 빈 컵/빈 샷잔 올리기
+      const slot = M.espressoSlots[it.slot];
+      if (!slot || slot.cupMesh || slot.busy) return null;
+      const placing = (held.type === 'drink' && !held.drink.espresso) || (held.type === 'shotglass' && !held.filled);
+      if (!placing) return null;
+      return { pos: slot.st.root.localToWorld(slot.localPos.clone()), rotY: slot.st.root.rotation.y };
+    }
+    if (it.id === 'pfSlot') {                        // 포터필터 장착
+      const slot = M.espressoSlots[it.slot];
+      if (!slot || slot.pfState !== 'none' || held.type !== 'portafilter') return null;
+      return { pos: slot.pf.getWorldPosition(new THREE.Vector3()), rotY: slot.st.root.rotation.y };
+    }
+    if (it.id === 'waterHot' || it.id === 'waterCold') {   // 물 디스펜서에 컵 올리기
+      const job = M.waterJobs[it.id];
+      if (!job || job.busy || job.cupMesh || held.type !== 'drink') return null;
+      return { pos: job.st.root.localToWorld(job.localPos.clone()), rotY: job.st.root.rotation.y };
+    }
+    if (it.id === 'grinder') {                       // 그라인더에 빈 포터필터 넣기
+      const job = it.job;
+      if (!job || job.busy || held.type !== 'portafilter' || (held.state || 'empty') !== 'empty' || S.stocks.beans <= 0) return null;
+      return { pos: job.pfMesh.getWorldPosition(new THREE.Vector3()), rotY: job.st.root.rotation.y };
+    }
+    if (it.id === 'tamp') {                           // 탬핑 자리 (분쇄된 포터필터)
+      if (held.type !== 'portafilter' || held.state !== 'filled') return null;
+      const root = env.machines.tamp && env.machines.tamp.tamper.parent;
+      if (!root) return null;
+      return { pos: root.localToWorld(new THREE.Vector3(0.09, 0.0, -0.02)), rotY: root.rotation.y };
+    }
+    if (it.id === 'shotrack' && held.type === 'shotglass' && !held.filled && env.shotRack)   // 샷잔 반납 자리
+      return { pos: env.shotRack.glasses[0].getWorldPosition(new THREE.Vector3()), rotY: 0 };
+    if (it.id === 'pitcherrack' && held.type === 'pitcher' && !held.milk && !held.foam && env.pitcherRack)   // 피처 반납 자리
+      return { pos: env.pitcherRack.mesh.getWorldPosition(new THREE.Vector3()), rotY: 0 };
+    return null;
   }
 
   function setHeld(h) {
@@ -722,10 +774,13 @@ const Game = (() => {
       if (held && held.type === 'shotglass') {
         if (held.filled) { toast('샷이 들어있어요 — 컵에 따른 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
         setHeld(null);
+        shotAvail = Math.min(SHOT_MAX, shotAvail + 1); updateRackVisuals();   // 반납
         AudioFX.cupClink(0.4);
         return;
       }
       if (held) { toast('손이 비어있어야 샷잔을 집을 수 있어요'); return; }
+      if (shotAvail <= 0) { toast(`샷잔이 모두 사용 중이에요 (최대 ${SHOT_MAX}개) — 다 쓴 샷잔을 거치대에 반납하세요`, 'bad'); AudioFX.err(); return; }
+      shotAvail--; updateRackVisuals();
       setHeld({ type: 'shotglass', filled: false, perfect: false });
       AudioFX.cupClink(0.45);
       return;
@@ -736,10 +791,13 @@ const Game = (() => {
       if (held && held.type === 'pitcher') {
         if (held.milk || held.foam) { toast('우유가 들어있어요 — 컵에 부은 뒤 반납하세요', 'bad'); AudioFX.err(); return; }
         setHeld(null);
+        pitcherAvail = Math.min(PITCHER_MAX, pitcherAvail + 1); updateRackVisuals();   // 반납
         AudioFX.cupClink(0.4);
         return;
       }
       if (held) { toast('손이 비어있어야 피처를 집을 수 있어요'); return; }
+      if (pitcherAvail <= 0) { toast(`스팀 피처가 사용 중이에요 (최대 ${PITCHER_MAX}개) — 다 쓴 피처를 거치대에 반납하세요`, 'bad'); AudioFX.err(); return; }
+      pitcherAvail--; updateRackVisuals();
       setHeld({ type: 'pitcher', milk: 0, foam: 0 });
       AudioFX.cupClink(0.45);
       return;
@@ -841,7 +899,7 @@ const Game = (() => {
     if (id === 'pfSlot') {
       const slot = env.machines.espressoSlots[it.slot];
       if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
-      if (slot.busy) { toast('추출 중입니다…'); return; }
+      if (slot.busy && !slot.done) { toast('추출 중입니다…'); return; }   // 추출 완료 후엔 컵을 안 빼도 포터필터 분리 가능
       if (held && held.type === 'portafilter') {
         if (slot.pfState !== 'none') { toast('이미 포터필터가 장착되어 있어요'); return; }
         slot.pfState = held.state || 'empty';
@@ -996,12 +1054,10 @@ const Game = (() => {
 
     /* --- 넉박스: 사용한 포터필터 가루 비우기 --- */
     if (id === 'knockbox') {
-      if (!held || held.type !== 'portafilter') { toast('사용한 포터필터를 들고 오세요'); return; }
-      if (held.state !== 'used') {
-        toast((held.state === 'filled' || held.state === 'tamped') ? '아직 추출 전이에요 — 머신에 장착해 사용하세요' : '비울 가루가 없어요');
-        return;
-      }
-      held.state = 'empty';
+      if (!held || held.type !== 'portafilter') { toast('포터필터를 들고 오세요'); return; }
+      if (!held.state || held.state === 'empty' || held.state === 'none') { toast('비울 가루가 없어요'); return; }
+      held.state = 'empty';   // 담긴 원두는 상태 무관(분쇄·탬핑·사용)하고 모두 털어냄
+      held.tampPerfect = false; held.grindPerfect = false; held.grindQ = undefined; held.grind = undefined;
       setHeld(held);
       toast('가루를 털어냈어요 — 다시 분쇄할 수 있어요');
       AudioFX.knock();
@@ -1659,6 +1715,7 @@ const Game = (() => {
     setHeld(null);
     clearPlacedItems();
     Effects.clear();
+    shotAvail = SHOT_MAX; pitcherAvail = PITCHER_MAX; updateRackVisuals();   // 모든 도구 거치대로 복귀
     env.placeIndicator.visible = false; if (placeGhost) placeGhost.visible = false;
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (env.setStoragePreview) env.setStoragePreview(null);
@@ -2192,35 +2249,42 @@ const Game = (() => {
     const grinding = updateGrindGame(dt, aimData);
     let p = UI.prompt(aimData);
     if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
-    let placePoint = null, placeOk = false;
+    let placePoint = null, placeOk = false, ghostInteract = null;
     if (!shelfPreview && env.setStoragePreview) env.setStoragePreview(null);
     const dprev = !aimData ? deliveryPlacePreview() : null;
     if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (dprev) {
       p = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
     } else if (held && held.type !== 'deliveryBox' && held.type !== 'supply') {
-      // 붓기 도구(샷잔/피처)가 붓기 가능한 대상을 조준 중이면 붓기 안내 우선 → 미리보기 생략
-      const pourTool = held.type === 'shotglass' || held.type === 'pitcher';
-      const pourTarget = pourTool && aimData &&
-        (aimData.id === 'placedItem' || aimData.id === 'espCup' || aimData.id === 'waterHot' || aimData.id === 'waterCold');
-      if (!pourTarget) {
+      // 붓기 도구(샷잔/피처)가 놓인 컵에 붓기 가능 → 붓기 안내 우선, 미리보기 생략
+      const pourOverPlaced = (held.type === 'shotglass' || held.type === 'pitcher') && aimData && aimData.id === 'placedItem';
+      if (!pourOverPlaced && (!aimData || aimData.id === 'placedItem')) {
+        // 빈 표면 또는 놓인 물건 위 — 오브젝트 모양 고스트(파랑=가능 / 빨강=불가)
         const pt = Player.aimSurface();
-        if (pt) {                                // 표면 위면 항상 고스트 표시 — 어떤 히트박스가 겹쳐도 사라지지 않고 빨강(놓기 불가)
+        if (pt) {
           placePoint = pt; placeOk = !aimData && !placeBlocked(pt);
-          if (placeOk) p = '<b>[E]</b> 내려놓기';
-          else if (!aimData) p = '여기엔 놓을 수 없어요';   // 빈 표면이지만 가까이 물건(겹침)
-          // aimData(머신·거치대 등)가 있으면 그쪽 상호작용 안내(UI.prompt)는 유지하고 고스트만 빨강
+          p = placeOk ? '<b>[E]</b> 내려놓기' : '여기엔 놓을 수 없어요';
         }
+      } else if (aimData) {
+        // 상호작용 히트박스 — 실제 상호작용 시 놓일 위치에 파란 고스트(유효할 때만). 안내는 그쪽 프롬프트 유지.
+        ghostInteract = interactGhostTarget(aimData, Player.aimedObject);
       }
     }
+    // 고스트 표시 — 표면 배치(placePoint) 또는 상호작용 위치(ghostInteract)
     const ind = env.placeIndicator;
-    if (placePoint && placeGhost) {
-      // 들고 있는 오브젝트 모양 그대로 미리보기 (플레이어 향해 회전)
+    let gPos = null, gRotY = 0, gYOff = 0, gOk = true;
+    if (placePoint) {
+      gPos = placePoint; gOk = placeOk; gYOff = (placeGhost && placeGhost.userData.placeYOff) || 0.004;
+      gRotY = Math.atan2(Player.position.x - placePoint.x, Player.position.z - placePoint.z);
+    } else if (ghostInteract) {
+      gPos = ghostInteract.pos; gRotY = ghostInteract.rotY || 0; gOk = true;   // 상호작용 위치는 항상 유효(파랑)
+    }
+    if (gPos && placeGhost) {
       indPulse += dt * 5;
-      placeGhost.position.set(placePoint.x, placePoint.y + (placeGhost.userData.placeYOff || 0.004), placePoint.z);
-      placeGhost.rotation.y = Math.atan2(Player.position.x - placePoint.x, Player.position.z - placePoint.z);
+      placeGhost.position.set(gPos.x, gPos.y + gYOff, gPos.z);
+      placeGhost.rotation.y = gRotY;
       placeGhost.scale.setScalar(1 + Math.sin(indPulse) * 0.03);
-      if (placeGhost.userData.ghostMat) placeGhost.userData.ghostMat.color.setHex(placeOk ? 0x4da6ff : 0xe23b3b);   // 파랑=가능 / 빨강=불가
+      if (placeGhost.userData.ghostMat) placeGhost.userData.ghostMat.color.setHex(gOk ? 0x4da6ff : 0xe23b3b);   // 파랑=가능 / 빨강=불가
       placeGhost.visible = true;
       ind.visible = false;
     } else if (placePoint) {                 // 고스트 없으면(예외) 원형 인디케이터 폴백

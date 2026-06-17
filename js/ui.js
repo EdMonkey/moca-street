@@ -161,7 +161,7 @@ const UI = (() => {
       case 'pfSlot': {
         const slot = env.machines.espressoSlots[it.slot];
         if (slot.locked && !S.upgrades.dualHead) return '🔒 듀얼 그룹헤드 (업그레이드 필요)';
-        if (slot.busy) return '추출 중…';
+        if (slot.busy && !slot.done) return '추출 중…';   // 완료 후엔 컵 없이도 분리 안내
         if (held && held.type === 'portafilter') return slot.pfState !== 'none' ? '이미 장착되어 있어요' : E + '포터필터 장착';
         if (held) return '포터필터를 들고 오세요';
         if (slot.pfState === 'none') return '포터필터 없음 — 그라인더에서 분쇄 후 장착하세요';
@@ -205,10 +205,10 @@ const UI = (() => {
       case 'dessert': return E + DESSERTS[it.kind].name + ' 꺼내기 (' + fmt(DESSERTS[it.kind].price) + ')';
       case 'knockbox': {
         if (held && held.type === 'portafilter') {
-          if (held.state === 'used') return E + '사용한 가루 털어내기';
-          return (held.state === 'filled' || held.state === 'tamped') ? '추출 전이에요 — 머신에 장착하세요' : '비울 가루가 없어요';
+          if (held.state && held.state !== 'empty' && held.state !== 'none') return E + '원두 털어내기';
+          return '비울 가루가 없어요';
         }
-        return '사용한 포터필터를 들고 오세요';
+        return '포터필터를 들고 오세요';
       }
       case 'tamp': {
         if (!held || held.type !== 'portafilter') return '분쇄된 포터필터를 들고 오세요';
