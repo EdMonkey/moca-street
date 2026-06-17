@@ -31,15 +31,18 @@ includesAll(game, [
 includesAll(world, [
   'env.deliveryPreview',
   'setDeliveryPreview',
-  'env.storagePreview',
-  'setStoragePreview',
-  'previewSlot',
   'canPlaceDeliveryBox',
   'DOOR_RIGHT_SPOT',
   'deliverySpot',
   'boxes.forEach((b, i)',
   'typeof b.rot',
 ], 'delivery placement world API');
+
+[
+  'env.storagePreview',
+  'setStoragePreview',
+  'previewSlot',
+].forEach(needle => assert.ok(!world.includes(needle), `storage preview should be removed: ${needle}`));
 
 assert.ok(!world.includes('boxes.slice(0, spots.length)'), 'delivery renderer should not cap visible boxes to fixed spots');
 
@@ -50,11 +53,15 @@ const deliveryPreviewBlock = world.slice(
 assert.ok(!deliveryPreviewBlock.includes('EdgesGeometry'), 'delivery preview should not draw wireframe edges');
 assert.ok(!deliveryPreviewBlock.includes('LineSegments'), 'delivery preview should not draw line wireframe');
 
-includesAll(game, [
+[
   'showStoragePreview',
   'setStoragePreview',
   "aimData.id !== 'restock'",
-  "held.type !== 'deliveryBox'",
-], 'storage shelf preview controls');
+].forEach(needle => assert.ok(!game.includes(needle), `storage shelf preview controls should be removed: ${needle}`));
+
+includesAll(game, [
+  "item.type === 'deliveryBox'",
+  "box.surfacePlaced = true",
+], 'delivery boxes can be placed on surfaces');
 
 console.log('delivery placement tests passed');

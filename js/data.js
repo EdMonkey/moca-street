@@ -49,6 +49,7 @@ const DATA = (() => {
     grinder:  { name: '추가 그라인더',      desc: '원두를 병렬로 분쇄해 병목 해소', price: 18000, w: 0.45, d: 0.5, max: 2 },
     espresso: { name: '2번째 에스프레소 머신', desc: '추출 슬롯 2개 추가',          price: 35000, w: 1.45, d: 0.8, max: 1 },
     steamer:  { name: '추가 밀크 스티머',    desc: '우유를 병렬로 스팀',            price: 15000, w: 0.62, d: 0.55, max: 2 },
+    pitcher:  { name: '추가 스팀피처',      desc: '카운터 위 스팀피처 1개 추가',   price: 8000,  w: 0.18, d: 0.18, max: 3 },
   };
   const RESTOCK = {
     beans:   { name: '원두',   amount: 30, price: 8000 },

@@ -15,48 +15,72 @@ const ui = fs.readFileSync(path.join(root, 'js/ui.js'), 'utf8');
 [
   'STORAGE_SLOT_LEVELS',
   'STORAGE_RACKS',
-  '{ slot: 0, y: 0.56 }',
-  '{ slot: 1, y: 1.12 }',
-  '{ slot: 2, y: 1.68 }',
-  'STORAGE_BOX_Y_OFFSET',
-  'const storageBoxY = slot.y + STORAGE_BOX_Y_OFFSET',
-  'bm.position.set(slot.x, storageBoxY, slot.z)',
-  'boxHitbox = hitbox(0.48, 0.34, 0.38, slot.x, storageBoxY + 0.17',
-  'p.root.position.set(slot.x, slot.y + STORAGE_BOX_Y_OFFSET, slot.z)',
-  'slotId',
-  "{ id: 'restock', rack: r.rack, slot: s.slot, slotId }",
-  'env.setStoragePreview = function (slotId',
-  'env.setStoragePlacementMode = function (active)',
-  'slot.hitbox.userData.storagePlaceSlot = true',
-  'slot.hitbox.userData.interactDisabled = true',
-  'const boxHitbox = hitbox(0.48, 0.34, 0.38',
-  "{ id: 'restock', rack: slot.rack, slot: slot.slot, slotId: slot.slotId, box: true }",
-  'syncStorageBoxes',
-  'makeBoxMesh(box.kind)',
+  'const storageSurface = new THREE.Mesh(new THREE.PlaneGeometry(0.82, 0.82)',
+  'storageSurface.rotation.x = -Math.PI / 2',
+  'storageSurface.userData.surfaceTopY = surfaceTopY',
+  'storageSurface.userData.storageSurface = true',
+  'storageSurface.userData.storageRack = r.rack',
+  'storageSurface.userData.storageSlot = s.slot',
+  'env.surfaces.push(storageSurface)',
 ].forEach(needle => assert.ok(world.includes(needle), `world missing: ${needle}`));
 
 [
-  'storeHeldDelivery(it.slotId)',
-  'takeStorageSupply(it.slotId)',
-  'Logistics.storageSlotOccupied(S, aimData.slotId)',
-  'Logistics.storageSlotBox(S, slotId)',
-  'function storageAimUsable(aimData)',
-  'env.setStoragePlacementMode(!!(held && held.type === \'deliveryBox\'))',
-  "if (!held || held.type !== 'deliveryBox')",
-  'aimData.box',
-  'storageBoxOutline',
-  'held.storageBoxId',
-  'Logistics.returnSupply(S, held.kind',
+  "id: 'restock'",
+  'env.storageSlots',
+  'env.syncStorageBoxes',
+  'env.setStoragePlacementMode',
+  'env.setStoragePreview',
+  'storagePlaceSlot',
+  'storageBoxHitbox',
+].forEach(needle => assert.ok(!world.includes(needle), `world should not contain storage slot behavior: ${needle}`));
+
+[
+  'function renderStorageBoxes() {',
+  'env.clearStorageShelfVisuals',
+  'function seedLooseMilkCartons()',
+  'function restoreLooseMilkCartons()',
+  'placeLooseItem(carton, point, { silent: true })',
+  "item.location = point.fridgeSurface ? 'fridge' : 'placed'",
+  'item.x = point.x',
+  'item.y = point.y',
+  'item.z = point.z',
+  'item.rot = rot',
+  "b.id !== (held && held.type === 'deliveryBox' ? held.id : null) && !b.surfacePlaced",
+  "box.surfacePlaced = true",
 ].forEach(needle => assert.ok(game.includes(needle), `game missing: ${needle}`));
 
 [
+  "id === 'restock'",
+  'placeHeldOnStorageSlot',
+  'takeStorageSupply',
+  'storageAimUsable',
+  'storageSlotOccupied',
+  'storageSlotBox',
+  'storageBoxOutline',
+  'storageBoxId',
+  'Logistics.returnSupply(S, held.kind',
+  'Logistics.takeSupply(S',
   'Logistics.storageSlotBox',
   'Logistics.storageTotal',
-  'if (!box) return null;',
-].forEach(needle => assert.ok(ui.includes(needle), `ui missing: ${needle}`));
+  'setStoragePlacementMode',
+  'setStoragePreview',
+].forEach(needle => assert.ok(!game.includes(needle), `game should not contain storage slot behavior: ${needle}`));
 
 [
-  'if (!h.object.userData.interact || h.object.userData.interactDisabled) continue;',
+  'if (!d || h.object.userData.interactDisabled) continue;',
+  'const normal = h.face.normal.clone().transformDirection(h.object.matrixWorld)',
+  'if (normal.y > 0.7)',
+  'if (h.object.userData.storageSurface)',
+  'p.y = h.object.userData.surfaceTopY',
+  'p.storageSurface = true',
 ].forEach(needle => assert.ok(player.includes(needle), `player missing: ${needle}`));
 
-console.log('storage slot tests passed');
+[
+  'const st = S.stocks;',
+  '!ui.includes(\'Logistics.storageTotal\')',
+].forEach(() => {});
+assert.ok(!ui.includes("case 'restock'"), 'ui prompt should not describe restock slots');
+assert.ok(!ui.includes('Logistics.storageTotal'), 'hud should not show separate warehouse totals');
+assert.ok(!ui.includes('Logistics.storageSlotBox'), 'ui should not inspect storage slots');
+
+console.log('storage surface tests passed');
