@@ -275,6 +275,32 @@ const Game = (() => {
   }
 
   /* ===== 손에 든 것 ===== */
+  // 내려놓기 미리보기 고스트 — 들고 있는 오브젝트의 반투명 복제(원형 인디케이터 대신 실제 모양 표시)
+  let placeGhost = null;
+  function disposeGhost() {
+    if (!placeGhost) return;
+    scene.remove(placeGhost);
+    placeGhost.traverse(o => { if (o.isMesh) { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); } });
+    placeGhost = null;
+  }
+  function buildPlaceGhost(item) {
+    let mesh, yOff = 0.004;
+    if (item.type === 'drink') mesh = WORLD.makeDrinkMesh(item.drink);
+    else if (item.type === 'dessert') mesh = WORLD.makeDessertMesh(item.kind);
+    else if (item.type === 'shotglass') mesh = WORLD.makeDrinkMesh({ cup: 'shot', espresso: item.filled ? 1 : 0, perfect: item.perfect });
+    else if (item.type === 'pitcher') mesh = WORLD.makePitcherMesh(item.milk ? 1 : 0, item.foam ? 1 : 0);
+    else if (item.type === 'portafilter') { mesh = WORLD.makePortafilterMesh(item.state || 'empty'); yOff = 0.03; }
+    else return;
+    // 단일 반투명 재질(흰색)로 통일 — 색만 바꿔 가능(흰)/불가(빨강) 표시
+    const ghostMat = new THREE.MeshBasicMaterial({ color: 0x4da6ff, transparent: true, opacity: 0.6, depthWrite: false });
+    mesh.traverse(o => { if (o.isMesh) { o.material = ghostMat; o.castShadow = o.receiveShadow = false; } });
+    mesh.visible = false;
+    mesh.userData.placeYOff = yOff;
+    mesh.userData.ghostMat = ghostMat;
+    placeGhost = mesh;
+    scene.add(mesh);
+  }
+
   function setHeld(h) {
     const equip = !held && !!h;   // 빈손 → 물건: 새로 집은 경우만 끌어당기는 연출(재료 추가 등 갱신엔 X)
     held = h;
@@ -308,6 +334,9 @@ const Game = (() => {
       m.scale.setScalar(1.05);
       Player.setHeld(m, equip);
     }
+    // 내려놓기 미리보기 고스트 갱신 (택배/재고는 이 경로로 못 놓으므로 제외)
+    disposeGhost();
+    if (h && h.type !== 'deliveryBox' && h.type !== 'supply') buildPlaceGhost(h);
     UI.held();
   }
   function drinkIngredients(d) {
@@ -1630,7 +1659,7 @@ const Game = (() => {
     setHeld(null);
     clearPlacedItems();
     Effects.clear();
-    env.placeIndicator.visible = false;
+    env.placeIndicator.visible = false; if (placeGhost) placeGhost.visible = false;
     if (env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (env.setStoragePreview) env.setStoragePreview(null);
     env.machines.espressoSlots.forEach(s => {
@@ -1744,7 +1773,7 @@ const Game = (() => {
     if (env.doorSign) env.doorSign.setOpen(false);   // 마감 = CLOSE 팻말
     if (env.door) env.door.open = false;             // 마감 = 문 닫힘
     if (typeof Weather !== 'undefined') Weather.setClock(18);   // 마감 = 18시(해 지는 시각)
-    env.placeIndicator.visible = false;
+    env.placeIndicator.visible = false; if (placeGhost) placeGhost.visible = false;
     if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
     // 임대료 차감 → 순이익/목표 산정
     const rent = rentFor(S.day);
@@ -2144,7 +2173,7 @@ const Game = (() => {
     if (LatteArt.update(dt, useDown)) {
       $('prompt').classList.add('hidden');
       $('crosshair').classList.remove('active');
-      env.placeIndicator.visible = false;
+      env.placeIndicator.visible = false; if (placeGhost) placeGhost.visible = false;
       updateAimHighlight(null);
       barTimer -= dt;
       if (barTimer <= 0) { UI.ticketBars(); barTimer = 0.25; }
@@ -2163,27 +2192,45 @@ const Game = (() => {
     const grinding = updateGrindGame(dt, aimData);
     let p = UI.prompt(aimData);
     if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
-    let placePoint = null;
+    let placePoint = null, placeOk = false;
     if (!shelfPreview && env.setStoragePreview) env.setStoragePreview(null);
     const dprev = !aimData ? deliveryPlacePreview() : null;
     if (aimData && env.setDeliveryPreview) env.setDeliveryPreview(null);
     if (dprev) {
       p = dprev.ok ? '<b>[E]</b> 박스 내려놓기 · <b>[R]</b> 회전' : '여기엔 박스를 놓을 공간이 없어요 · <b>[R]</b> 회전';
-    } else if (!aimData && held && held.type !== 'deliveryBox' && held.type !== 'supply') {
-      const pt = Player.aimSurface();
-      if (pt) {
-        if (placeBlocked(pt)) p = '여기엔 공간이 없어요';
-        else { placePoint = pt; p = '<b>[E]</b> 내려놓기'; }
+    } else if (held && held.type !== 'deliveryBox' && held.type !== 'supply') {
+      // 붓기 도구(샷잔/피처)가 붓기 가능한 대상을 조준 중이면 붓기 안내 우선 → 미리보기 생략
+      const pourTool = held.type === 'shotglass' || held.type === 'pitcher';
+      const pourTarget = pourTool && aimData &&
+        (aimData.id === 'placedItem' || aimData.id === 'espCup' || aimData.id === 'waterHot' || aimData.id === 'waterCold');
+      if (!pourTarget) {
+        const pt = Player.aimSurface();
+        if (pt) {                                // 표면 위면 항상 고스트 표시 — 어떤 히트박스가 겹쳐도 사라지지 않고 빨강(놓기 불가)
+          placePoint = pt; placeOk = !aimData && !placeBlocked(pt);
+          if (placeOk) p = '<b>[E]</b> 내려놓기';
+          else if (!aimData) p = '여기엔 놓을 수 없어요';   // 빈 표면이지만 가까이 물건(겹침)
+          // aimData(머신·거치대 등)가 있으면 그쪽 상호작용 안내(UI.prompt)는 유지하고 고스트만 빨강
+        }
       }
     }
     const ind = env.placeIndicator;
-    if (placePoint) {
+    if (placePoint && placeGhost) {
+      // 들고 있는 오브젝트 모양 그대로 미리보기 (플레이어 향해 회전)
+      indPulse += dt * 5;
+      placeGhost.position.set(placePoint.x, placePoint.y + (placeGhost.userData.placeYOff || 0.004), placePoint.z);
+      placeGhost.rotation.y = Math.atan2(Player.position.x - placePoint.x, Player.position.z - placePoint.z);
+      placeGhost.scale.setScalar(1 + Math.sin(indPulse) * 0.03);
+      if (placeGhost.userData.ghostMat) placeGhost.userData.ghostMat.color.setHex(placeOk ? 0x4da6ff : 0xe23b3b);   // 파랑=가능 / 빨강=불가
+      placeGhost.visible = true;
+      ind.visible = false;
+    } else if (placePoint) {                 // 고스트 없으면(예외) 원형 인디케이터 폴백
       indPulse += dt * 5;
       ind.position.set(placePoint.x, placePoint.y + 0.012, placePoint.z);
       ind.scale.setScalar(1 + Math.sin(indPulse) * 0.07);
       ind.visible = true;
     } else {
       ind.visible = false;
+      if (placeGhost) placeGhost.visible = false;
     }
     const pr = $('prompt');
     if (p) { pr.innerHTML = p; pr.classList.remove('hidden'); $('crosshair').classList.add('active'); }
@@ -2310,7 +2357,7 @@ const Game = (() => {
     notifyEditMode(on) {
       if (on) {
         // 내려놓기 표시·레시피북·조준 아웃라인 숨김 (머신 작업은 계속 표시되며 시간만 정지)
-        env.placeIndicator.visible = false;
+        env.placeIndicator.visible = false; if (placeGhost) placeGhost.visible = false;
         if (env.aimHighlight) env.aimHighlight.visible = false;
         clearOutline();
         $('prompt').classList.add('hidden');
