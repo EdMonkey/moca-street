@@ -104,12 +104,14 @@ const WORLD = (() => {
     // 컵 셸: Blender 중공(안이 파인) glb 모델. 머그/아이스/에스프레소잔은 손잡이·받침까지 포함.
     // glb 미로드 시점이거나 샷잔은 기존 절차적 실린더로 폴백한다. 재질은 게임 재질로 덮어써
     // 라이브러리 인스턴스 공유를 깨지 않고(클론별 머티리얼 교체) 기존 음료 룩을 유지한다.
-    const glbCup = isShot ? null : (isIce ? 'GlassTumbler' : isEsp ? 'EspressoCupSaucer' : 'CoffeeMug');
+    const glbCup = isShot ? 'EspressoShotGlass' : (isIce ? 'GlassTumbler' : isEsp ? 'EspressoCupSaucer' : 'CoffeeMug');
     let cupShell = null;
     if (glbCup && window.Assets && window.Assets.isReady()) {
-      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, 0);  // 베이스 y=0 정렬된 클론
+      // 베이스 y=0 정렬된 클론. 샷잔은 들었을 때 나무 손잡이가 카메라(전방) 쪽을 향하도록 회전.
+      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, isShot ? -Math.PI / 2 : 0);
       if (cupShell) {
-        cupShell.traverse((n) => { if (n.isMesh) { n.material = cupMat; n.castShadow = false; } });
+        // 샷잔(EspressoShotGlass)은 유리+원목 자체 머티리얼을 유지하고, 다른 컵은 게임 재질로 틴트
+        cupShell.traverse((n) => { if (n.isMesh) { if (!isShot) n.material = cupMat; n.castShadow = false; } });
         g.add(cupShell);
       }
     }
@@ -479,7 +481,34 @@ const WORLD = (() => {
     return makeSupplyMesh('milk');
   }
 
+  // 우유 냉장고 — Blender glb(PrepTableFridge 본체 + 좌/우 문짝, 내부 캐비티/선반 포함).
+  // open이면 두 문짝을 바깥 세로 경첩 기준으로 ~100° 회전해 열고, 닫힘일 때만 라벨을 보인다. 미로드 시 절차적 폴백.
   function makeMilkFridgeMesh(open) {
+    const A = window.Assets;
+    if (A && A.isReady && A.isReady() && A.names && A.names().includes('PrepTableFridge')) {
+      const g = new THREE.Group();
+      const body = A.spawnInPlace('PrepTableFridge');
+      const dL = A.spawnInPlace('PrepTableFridge_DoorL');
+      const dR = A.spawnInPlace('PrepTableFridge_DoorR');
+      if (body && dL && dR) {
+        const OFF = -0.192;   // 문 개구부를 냉장고 중심에 맞춤(좌측 제어패널 폭 보정)
+        [body, dL, dR].forEach((o) => {
+          o.position.x += OFF;
+          o.traverse((n) => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = true; } });
+        });
+        if (open) { dL.rotation.y = -1.85; dR.rotation.y = 1.85; }   // 바깥으로 ~106° 열림
+        const label = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.13),
+          textLabel('우유 냉장고', 256, 56, '700 28px "Malgun Gothic"', '#28415d', '#f8fbff'));
+        label.position.set(0, 0.5, 0.38); label.visible = !open;
+        g.add(body, dL, dR, label);
+        g.userData.leftDoor = dL; g.userData.rightDoor = dR; g.userData.label = label;
+        return g;
+      }
+    }
+    return makeMilkFridgeMeshProc(open);
+  }
+
+  function makeMilkFridgeMeshProc(open) {
     const g = new THREE.Group();
     const shellMat = new THREE.MeshStandardMaterial({ color: 0xd9d2b8, roughness: 0.62, metalness: 0.12 });
     const doorMat = new THREE.MeshStandardMaterial({ color: 0xf0ead2, roughness: 0.42, metalness: 0.15 });
@@ -880,7 +909,11 @@ const WORLD = (() => {
       scene.add(sign);
       env.staticBlockers.push({ x: cx, z: -1.0, w: 1.9, d: 0.85 });
 
-      const fridgePos = new THREE.Vector3(cx, 0.08, -1.08);
+      // 본체(PrepTableFridge)를 슬롯 중앙(cx)에 맞추기 위한 개구부 중심 보정.
+      // makeMilkFridgeMesh가 OFF=-0.192로 본체를 옮겨 개구부를 그룹 원점에 두므로,
+      // 그룹 원점(개구부)을 cx-0.192에 두면 본체 전체가 슬롯 중앙(cx)에 정렬된다.
+      const fOpenX = cx - 0.192;
+      const fridgePos = new THREE.Vector3(fOpenX, 0, -1.03);
       let fridgeRoot = makeMilkFridgeMesh(false);
       fridgeRoot.position.copy(fridgePos);
       fridgeRoot.rotation.y = Math.PI;
@@ -888,14 +921,14 @@ const WORLD = (() => {
       const milkRoot = new THREE.Group();
       const milkCartons = [];
       const milkLevels = [
-        { level: 0.10, z: 0.10 },
-        { level: 0.50, z: 0.08 },
+        { level: 0.21, z: 0.14 },   // 캐비티 바닥
+        { level: 0.50, z: 0.14 },   // 선반 위
       ];
       milkLevels.forEach(({ level, z }) => {
         for (let i = 0; i < 3; i++) {
           const milk = makeMilkCartonMesh();
           milk.position.set(-0.34 + i * 0.34, level, z);
-          milk.scale.setScalar(0.9);
+          milk.scale.setScalar(0.82);
           milkCartons.push(milk);
           milkRoot.add(milk);
         }
@@ -907,8 +940,8 @@ const WORLD = (() => {
       const fridgeSurfaces = [];
       const fridgeSurfaceMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
       const addFridgeSurface = (level, topY) => {
-        const fridgeSurface = new THREE.Mesh(new THREE.BoxGeometry(1.34, 0.02, 0.36), fridgeSurfaceMat);
-        fridgeSurface.position.set(cx, topY - 0.01, -1.18);
+        const fridgeSurface = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.02, 0.32), fridgeSurfaceMat);
+        fridgeSurface.position.set(fOpenX, topY - 0.01, -1.17);
         fridgeSurface.userData.fridgeSurface = true;
         fridgeSurface.userData.fridgeLevel = level;
         fridgeSurface.userData.storageRot = Math.PI;
@@ -917,22 +950,31 @@ const WORLD = (() => {
         env.surfaces.push(fridgeSurface);
         fridgeSurfaces.push(fridgeSurface);
       };
-      addFridgeSurface('bottom', 0.18);
-      addFridgeSurface('middle', 0.58);
-      const leftDoorHb = addI(hitbox(0.74, 0.82, 0.14, cx + 0.39, 0.50, -1.42, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
-      const rightDoorHb = addI(hitbox(0.74, 0.82, 0.14, cx - 0.39, 0.50, -1.42, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
+      addFridgeSurface('bottom', 0.21);
+      addFridgeSurface('middle', 0.50);
+      const leftDoorHb = addI(hitbox(0.53, 0.64, 0.16, fOpenX + 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
+      const rightDoorHb = addI(hitbox(0.53, 0.64, 0.16, fOpenX - 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
+      const _doorHbV = new THREE.Vector3();
       function syncMilkFridgeDoorHitboxes() {
-        const open = !!(env.machines.milkFridge && env.machines.milkFridge.open);
-        const leftX = open ? cx + 0.79 : cx + 0.39;
-        const rightX = open ? cx - 0.79 : cx - 0.39;
-        leftDoorHb.position.set(leftX, 0.50, -1.42);
-        rightDoorHb.position.set(rightX, 0.50, -1.42);
-        leftDoorHb.rotation.y = open ? Math.PI / 2.15 : 0;
-        rightDoorHb.rotation.y = open ? -Math.PI / 2.15 : 0;
-        leftDoorHb.userData.outlineRoot = fridgeRoot.userData.leftDoor;
-        rightDoorHb.userData.outlineRoot = fridgeRoot.userData.rightDoor;
+        // 문 히트박스를 실제 문짝의 월드 위치·회전에 맞춰 따라가게 한다.
+        // → 문이 열리면 스윙한 문 위에 히트박스가 있어, 그 문을 가리켜야 닫힌다(개구부/선반은 우유용).
+        const lDoor = fridgeRoot.userData.leftDoor, rDoor = fridgeRoot.userData.rightDoor;
+        if (!lDoor || !rDoor) {
+          leftDoorHb.userData.outlineRoot = lDoor;
+          rightDoorHb.userData.outlineRoot = rDoor;
+          return;
+        }
+        fridgeRoot.updateMatrixWorld(true);
+        const place = (hb, door, halfW) => {
+          // 문 로컬: 원점=경첩(바깥 세로 모서리), 패널 중심은 ±halfW, 전면 쪽으로 살짝(+z) 이동
+          hb.position.copy(door.localToWorld(_doorHbV.set(halfW, 0, 0.04)));
+          door.getWorldQuaternion(hb.quaternion);
+          hb.userData.outlineRoot = door;
+        };
+        place(leftDoorHb, lDoor, 0.262);     // 좌측 문: 경첩이 좌측 → 패널은 +x
+        place(rightDoorHb, rDoor, -0.262);   // 우측 문: 경첩이 우측 → 패널은 -x
       }
-      const milkHb = addI(hitbox(1.35, 0.6, 0.24, cx, 0.55, -1.43, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
+      const milkHb = addI(hitbox(1.0, 0.62, 0.3, fOpenX, 0.5, -1.32, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
       milkHb.userData.outlineRoot = milkRoot;
       milkHb.userData.interactDisabled = true;
       env.machines.milkFridge = { root: fridgeRoot, milkRoot, milkCartons, milkVisibleCount: milkCartons.length, doorHitboxes: [leftDoorHb, rightDoorHb], milkHitbox: milkHb, surfaces: fridgeSurfaces, open: false };
@@ -1297,14 +1339,19 @@ const WORLD = (() => {
       r.position.set(x, y, z);
       scene.add(r);
       // 투명 유리 샷잔 2개 (가용 수량만큼 표시 — game.js가 visible 토글)
+      // Blender glb 모델(EspressoShotGlass: 유리 몸체 + 원목 손잡이) 사용, 미로드 시 절차적 폴백.
       const makeShot = () => {
+        if (window.Assets && window.Assets.isReady && window.Assets.isReady()) {
+          const m = window.Assets.spawn('EspressoShotGlass', 0, 0, 0, Math.PI / 2);  // 손잡이 뒤쪽으로
+          if (m) { m.traverse((n) => { if (n.isMesh) n.castShadow = false; }); return m; }
+        }
         const gg = new THREE.Group();
         gg.add(cyl(0.03, 0.023, 0.075, M().cupClear, 0, 0.0415, 0, 18, { cast: false }));
         gg.add(cyl(0.026, 0.026, 0.008, M().cupClear, 0, 0.004, 0, 18, { cast: false }));   // 두꺼운 유리 굽
         return gg;
       };
-      const g1 = makeShot(); g1.position.x = -0.032; r.add(g1);
-      const g2 = makeShot(); g2.position.x = 0.032; r.add(g2);
+      const g1 = makeShot(); g1.position.x = -0.05; r.add(g1);
+      const g2 = makeShot(); g2.position.x = 0.05; r.add(g2);
       env.shotRack = { glasses: [g1, g2] };
       addI(hitbox(0.2, 0.18, 0.16, x, y + 0.07, z, { id: 'shotrack' })).userData.outlineRoot = r;
     })();
