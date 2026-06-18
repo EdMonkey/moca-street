@@ -293,7 +293,9 @@ const Pitchers = (() => {
   }
 
   function canPourToDrink(pitcher) {
-    return !!(pitcher && !pitcher.rawMilk && (pitcher.milk || pitcher.foam));
+    // 차가운 우유(rawMilk)도 컵에 바로 부을 수 있다 — 아이스 음료/직접 붓기용.
+    // 스팀한 우유(milk)·거품(foam)은 종전대로 허용.
+    return !!(pitcher && (pitcher.rawMilk || pitcher.milk || pitcher.foam));
   }
 
   function label(pitcher) {

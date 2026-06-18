@@ -318,9 +318,22 @@ const WORLD = (() => {
       const spout = cyl(0.01, 0.028, 0.04, M().steel, 0, H - 0.005, R * 0.85, 8); spout.rotation.x = 0.6; spout.castShadow = false; g.add(spout);
       const handle = new THREE.Mesh(new THREE.TorusGeometry(0.034, 0.008, 8, 16), M().steel); handle.position.set(R + 0.012, H * 0.55, 0); handle.castShadow = false; g.add(handle);
     }
-    if (milk || foam) {   // 데운 우유 / 거품 — 피처 안쪽 내용물 (모델 종류 무관)
-      const liq = cyl(0.033, 0.030, 0.07, M().milkLiquid, 0, 0.040, 0.01, 18); liq.castShadow = false; g.add(liq);
-      if (foam) { const fo = cyl(0.022, 0.036, 0.018, M().milkLiquid, 0, 0.082, 0.01, 18); fo.castShadow = false; g.add(fo); }
+    if (milk || foam) {   // 우유 / 거품 — 피처 실제 크기에 맞춰 윗부분까지 눈에 보이게 채운다(glb·폴백 공용)
+      g.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(g);
+      const size = bb.getSize(new THREE.Vector3());
+      const ctr = bb.getCenter(new THREE.Vector3());   // x/z 중심(손잡이·주둥이가 대칭에 가까워 컵 중심과 일치)
+      const rad = Math.max(0.018, Math.min(size.x, size.z) / 2 * 0.85);   // 손잡이 축은 min으로 배제 → 컵 내경
+      const H = Math.max(0.04, size.y);
+      const fillFrac = foam ? 0.82 : 0.72;             // 거품이면 좀 더 높이 차 보이게
+      const surfaceY = bb.min.y + H * fillFrac;
+      const thick = Math.max(0.02, Math.min(H * 0.55, surfaceY - bb.min.y - 0.004));
+      const liq = cyl(rad, rad * 0.9, thick, M().milkLiquid, ctr.x, surfaceY - thick / 2, ctr.z, 22);
+      liq.castShadow = false; g.add(liq);
+      if (foam) {   // 우유 거품 — 표면 위로 살짝 솟은 밝은 캡
+        const fo = cyl(rad * 0.97, rad * 0.8, H * 0.05, M().milkLiquid, ctr.x, surfaceY + H * 0.025, ctr.z, 22);
+        fo.castShadow = false; g.add(fo);
+      }
     }
     return g;
   }
@@ -392,8 +405,8 @@ const WORLD = (() => {
     return carton;
   }
 
-  function fitSupplyAsset(root, kind) {
-    const fit = supplyFit[kind] || { w: 0.28, h: 0.28 };
+  function fitSupplyAsset(root, fitOrKind) {
+    const fit = (typeof fitOrKind === 'string' ? supplyFit[fitOrKind] : fitOrKind) || { w: 0.28, h: 0.28 };
     root.updateMatrixWorld(true);
     const before = new THREE.Box3().setFromObject(root);
     const size = before.getSize(new THREE.Vector3());
@@ -460,6 +473,12 @@ const WORLD = (() => {
       return g;
     }
     if (state && state.crumpled) {
+      // 다 쓴(빈) 우유곽 — Blender의 찌그러진 모델(MilkCarton_Folded) 사용. 미로드 시 절차적 폴백.
+      if (window.Assets && window.Assets.isReady && window.Assets.isReady() && window.Assets.names().includes('MilkCarton_Folded')) {
+        const gg = new THREE.Group();
+        const m = window.Assets.spawn('MilkCarton_Folded', 0, 0, 0, 0);
+        if (m) { gg.add(fitSupplyAsset(m, { w: 0.20, h: 0.14 })); return gg; }
+      }
       const g = new THREE.Group();
       const bodyMat = new THREE.MeshStandardMaterial({ color: 0xe6dfc4, roughness: 0.95 });
       const blueMat = new THREE.MeshStandardMaterial({ color: 0x94bfdc, roughness: 0.9 });

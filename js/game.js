@@ -782,6 +782,7 @@ const Game = (() => {
     AudioFX.pourWater(0.5);
     if (artTier === 'perfect') toast('🎨 멋진 라떼아트! 팁 보너스 ✨', 'gold', 2200);
     else if (artTier === 'good') toast('🎨 라떼아트 완성 — 제법인데요 🥛', 'good');
+    else if (h.rawMilk && !h.milk && !h.foam) toast('차가운 우유를 부었어요 🥛');
     else toast(h.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
   }
   // 머신 슬롯에 올라간 컵의 메시 다시 그림 (붓기 후 색/크레마 갱신)
@@ -804,9 +805,9 @@ const Game = (() => {
       AudioFX.pourWater(0.5); toast('샷을 부었어요 ☕');
       return;
     }
-    // pitcher
+    // pitcher — 차가운 우유/스팀 우유/거품 모두 부을 수 있다(canPourToDrink). 비어 있을 때만 차단.
     if (!Pitchers.canPourToDrink(held)) {
-      toast(held.rawMilk ? '차가운 우유예요 — 스팀봉에서 먼저 데우세요' : '피처가 비어 있어요 — 냉장고 우유를 붓고 스팀하세요', 'bad');
+      toast('피처가 비어 있어요 — 냉장고 우유를 붓고 오세요', 'bad');
       AudioFX.err();
       return;
     }
