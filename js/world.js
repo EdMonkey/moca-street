@@ -107,7 +107,8 @@ const WORLD = (() => {
     const glbCup = isShot ? 'EspressoShotGlass' : (isIce ? 'GlassTumbler' : isEsp ? 'EspressoCupSaucer' : 'CoffeeMug');
     let cupShell = null;
     if (glbCup && window.Assets && window.Assets.isReady()) {
-      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, 0);  // 베이스 y=0 정렬된 클론
+      // 베이스 y=0 정렬된 클론. 샷잔은 들었을 때 나무 손잡이가 카메라(전방) 쪽을 향하도록 회전.
+      cupShell = window.Assets.spawn(glbCup, 0, 0, 0, isShot ? -Math.PI / 2 : 0);
       if (cupShell) {
         // 샷잔(EspressoShotGlass)은 유리+원목 자체 머티리얼을 유지하고, 다른 컵은 게임 재질로 틴트
         cupShell.traverse((n) => { if (n.isMesh) { if (!isShot) n.material = cupMat; n.castShadow = false; } });
