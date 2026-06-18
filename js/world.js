@@ -860,6 +860,24 @@ const WORLD = (() => {
       // 외곽선은 POS 기기 모델(본체+화면)에 그린다 — 빛나는 화면 평면은 collectOutlineTargets가 제외
       addI(hitbox(0.9, 0.9, 0.8, 2.5, 1.3, -1.0, { id: 'register' })).userData.outlineRoot = g;
       env.staticBlockers.push({ x: 2.5, z: -1.0, w: 1.0, d: 0.9 });
+
+      // POS 메뉴 화면 — 캔버스 텍스처를 실제 모니터 평면에 입힌다(팝업 아님). 직원쪽(-z)을 향함.
+      // 평면 정면(+z 노멀)을 180° 돌려 -z를 향하게 → 직원이 정면으로 보므로 글자가 정상.
+      const pcv = document.createElement('canvas'); pcv.width = 1024; pcv.height = 648;
+      const ptex = new THREE.CanvasTexture(pcv);
+      ptex.colorSpace = THREE.SRGBColorSpace;
+      ptex.anisotropy = 8;
+      const pmesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.70, 0.443),
+        // self-lit 모니터 느낌 + depthTest 끔(줌 중 단말기 본체에 가리지 않게 항상 위에)
+        new THREE.MeshBasicMaterial({ map: ptex, toneMapped: false, depthTest: false, depthWrite: false }));
+      pmesh.position.set(2.5, 1.34, -1.10);   // 단말기 직원쪽(-z) 면. 화면이 직원을 향함.
+      pmesh.rotation.y = Math.PI;
+      pmesh.renderOrder = 6;
+      pmesh.visible = false;
+      pmesh.userData.noOutline = true;
+      scene.add(pmesh);
+      env.posScreen = { mesh: pmesh, canvas: pcv, ctx: pcv.getContext('2d'), tex: ptex, W: pcv.width, H: pcv.height };
     })();
 
     /* ---------- 픽업대 ---------- */

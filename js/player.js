@@ -19,6 +19,30 @@ const Player = (() => {
   let equipFrom = null;      // 물건이 있던 월드 위치(끌어당기는 시작점). null이면 애니메이션 없음
   const EQUIP_DUR = 0.28;
   const _equipV = new THREE.Vector3();
+  // 포커스 줌(POS 등) — 카메라를 특정 지점으로 부드럽게 이동/복귀
+  const FOCUS_DUR = 0.42;
+  let focusActive = false, focusRet = false, focusT = 0;
+  const _fFromP = new THREE.Vector3(), _fToP = new THREE.Vector3();
+  const _fFromQ = new THREE.Quaternion(), _fToQ = new THREE.Quaternion();
+  const _focusObj = new THREE.Object3D(); _focusObj.rotation.order = 'YXZ';
+  const _lookM = new THREE.Matrix4(), _lookUp = new THREE.Vector3(0, 1, 0);
+  // 카메라 규약(-z가 대상을 향함)으로 회전 쿼터니언 계산. Object3D.lookAt은 비-카메라일 때
+  // +z를 대상으로 향하게 해 반대로 보므로 Matrix4.lookAt을 직접 쓴다.
+  function lookQuat(fromPos, lookAt, out) {
+    _lookM.lookAt(fromPos, lookAt, _lookUp); out.setFromRotationMatrix(_lookM);
+  }
+  function enterFocus(camPos, lookAt) {
+    _fFromP.copy(camera.position); _fFromQ.copy(camera.quaternion);
+    _fToP.set(camPos.x, camPos.y, camPos.z); lookQuat(_fToP, lookAt, _fToQ);
+    focusActive = true; focusRet = false; focusT = 0;
+  }
+  function exitFocus() {
+    if (!focusActive && !focusRet) return;
+    _fFromP.copy(camera.position); _fFromQ.copy(camera.quaternion);
+    _fToP.copy(pos);
+    _focusObj.position.copy(pos); _focusObj.rotation.set(pitch, yaw, 0); _fToQ.copy(_focusObj.quaternion);
+    focusActive = false; focusRet = true; focusT = 0;
+  }
 
   function init(cam, e) {
     camera = cam; env = e;
@@ -59,6 +83,17 @@ const Player = (() => {
   }
 
   function update(dt) {
+    // 포커스 줌 진행 중이면 카메라를 목표로 보간(이동/복귀). 일반 조작·이동은 멈춤.
+    if (focusActive || focusRet) {
+      if (handGroup) handGroup.visible = false;   // 줌 중엔 손 숨김
+      focusT = Math.min(1, focusT + dt / FOCUS_DUR);
+      const e = 1 - Math.pow(1 - focusT, 3);       // easeOutCubic
+      camera.position.lerpVectors(_fFromP, _fToP, e);
+      camera.quaternion.slerpQuaternions(_fFromQ, _fToQ, e);
+      if (focusT >= 1 && focusRet) { focusRet = false; applyCam(); }   // 복귀 완료 → 일반 제어
+      return;
+    }
+    if (handGroup && !handGroup.visible) handGroup.visible = true;
     if (!enabled) return;
     let fx = 0, fz = 0;
     if (keys['KeyW']) fz += 1;
@@ -192,8 +227,18 @@ const Player = (() => {
     return heldMesh.getWorldPosition(out || new THREE.Vector3());
   }
 
+  // 화면 좌표(clientX/Y)로 평면 메시를 레이캐스트 → UV(0..1) 반환(없으면 null). POS 모니터 클릭용.
+  const _scrRay = new THREE.Raycaster();
+  function pickScreen(clientX, clientY, mesh) {
+    const nx = (clientX / window.innerWidth) * 2 - 1;
+    const ny = -(clientY / window.innerHeight) * 2 + 1;
+    _scrRay.setFromCamera({ x: nx, y: ny }, camera);
+    const hit = _scrRay.intersectObject(mesh, false)[0];
+    return hit && hit.uv ? { x: hit.uv.x, y: hit.uv.y } : null;
+  }
+
   return {
-    init, update, aim, aimSurface, aimGround, setHeld, reset, punch, heldWorldPos,
+    init, update, aim, aimSurface, aimGround, setHeld, reset, punch, heldWorldPos, enterFocus, exitFocus, pickScreen,
     setLook(on) { look = on; },
     get aimedObject() { return lastAimHit; },
     get position() { return pos; },

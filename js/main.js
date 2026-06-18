@@ -243,7 +243,7 @@
       Player.enabled = true;
       $('pauseScreen').classList.add('hidden');
     } else if (Game.posOpen) {
-      paused = true;            // POS 주문 입력 중 — 월드 정지, 일시정지 화면은 띄우지 않음
+      paused = false;           // POS 주문 입력 중 — 카메라만 모니터에 줌인, 월드는 계속 진행(정지 안 함)
       Player.enabled = false;
     } else if (Game.mode === 'prep' && Game.prepPanelOpen) {
       Player.enabled = false;   // 관리 패널이 마우스를 잡음 — 일시정지 아님

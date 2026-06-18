@@ -240,14 +240,15 @@
 
   /* ---------- POS 주문 입력 (모니터 확대) ---------- */
   #posScreen{position:fixed;inset:0;z-index:44;display:flex;align-items:center;justify-content:center;
-    background:radial-gradient(ellipse at 50% 45%,rgba(10,18,26,.78),rgba(4,6,9,.9))}
-  #posMonitor{width:min(900px,94vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+    background:radial-gradient(ellipse at 50% 50%,rgba(6,12,18,.12),rgba(4,6,9,.42))}
+  #posMonitor{width:min(820px,90vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;
     border-radius:16px;border:2px solid rgba(96,168,214,.5);
-    background:linear-gradient(180deg,#0f1f2b 0%,#0a141c 100%);
-    box-shadow:0 0 0 7px rgba(16,24,32,.92),0 18px 60px rgba(0,0,0,.6),0 0 60px rgba(60,150,210,.32);
-    transform-origin:center;animation:posZoom .34s cubic-bezier(.18,.9,.24,1)}
-  @keyframes posZoom{from{transform:scale(.28);opacity:0;filter:brightness(2.2)}
-    60%{filter:brightness(1.3)}to{transform:scale(1);opacity:1;filter:none}}
+    background:linear-gradient(180deg,rgba(15,31,43,.94) 0%,rgba(10,20,28,.94) 100%);
+    box-shadow:0 0 0 7px rgba(16,24,32,.82),0 18px 60px rgba(0,0,0,.6),0 0 60px rgba(60,150,210,.32);
+    transform-origin:center;animation:posZoom .38s cubic-bezier(.18,.9,.24,1)}
+  @keyframes posZoom{from{transform:scale(.86);opacity:0}to{transform:scale(1);opacity:1}}
+  .posTile.locked{opacity:.4;cursor:not-allowed;filter:grayscale(.5)}
+  .posTile.locked:hover{transform:none;border-color:rgba(96,168,214,.2);background:rgba(96,168,214,.06)}
   #posHead{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;
     background:linear-gradient(180deg,rgba(60,150,210,.18),rgba(60,150,210,0));
     border-bottom:1px solid rgba(96,168,214,.28)}

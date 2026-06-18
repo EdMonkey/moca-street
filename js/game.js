@@ -47,6 +47,11 @@ const Game = (() => {
   let posOpen = false;            // POS 메뉴 화면이 열려 있는가
   let posCustomer = null;         // 현재 주문 입력 중인 손님
   let posCart = [];               // 선택한 메뉴 [{type:'drink',recipeId,extraShot}|{type:'dessert',kind}]
+  const POS_CAM = { x: 2.5, y: 1.34, z: -1.60 };   // POS 줌인 카메라 위치(직원 통로에서 모니터 정면)
+  const POS_LOOK = { x: 2.5, y: 1.34, z: -1.10 };  // 화면 평면 중심을 정면으로 바라봄
+  let posHitRects = [];     // 캔버스 좌표 클릭 영역 [{x,y,w,h,act,...}]
+  let posHoverKey = null;   // 현재 마우스가 올라간 영역 키(하이라이트용)
+  let posFlash = 0;         // 주문 불일치 시 빨간 플래시(>0이면 테두리 빨강)
   function updateRackVisuals() {
     if (env && env.shotRack) env.shotRack.glasses.forEach((g, i) => { g.visible = i < shotAvail; });
   }
@@ -472,6 +477,52 @@ const Game = (() => {
     if (previewRot !== itemPlaceRot) itemPlacePreview.mesh.rotation.y = previewRot;
     itemPlacePreview.mesh.visible = true;
     return itemPlacePreview;
+  }
+
+  // 상호작용 히트박스 조준 시, 실제 상호작용으로 오브젝트가 놓일 월드 위치(+회전). 유효할 때만 반환.
+  function interactGhostTarget(it, aimMesh) {
+    if (!held || !it) return null;
+    const M = env.machines, V3 = THREE.Vector3;
+    const atLocal = (root, lx, ly, lz) => { const p = root.localToWorld(new V3(lx, ly, lz)); return { x: p.x, y: p.y, z: p.z, rot: root.rotation.y }; };
+    const atMesh = (mesh, rot) => { const p = mesh.getWorldPosition(new V3()); return { x: p.x, y: p.y, z: p.z, rot: rot || 0 }; };
+    if (it.id === 'espCup') {                         // 머신 컵 자리 — 빈 컵/빈 샷잔 올리기
+      const slot = M.espressoSlots[it.slot];
+      if (!slot || slot.cupMesh || slot.busy) return null;
+      const placing = (held.type === 'drink' && !held.drink.espresso) || (held.type === 'shotglass' && !held.filled);
+      if (!placing) return null;
+      return atLocal(slot.st.root, slot.localPos.x, slot.localPos.y, slot.localPos.z);
+    }
+    if (it.id === 'pfSlot') {                          // 포터필터 장착
+      const slot = M.espressoSlots[it.slot];
+      if (!slot || slot.pfState !== 'none' || held.type !== 'portafilter') return null;
+      return atMesh(slot.pf, slot.st.root.rotation.y);
+    }
+    if (it.id === 'grinder') {                         // 그라인더에 빈 포터필터 넣기
+      const job = it.job;
+      if (!job || job.busy || held.type !== 'portafilter' || (held.state || 'empty') !== 'empty' || S.stocks.beans <= 0) return null;
+      return atMesh(job.pfMesh, job.st.root.rotation.y);
+    }
+    if (it.id === 'tamp') {                            // 탬핑 자리 (분쇄된 포터필터)
+      if (held.type !== 'portafilter' || held.state !== 'filled') return null;
+      const root = M.tamp && M.tamp.tamper.parent;
+      return root ? atLocal(root, 0.09, 0, -0.02) : null;
+    }
+    if (it.id === 'knockbox') {                        // 넉박스 — 원두 담긴 포터필터
+      if (held.type !== 'portafilter' || !held.state || held.state === 'empty' || held.state === 'none') return null;
+      const st = aimMesh && aimMesh.userData.station;
+      return st ? atLocal(st.root, 0, 0.28, 0) : null;
+    }
+    if (it.id === 'waterHot' || it.id === 'waterCold') {   // 온수/냉수 디스펜서에 컵 올리기
+      const job = M.waterJobs[it.id];
+      if (!job || job.busy || job.cupMesh || held.type !== 'drink') return null;
+      return atLocal(job.st.root, job.localPos.x, job.localPos.y, job.localPos.z);
+    }
+    if (it.id === 'shotrack' && held.type === 'shotglass' && !held.filled && env.shotRack)   // 샷잔 반납 자리
+      return atMesh(env.shotRack.glasses[0], 0);
+    if (it.id === 'pitcherSpot' && held.type === 'pitcher' && !held.rawMilk && !held.milk && !held.foam && aimMesh) {   // 빈 피처 반납 자리
+      const g = atMesh(aimMesh, 0); g.y -= 0.1; return g;   // 히트박스가 위로 떠 있어 살짝 내림
+    }
+    return null;
   }
 
   function rotateHeldItemPreview() {
@@ -922,76 +973,198 @@ const Game = (() => {
     });
     return total;
   }
-  function renderPosMenu() {
-    let html = '<div class="posSec">☕ 음료</div><div class="posGrid">';
-    unlockedRecipes().forEach(k => {
-      html += `<button class="posTile" data-kind="drink" data-id="${k}">` +
-        `<span class="ptName">${RECIPES[k].name}</span>` +
-        `<span class="ptPrice">${fmt(drinkPrice(k))}</span></button>`;
-    });
-    html += '</div>';
-    const desserts = unlockedDesserts();
-    if (desserts.length) {
-      html += '<div class="posSec">🍰 디저트</div><div class="posGrid">';
-      desserts.forEach(k => {
-        html += `<button class="posTile" data-kind="dessert" data-id="${k}">` +
-          `<span class="ptName">${DESSERTS[k].name}</span>` +
-          `<span class="ptPrice">${fmt(DESSERTS[k].price)}</span></button>`;
-      });
-      html += '</div>';
+  /* ===== POS 메뉴를 실제 모니터(캔버스 텍스처)에 직접 그린다 ===== */
+  function posRR(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function drawPosScreen() {
+    const ps = env && env.posScreen; if (!ps) return;
+    const ctx = ps.ctx, W = ps.W, H = ps.H, hov = posHoverKey;
+    posHitRects = [];
+    const push = (x, y, w, h, o) => posHitRects.push(Object.assign({ x, y, w, h }, o));
+    ctx.textBaseline = 'middle';
+    // 배경
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#0e1820'); bg.addColorStop(1, '#070c11');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    // 헤더
+    ctx.fillStyle = '#11212c'; ctx.fillRect(0, 0, W, 80);
+    ctx.fillStyle = '#e8b86d'; ctx.font = '700 33px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('🧾 주문 입력 — POS', 30, 43);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#8fb0c4'; ctx.font = '600 25px sans-serif';
+    ctx.fillText(posCustomer && posCustomer.pendingOrder ? '#' + posCustomer.pendingOrder.num : '', W - 30, 43);
+    // 손님 주문 + 다시듣기
+    ctx.textAlign = 'left'; ctx.fillStyle = '#7f9bb0'; ctx.font = '500 21px sans-serif';
+    ctx.fillText('손님 주문', 30, 116);
+    ctx.fillStyle = '#dff0fb'; ctx.font = 'italic 700 25px sans-serif';
+    ctx.fillText(posCustomer && posCustomer.pendingOrder ? '"' + posSayText(posCustomer.pendingOrder) + '"' : '', 128, 116);
+    const rb = { x: W - 214, y: 92, w: 184, h: 46 };
+    ctx.fillStyle = hov === 'replay' ? '#244a5e' : '#1b3543'; posRR(ctx, rb.x, rb.y, rb.w, rb.h, 10); ctx.fill();
+    if (hov === 'replay') { ctx.lineWidth = 3; ctx.strokeStyle = '#7fe0ff'; posRR(ctx, rb.x, rb.y, rb.w, rb.h, 10); ctx.stroke(); }
+    ctx.fillStyle = '#bfe0f2'; ctx.font = '600 21px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('🔊 다시 듣기', rb.x + rb.w / 2, rb.y + rb.h / 2);
+    push(rb.x, rb.y, rb.w, rb.h, { act: 'replay', hoverKey: 'replay' });
+
+    // 메뉴 타일
+    const tileW = 196, tileH = 72, gx = 14, gy = 12, ox = 30;
+    function drawTile(kind, k, name, price, lvl, col, row, baseY) {
+      const x = ox + col * (tileW + gx), y = baseY + row * (tileH + gy);
+      const locked = lvl > S.level, key = 'tile:' + kind + ':' + k, hovd = hov === key;
+      ctx.fillStyle = locked ? '#141d25' : (hovd ? '#27465a' : '#1b2a36');
+      posRR(ctx, x, y, tileW, tileH, 12); ctx.fill();
+      ctx.lineWidth = hovd ? 3.5 : 2; ctx.strokeStyle = locked ? '#23323d' : (hovd ? '#7fe0ff' : '#2f4658');
+      posRR(ctx, x, y, tileW, tileH, 12); ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = locked ? '#5a6a76' : '#eaf4fb'; ctx.font = '700 24px sans-serif';
+      ctx.fillText(name, x + 16, y + 27);
+      if (locked) { ctx.fillStyle = '#8a7a55'; ctx.font = '600 20px sans-serif'; ctx.fillText('🔒 Lv.' + lvl, x + 16, y + 52); }
+      else { ctx.fillStyle = '#e8b86d'; ctx.font = '700 22px sans-serif'; ctx.fillText(fmt(price), x + 16, y + 52); }
+      if (!locked) push(x, y, tileW, tileH, { act: 'add', kind, id: k, hoverKey: key });
     }
-    const wrap = $('posMenu');
-    wrap.innerHTML = html;
-    wrap.querySelectorAll('.posTile').forEach(b =>
-      b.onclick = () => addPosItem(b.dataset.kind, b.dataset.id));
+    ctx.fillStyle = '#9fc6dd'; ctx.font = '700 23px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('☕ 음료', ox, 162);
+    const drinkKeys = Object.keys(RECIPES), drinkY = 180;
+    drinkKeys.forEach((k, i) => drawTile('drink', k, RECIPES[k].name, drinkPrice(k), RECIPES[k].lvl, i % 3, Math.floor(i / 3), drinkY));
+    const drinkRows = Math.ceil(drinkKeys.length / 3);
+    const desSecY = drinkY + drinkRows * (tileH + gy) + 18;
+    ctx.fillStyle = '#9fc6dd'; ctx.font = '700 23px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('🍰 디저트', ox, desSecY);
+    const desY = desSecY + 16;
+    Object.keys(DESSERTS).forEach((k, i) => drawTile('dessert', k, DESSERTS[k].name, DESSERTS[k].price, DESSERTS[k].lvl, i % 3, Math.floor(i / 3), desY));
+
+    // 주문 내역(카트)
+    const cx = ox + 3 * (tileW + gx) + 12, cw = W - cx - 24, cy = 150, ch = 394;
+    ctx.fillStyle = '#0c161d'; posRR(ctx, cx, cy, cw, ch, 14); ctx.fill();
+    ctx.strokeStyle = '#1d2e3a'; ctx.lineWidth = 2; posRR(ctx, cx, cy, cw, ch, 14); ctx.stroke();
+    ctx.fillStyle = '#9fc6dd'; ctx.font = '700 23px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('주문 내역', cx + 20, cy + 32);
+    if (!posCart.length) {
+      ctx.fillStyle = '#56707f'; ctx.font = '500 20px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('메뉴를 눌러', cx + cw / 2, cy + ch / 2 - 14);
+      ctx.fillText('손님 주문을 입력하세요', cx + cw / 2, cy + ch / 2 + 14);
+    } else {
+      let ly = cy + 64;
+      posCart.forEach((it, i) => {
+        const name = it.type === 'drink' ? RECIPES[it.recipeId].name + (it.extraShot ? ' +샷' : '') : DESSERTS[it.kind].name;
+        ctx.fillStyle = '#dceaf3'; ctx.font = '600 21px sans-serif'; ctx.textAlign = 'left';
+        ctx.fillText(name, cx + 20, ly);
+        const dx = cx + cw - 44, dy = ly - 17;
+        ctx.fillStyle = hov === 'del:' + i ? '#5a2630' : '#2a1a1f'; posRR(ctx, dx, dy, 34, 34, 8); ctx.fill();
+        ctx.fillStyle = '#ff9b9b'; ctx.font = '700 21px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('✕', dx + 17, dy + 17);
+        push(dx, dy, 34, 34, { act: 'del', i, hoverKey: 'del:' + i });
+        if (it.type === 'drink' && RECIPES[it.recipeId].target.espresso) {
+          const sw = 56, sx = dx - sw - 10, sy = dy;
+          ctx.fillStyle = it.extraShot ? '#3a6a4a' : (hov === 'shot:' + i ? '#2c4456' : '#1d2e3a'); posRR(ctx, sx, sy, sw, 34, 8); ctx.fill();
+          ctx.fillStyle = it.extraShot ? '#bff0c8' : '#aac6d8'; ctx.font = '600 18px sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText('+샷', sx + sw / 2, sy + 17);
+          push(sx, sy, sw, 34, { act: 'shot', i, hoverKey: 'shot:' + i });
+        }
+        ly += 42;
+      });
+    }
+    ctx.fillStyle = '#15232e'; ctx.fillRect(cx + 1, cy + ch - 48, cw - 2, 46);
+    ctx.fillStyle = '#cfe3f0'; ctx.font = '700 23px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('합계', cx + 20, cy + ch - 24);
+    ctx.fillStyle = '#e8b86d'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(posCartTotal()), cx + cw - 20, cy + ch - 24);
+
+    // 하단 버튼
+    const by = 558, bh = 50;
+    const btn = (x, w, label, act, b, h, txt) => {
+      const sel = hov === 'btn:' + act;
+      ctx.fillStyle = sel ? h : b; posRR(ctx, x, by, w, bh, 12); ctx.fill();
+      if (sel) { ctx.lineWidth = 3.5; ctx.strokeStyle = '#7fe0ff'; posRR(ctx, x, by, w, bh, 12); ctx.stroke(); }
+      ctx.fillStyle = txt; ctx.font = '700 23px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(label, x + w / 2, by + bh / 2);
+      push(x, by, w, bh, { act, hoverKey: 'btn:' + act });
+    };
+    btn(ox, 178, '취소 [Esc]', 'cancel', '#2a2030', '#3a2c42', '#d9c7e6');
+    btn(ox + 192, 198, '전체 지우기', 'clear', '#23323d', '#33485a', '#bdd4e2');
+    btn(W - 24 - 262, 262, '주문 확정', 'confirm', '#b9842f', '#d39c3e', '#1a120a');
+
+    // 조작 안내
+    ctx.fillStyle = '#5f7a8a'; ctx.font = '500 19px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('방향키 / WASD 로 칸 이동 · [E] 선택 · [Esc] 취소', W / 2, 628);
+
+    if (posFlash > 0) { ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth = 8; ctx.strokeRect(4, 4, W - 8, H - 8); }
+    ctx.textBaseline = 'alphabetic';
+    ps.tex.needsUpdate = true;
+  }
+  // ===== 키보드 칸 이동(터치식 POS — 마우스 포인터 없이 방향키/WASD로 칸 선택) =====
+  function firstDrinkKey() { return 'tile:drink:' + Object.keys(RECIPES)[0]; }
+  function posSelectedRect() {
+    return posHitRects.find(r => r.hoverKey === posHoverKey) || posHitRects[0] || null;
+  }
+  // 현재 선택 칸 기준으로 dx,dy 방향의 가장 가까운 칸으로 이동(공간 내비게이션)
+  function posNav(dx, dy) {
+    const cur = posSelectedRect();
+    if (!cur) return;
+    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
+    let best = null, bestScore = Infinity;
+    for (const r of posHitRects) {
+      if (r === cur) continue;
+      const rx = r.x + r.w / 2, ry = r.y + r.h / 2;
+      const along = dx * (rx - cx) + dy * (ry - cy);          // 진행 방향 거리(>0이어야 그 방향)
+      if (along <= 2) continue;
+      const perp = Math.abs(dx * (ry - cy) - dy * (rx - cx)); // 직선에서 벗어난 정도
+      const score = along + perp * 2.2;                       // 가깝고 일직선일수록 우선
+      if (score < bestScore) { bestScore = score; best = r; }
+    }
+    if (best && best.hoverKey !== posHoverKey) { posHoverKey = best.hoverKey; drawPosScreen(); }
+  }
+  function posActivate() {
+    const r = posSelectedRect();
+    if (!r) return;
+    switch (r.act) {
+      case 'add': addPosItem(r.kind, r.id); break;
+      case 'del': posCart.splice(r.i, 1); AudioFX.pick(); posHoverKey = firstDrinkKey(); drawPosScreen(); break;
+      case 'shot': { const it = posCart[r.i]; if (it) it.extraShot = !it.extraShot; AudioFX.pick(); drawPosScreen(); } break;
+      case 'replay': if (posCustomer && posCustomer.pendingOrder) speakOrder(posCustomer.pendingOrder.items); break;
+      case 'clear': posCart = []; AudioFX.pick(); posHoverKey = firstDrinkKey(); drawPosScreen(); break;
+      case 'cancel': closePos(); break;
+      case 'confirm': confirmPos(); break;
+    }
   }
   function addPosItem(kind, id) {
     if (kind === 'drink') posCart.push({ type: 'drink', recipeId: id, extraShot: false });
     else posCart.push({ type: 'dessert', kind: id });
     AudioFX.pick();
-    renderPosCart();
-  }
-  function renderPosCart() {
-    const el = $('posCart');
-    if (!posCart.length) {
-      el.innerHTML = '<div class="posEmpty">메뉴를 눌러<br>손님 주문을 입력하세요</div>';
-    } else {
-      el.innerHTML = posCart.map((it, i) => {
-        if (it.type === 'drink') {
-          const esp = !!RECIPES[it.recipeId].target.espresso;
-          const shot = esp ? `<button class="posShot ${it.extraShot ? 'on' : ''}" data-i="${i}">+ 샷</button>` : '';
-          return `<div class="posLine"><span>${RECIPES[it.recipeId].name}${it.extraShot ? ' +샷' : ''}</span>` +
-            `<span class="posLineR">${shot}<button class="posDel" data-i="${i}">✕</button></span></div>`;
-        }
-        return `<div class="posLine"><span>${DESSERTS[it.kind].name}</span>` +
-          `<span class="posLineR"><button class="posDel" data-i="${i}">✕</button></span></div>`;
-      }).join('');
-      el.querySelectorAll('.posDel').forEach(b =>
-        b.onclick = () => { posCart.splice(+b.dataset.i, 1); renderPosCart(); });
-      el.querySelectorAll('.posShot').forEach(b =>
-        b.onclick = () => { const it = posCart[+b.dataset.i]; it.extraShot = !it.extraShot; AudioFX.pick(); renderPosCart(); });
-    }
-    $('posTotal').innerHTML = `합계 <b>${fmt(posCartTotal())}</b>`;
+    drawPosScreen();
   }
   function openPos(c) {
     posCustomer = c;
     posCart = [];
     posOpen = true;
-    $('posOrderNo').textContent = `#${c.pendingOrder.num}`;
-    $('posSayText').textContent = `"${posSayText(c.pendingOrder)}"`;
-    renderPosMenu();
-    renderPosCart();
-    $('posScreen').classList.remove('hidden');
+    posHoverKey = firstDrinkKey();   // 첫 음료 칸을 기본 선택
+    posFlash = 0;
+    // 메뉴는 HTML 팝업이 아니라 실제 모니터(캔버스 텍스처)에 그린다
+    if (env.posScreen) env.posScreen.mesh.visible = true;
+    drawPosScreen();
+    const ch = $('crosshair'); if (ch) ch.style.display = 'none';   // 조준점 숨김
+    document.body.style.cursor = 'none';   // 터치식 POS — 마우스 포인터 숨김(키보드 칸 이동)
     Player.enabled = false;
     useDown = false;
-    // 주문 음성은 손님이 맨 앞에 설 때 이미 말함 — 여기선 '🔊 다시 듣기' 버튼으로 재생
+    // POS 단말기로 카메라 줌인 (실제로 포스기를 들여다보는 시점)
+    if (Player.enterFocus) Player.enterFocus(POS_CAM, POS_LOOK);
+    // 주문 음성은 손님이 맨 앞에 설 때 이미 말함 — 화면의 '🔊 다시 듣기'로 재생
     if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
   }
   function closePos(relock = true) {
     posOpen = false;
     posCustomer = null;
     posCart = [];
-    $('posScreen').classList.add('hidden');
+    posHoverKey = null;
+    if (env.posScreen) env.posScreen.mesh.visible = false;
+    const ch = $('crosshair'); if (ch) ch.style.display = '';
+    document.body.style.cursor = '';   // 마우스 포인터 복원
+    if (Player.exitFocus) Player.exitFocus();   // 카메라 원래 시점으로 복귀
     if (relock) {   // 다시 1인칭 조작으로 (포인터 락 복귀)
       const cv = $('c');
       if (cv && cv.requestPointerLock) cv.requestPointerLock();
@@ -1003,8 +1176,8 @@ const Game = (() => {
     const c = posCustomer;
     // 손님이 말한 주문과 선택한 메뉴가 일치해야 접수된다
     if (orderSig(posCart) !== orderSig(c.pendingOrder.items)) {
-      const mon = $('posMonitor');
-      mon.classList.remove('shake'); void mon.offsetWidth; mon.classList.add('shake');
+      posFlash = 1; drawPosScreen();
+      setTimeout(() => { posFlash = 0; if (posOpen) drawPosScreen(); }, 320);
       toast('주문이 손님 요청과 달라요 — 다시 확인하세요', 'bad');
       AudioFX.err();
       return;
@@ -2692,6 +2865,16 @@ const Game = (() => {
     Effects.update(dt);
     updateFreshnessHUD();
 
+    // POS 화면 입력 중 — 조준/배치/미니게임 잠금(카메라는 모니터에 줌인됨)
+    if (posOpen) {
+      $('prompt').classList.add('hidden');
+      $('crosshair').classList.remove('active');
+      clearItemPlacePreview();
+      updateAimHighlight(null);
+      Tutorial.update();
+      return;
+    }
+
     // 라떼아트 미니게임 — 진행 중엔 다른 조준/상호작용을 모두 잠그고 단독 처리
     if (LatteArt.update(dt, useDown)) {
       $('prompt').classList.add('hidden');
@@ -2729,15 +2912,16 @@ const Game = (() => {
         else { placePoint = pt; p = '<b>[E]</b> 내려놓기 · <b>[R]</b> 회전'; }
       }
     }
-    // 고스트 표시 — 표면 배치(placePoint) 또는 상호작용 위치(ghostInteract)
+    // 상호작용 히트박스 조준 시: 실제 놓일 위치에 고스트 (표면 배치가 아닐 때만)
+    let interactGhost = null;
+    if (!placePoint && aimData && isSurfacePlaceableItem(held))
+      interactGhost = interactGhostTarget(aimData, Player.aimedObject);
+    // 고스트 표시 — 표면 배치(placePoint) 또는 상호작용 위치(interactGhost)
     const ind = env.placeIndicator;
-    if (placePoint) {
-      ind.visible = false;
-      updateItemPlacePreview(held, placePoint, true);
-    } else {
-      ind.visible = false;
-      clearItemPlacePreview();
-    }
+    ind.visible = false;
+    if (placePoint) updateItemPlacePreview(held, placePoint, true);
+    else if (interactGhost) updateItemPlacePreview(held, interactGhost, true);
+    else clearItemPlacePreview();
     const pr = $('prompt');
     if (p) { pr.innerHTML = p; pr.classList.remove('hidden'); $('crosshair').classList.add('active'); }
     else { pr.classList.add('hidden'); $('crosshair').classList.remove('active'); }
@@ -2802,9 +2986,17 @@ const Game = (() => {
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing' && mode !== 'prep' && mode !== 'closing' && mode !== 'after') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
-      if (posOpen) {           // POS 메뉴 입력 중 — [E]/Enter 확정, [Esc] 취소
-        if (ev.code === 'KeyE' || ev.code === 'Enter') confirmPos();
-        else if (ev.code === 'Escape') closePos();
+      if (posOpen) {           // POS 메뉴 — 방향키/WASD 칸 이동, [E]/Enter/Space 선택, [Esc] 취소
+        if (ev.repeat) { ev.preventDefault(); return; }   // 길게 눌러도 한 칸씩
+        switch (ev.code) {
+          case 'ArrowUp': case 'KeyW': posNav(0, -1); break;
+          case 'ArrowDown': case 'KeyS': posNav(0, 1); break;
+          case 'ArrowLeft': case 'KeyA': posNav(-1, 0); break;
+          case 'ArrowRight': case 'KeyD': posNav(1, 0); break;
+          case 'KeyE': case 'Enter': case 'Space': posActivate(); break;
+          case 'Escape': closePos(); break;
+        }
+        ev.preventDefault();
         return;
       }
       if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
@@ -2833,12 +3025,8 @@ const Game = (() => {
     $('recipeBook').addEventListener('click', ev => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
-    // POS 주문 입력 화면 버튼
-    $('btnPosConfirm').onclick = confirmPos;
-    $('btnPosClear').onclick = () => { posCart = []; AudioFX.pick(); renderPosCart(); };
-    $('btnPosCancel').onclick = () => closePos();
-    $('btnPosReplay').onclick = () => { if (posCustomer && posCustomer.pendingOrder) speakOrder(posCustomer.pendingOrder.items); };
     document.addEventListener('mousedown', ev => {
+      if (posOpen) return;   // POS는 키보드 칸 이동 — 마우스 입력 무시(포인터 숨김)
       if ((mode === 'playing' || mode === 'closing' || mode === 'after') && document.pointerLockElement && ev.button === 0 && !editing()) {
         useDown = true; onUse();
       }
