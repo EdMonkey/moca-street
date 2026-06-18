@@ -350,13 +350,16 @@ const Game = (() => {
     return DESSERTS[h.kind].name;
   }
 
+  // 내려놓기 충돌 반경 — 실측 footprint(손잡이·주둥이 제외한 몸통) 기준으로 좁혀 서로 바짝 붙여 놓을 수 있게.
   function placedItemRadius(item) {
-    if (!item) return 0.14;
-    if (item.type === 'milkCarton') return 0.065;
-    if (item.type === 'shotglass') return 0.09;
-    if (item.type === 'pitcher') return 0.12;
-    if (item.type === 'drink') return 0.13;
-    return 0.14;
+    if (!item) return 0.07;
+    if (item.type === 'milkCarton') return item.crumpled ? 0.06 : 0.05;   // 몸통 ~0.04, 찌그러짐 ~0.053
+    if (item.type === 'shotglass') return 0.055;                          // 잔 몸통 ~0.035 (나무 손잡이 제외)
+    if (item.type === 'pitcher') return 0.075;                            // 컵 ~0.063 (손잡이 제외)
+    if (item.type === 'drink') return 0.07;                               // 컵 몸통 ~0.05~0.056
+    if (item.type === 'dessert') return 0.09;                             // 접시 ~0.085
+    if (item.type === 'deliveryBox') return 0.2;                          // 박스 ~0.21
+    return 0.07;                                                          // 포터필터 등
   }
 
   function placeBlocked(point, item = held) {
@@ -724,7 +727,11 @@ const Game = (() => {
     const rec = it.rec;
     if (!rec) return;
     if (held && held.type === 'milkCarton') {
-      if (rec.item.type !== 'pitcher') { toast('우유는 피처에만 부을 수 있어요', 'bad'); AudioFX.err(); return; }
+      if (rec.item.type === 'drink' && rec.item.drink.cup !== 'shot') {   // 우유곽을 컵에 바로 붓기
+        pourCartonIntoDrink(rec.item.drink, () => refreshPlacedDrink(rec));
+        return;
+      }
+      if (rec.item.type !== 'pitcher') { toast('우유는 피처나 컵에 부을 수 있어요', 'bad'); AudioFX.err(); return; }
       const res = Pitchers.pourCartonIntoPitcher(rec.item, held);
       if (!res.ok) { toast(res.reason === 'carton_spoiled' ? '상한 우유라 부을 수 없어요' : res.reason === 'carton_empty' ? '구겨진 우유곽이라 부을 수 없어요' : '피처에 이미 내용물이 있어요', 'bad'); AudioFX.err(); return; }
       setHeld(res.carton || held);
@@ -784,6 +791,20 @@ const Game = (() => {
     else if (artTier === 'good') toast('🎨 라떼아트 완성 — 제법인데요 🥛', 'good');
     else if (h.rawMilk && !h.milk && !h.foam) toast('차가운 우유를 부었어요 🥛');
     else toast(h.foam ? '우유와 거품을 부었어요 🥛' : '데운 우유를 부었어요 🥛');
+  }
+  // 우유곽을 컵(drink)에 직접 부어 찬 우유 1회분을 더한다 (피처를 거치지 않음). held는 우유곽.
+  function pourCartonIntoDrink(drink, refresh) {
+    if (held.spoiled) { toast('상한 우유라 부을 수 없어요', 'bad'); AudioFX.err(); return; }
+    if (held.crumpled || (held.servings ?? 0) <= 0) { toast('구겨진 우유곽이라 부을 수 없어요', 'bad'); AudioFX.err(); return; }
+    if (drink.milk) { toast('이미 우유가 들어 있는 컵이에요'); return; }
+    drink.milk = 1; addStep(drink, 'milk');
+    held.servings = Math.max(0, (held.servings ?? 3) - 1);   // 우유곽 1회 소비
+    held.crumpled = held.servings <= 0;
+    refresh();
+    setHeld(held);                       // 우유곽 메시 갱신(소진 시 찌그러진 모델)
+    Pitchers.ensureMilkState(S); syncMilkFridgeMilk(true); save();
+    AudioFX.pourWater(0.5);
+    toast(held.crumpled ? '우유를 다 부어서 우유곽이 비었어요 🥛' : `차가운 우유를 부었어요 (${held.servings}/3 남음) 🥛`);
   }
   // 머신 슬롯에 올라간 컵의 메시 다시 그림 (붓기 후 색/크레마 갱신)
   function refreshSlotCup(slot) {
@@ -1236,10 +1257,9 @@ const Game = (() => {
       const slot = env.machines.espressoSlots[it.slot];
       if (slot.locked && !S.upgrades.dualHead) { toast('🔒 듀얼 그룹헤드 업그레이드가 필요합니다'); return; }
       // 머신 위 일반 컵(샷잔 제외)에 그 자리에서 바로 붓기 — 추출 중만 아니면 (예: 샷 추출된 컵에 우유)
-      if (slot.cupMesh && slot.drink.cup !== 'shot' && !(slot.busy && !slot.done)
-          && held && (held.type === 'shotglass' || held.type === 'pitcher')) {
-        pourHeldInto(slot.drink, () => refreshSlotCup(slot));
-        return;
+      if (slot.cupMesh && slot.drink.cup !== 'shot' && !(slot.busy && !slot.done) && held) {
+        if (held.type === 'milkCarton') { pourCartonIntoDrink(slot.drink, () => refreshSlotCup(slot)); return; }
+        if (held.type === 'shotglass' || held.type === 'pitcher') { pourHeldInto(slot.drink, () => refreshSlotCup(slot)); return; }
       }
       if (slot.busy) {
         if (!slot.done) { toast('추출 중입니다…'); return; }
