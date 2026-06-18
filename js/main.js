@@ -232,7 +232,7 @@
 
   canvas.addEventListener('click', () => {
     if ((Game.mode === 'playing' || Game.mode === 'closing' || Game.mode === 'prep' || Game.mode === 'after') && !document.pointerLockElement
-      && !Game.prepPanelOpen && $('dayEnd').classList.contains('hidden')) lockPointer();
+      && !Game.prepPanelOpen && !Game.posOpen && $('dayEnd').classList.contains('hidden')) lockPointer();
   });
 
   document.addEventListener('pointerlockchange', () => {
@@ -242,6 +242,9 @@
       paused = false;
       Player.enabled = true;
       $('pauseScreen').classList.add('hidden');
+    } else if (Game.posOpen) {
+      paused = true;            // POS 주문 입력 중 — 월드 정지, 일시정지 화면은 띄우지 않음
+      Player.enabled = false;
     } else if (Game.mode === 'prep' && Game.prepPanelOpen) {
       Player.enabled = false;   // 관리 패널이 마우스를 잡음 — 일시정지 아님
     } else if (Game.mode === 'after' && !$('dayEnd').classList.contains('hidden')) {

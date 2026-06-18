@@ -43,6 +43,10 @@ const Game = (() => {
   // 머신 위 재사용 샷잔 수량 제한 — 거치대에 있는(가용) 개수. grab시 --, 반납시 ++
   const SHOT_MAX = 2;
   let shotAvail = SHOT_MAX;
+  // POS 주문 입력(모니터 확대 메뉴 선택)
+  let posOpen = false;            // POS 메뉴 화면이 열려 있는가
+  let posCustomer = null;         // 현재 주문 입력 중인 손님
+  let posCart = [];               // 선택한 메뉴 [{type:'drink',recipeId,extraShot}|{type:'dessert',kind}]
   function updateRackVisuals() {
     if (env && env.shotRack) env.shotRack.glasses.forEach((g, i) => { g.visible = i < shotAvail; });
   }
@@ -888,6 +892,134 @@ const Game = (() => {
       { rate: 0.96 + Math.random() * 0.18, pitch: 0.8 + Math.random() * 0.6 }, ORDER_RATE);
   }
 
+  /* ===== POS 주문 입력 (모니터 확대 → 메뉴 직접 선택) ===== */
+  // 손님이 대기열 맨 앞에 서면 주문을 '말한다'(음성). 이후 플레이어가 POS에서 직접 입력한다.
+  function updatePendingOrders() {
+    const c = Customers.frontCustomer();
+    if (c && !c.pendingOrder) {
+      c.pendingOrder = generateOrder(c);
+      speakOrder(c.pendingOrder.items);   // 손님이 영어로 주문을 말함
+    }
+  }
+  // 손님이 말한 주문을 화면에 적어줄 문구(음성과 동일한 영어 메뉴명)
+  function posSayText(order) {
+    return order.items.map(it => {
+      const n = englishItemName(it);
+      return it.type === 'drink' && it.extraShot ? `${n} (extra shot)` : n;
+    }).join(' + ');
+  }
+  // 주문/선택을 정규화한 서명 — 순서 무관 비교용
+  function orderSig(items) {
+    return items.map(it => it.type === 'drink'
+      ? `d:${it.recipeId}${it.extraShot ? '+shot' : ''}`
+      : `s:${it.kind}`).sort().join('|');
+  }
+  function posCartTotal() {
+    let total = 0;
+    posCart.forEach(it => {
+      if (it.type === 'drink') total += drinkPrice(it.recipeId) + (it.extraShot ? BAL.order.extraShotPrice : 0);
+      else total += DESSERTS[it.kind].price;
+    });
+    return total;
+  }
+  function renderPosMenu() {
+    let html = '<div class="posSec">☕ 음료</div><div class="posGrid">';
+    unlockedRecipes().forEach(k => {
+      html += `<button class="posTile" data-kind="drink" data-id="${k}">` +
+        `<span class="ptName">${RECIPES[k].name}</span>` +
+        `<span class="ptPrice">${fmt(drinkPrice(k))}</span></button>`;
+    });
+    html += '</div>';
+    const desserts = unlockedDesserts();
+    if (desserts.length) {
+      html += '<div class="posSec">🍰 디저트</div><div class="posGrid">';
+      desserts.forEach(k => {
+        html += `<button class="posTile" data-kind="dessert" data-id="${k}">` +
+          `<span class="ptName">${DESSERTS[k].name}</span>` +
+          `<span class="ptPrice">${fmt(DESSERTS[k].price)}</span></button>`;
+      });
+      html += '</div>';
+    }
+    const wrap = $('posMenu');
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.posTile').forEach(b =>
+      b.onclick = () => addPosItem(b.dataset.kind, b.dataset.id));
+  }
+  function addPosItem(kind, id) {
+    if (kind === 'drink') posCart.push({ type: 'drink', recipeId: id, extraShot: false });
+    else posCart.push({ type: 'dessert', kind: id });
+    AudioFX.pick();
+    renderPosCart();
+  }
+  function renderPosCart() {
+    const el = $('posCart');
+    if (!posCart.length) {
+      el.innerHTML = '<div class="posEmpty">메뉴를 눌러<br>손님 주문을 입력하세요</div>';
+    } else {
+      el.innerHTML = posCart.map((it, i) => {
+        if (it.type === 'drink') {
+          const esp = !!RECIPES[it.recipeId].target.espresso;
+          const shot = esp ? `<button class="posShot ${it.extraShot ? 'on' : ''}" data-i="${i}">+ 샷</button>` : '';
+          return `<div class="posLine"><span>${RECIPES[it.recipeId].name}${it.extraShot ? ' +샷' : ''}</span>` +
+            `<span class="posLineR">${shot}<button class="posDel" data-i="${i}">✕</button></span></div>`;
+        }
+        return `<div class="posLine"><span>${DESSERTS[it.kind].name}</span>` +
+          `<span class="posLineR"><button class="posDel" data-i="${i}">✕</button></span></div>`;
+      }).join('');
+      el.querySelectorAll('.posDel').forEach(b =>
+        b.onclick = () => { posCart.splice(+b.dataset.i, 1); renderPosCart(); });
+      el.querySelectorAll('.posShot').forEach(b =>
+        b.onclick = () => { const it = posCart[+b.dataset.i]; it.extraShot = !it.extraShot; AudioFX.pick(); renderPosCart(); });
+    }
+    $('posTotal').innerHTML = `합계 <b>${fmt(posCartTotal())}</b>`;
+  }
+  function openPos(c) {
+    posCustomer = c;
+    posCart = [];
+    posOpen = true;
+    $('posOrderNo').textContent = `#${c.pendingOrder.num}`;
+    $('posSayText').textContent = `"${posSayText(c.pendingOrder)}"`;
+    renderPosMenu();
+    renderPosCart();
+    $('posScreen').classList.remove('hidden');
+    Player.enabled = false;
+    useDown = false;
+    // 주문 음성은 손님이 맨 앞에 설 때 이미 말함 — 여기선 '🔊 다시 듣기' 버튼으로 재생
+    if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
+  }
+  function closePos(relock = true) {
+    posOpen = false;
+    posCustomer = null;
+    posCart = [];
+    $('posScreen').classList.add('hidden');
+    if (relock) {   // 다시 1인칭 조작으로 (포인터 락 복귀)
+      const cv = $('c');
+      if (cv && cv.requestPointerLock) cv.requestPointerLock();
+    }
+  }
+  function confirmPos() {
+    if (!posOpen || !posCustomer) return;
+    if (!posCart.length) { toast('메뉴를 선택하세요', 'bad'); AudioFX.err(); return; }
+    const c = posCustomer;
+    // 손님이 말한 주문과 선택한 메뉴가 일치해야 접수된다
+    if (orderSig(posCart) !== orderSig(c.pendingOrder.items)) {
+      const mon = $('posMonitor');
+      mon.classList.remove('shake'); void mon.offsetWidth; mon.classList.add('shake');
+      toast('주문이 손님 요청과 달라요 — 다시 확인하세요', 'bad');
+      AudioFX.err();
+      return;
+    }
+    // 일치 → 접수 (실제 주문은 손님이 말한 pendingOrder를 그대로 사용)
+    const order = c.pendingOrder;
+    c.pendingOrder = null;
+    orders.push(order);
+    Customers.takeOrder(c, order);
+    UI.addTicket(order);
+    AudioFX.cash();
+    toast(`주문 #${order.num} 접수 — ${order.items.map(itemName).join(', ')}`, 'gold');
+    closePos();
+  }
+
   /* ===== 손님 훅 ===== */
   function onAngryLeave(c) {
     const i = orders.findIndex(o => o.customer === c);
@@ -1013,17 +1145,12 @@ const Game = (() => {
       return;
     }
 
-    /* --- 주문 받기 --- */
+    /* --- 주문 받기: POS 모니터를 열어 메뉴를 직접 선택 --- */
     if (id === 'register') {
       const c = Customers.frontCustomer();
       if (!c) { toast('주문할 손님이 없습니다'); return; }
-      const order = generateOrder(c);
-      orders.push(order);
-      Customers.takeOrder(c, order);
-      UI.addTicket(order);
-      AudioFX.ding();
-      speakOrder(order.items);   // 손님이 영어로 주문을 말함
-      toast(`주문 #${order.num} — ${order.items.map(itemName).join(', ')}`, 'gold');
+      if (!c.pendingOrder) c.pendingOrder = generateOrder(c);   // 안전장치(아직 생성 전이면 즉석 생성)
+      openPos(c);
       return;
     }
 
@@ -2559,6 +2686,7 @@ const Game = (() => {
     }
 
     Customers.update(dt);
+    updatePendingOrders();   // 맨 앞 손님이 주문을 말하도록(음성) — POS 입력 전 단계
     updateSlots(dt);
     updateJobs(dt);
     Effects.update(dt);
@@ -2674,6 +2802,11 @@ const Game = (() => {
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing' && mode !== 'prep' && mode !== 'closing' && mode !== 'after') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
+      if (posOpen) {           // POS 메뉴 입력 중 — [E]/Enter 확정, [Esc] 취소
+        if (ev.code === 'KeyE' || ev.code === 'Enter') confirmPos();
+        else if (ev.code === 'Escape') closePos();
+        return;
+      }
       if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
       // 준비/영업후 전용 조작
       if (mode === 'prep' || mode === 'after') {
@@ -2700,6 +2833,11 @@ const Game = (() => {
     $('recipeBook').addEventListener('click', ev => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
+    // POS 주문 입력 화면 버튼
+    $('btnPosConfirm').onclick = confirmPos;
+    $('btnPosClear').onclick = () => { posCart = []; AudioFX.pick(); renderPosCart(); };
+    $('btnPosCancel').onclick = () => closePos();
+    $('btnPosReplay').onclick = () => { if (posCustomer && posCustomer.pendingOrder) speakOrder(posCustomer.pendingOrder.items); };
     document.addEventListener('mousedown', ev => {
       if ((mode === 'playing' || mode === 'closing' || mode === 'after') && document.pointerLockElement && ev.button === 0 && !editing()) {
         useDown = true; onUse();
@@ -2742,6 +2880,7 @@ const Game = (() => {
     get mode() { return mode; },
     set mode(v) { mode = v; },
     get prepPanelOpen() { return prepPanelOpen; },
+    get posOpen() { return posOpen; },
     get inTutorial() { return Tutorial.active(); },
     notifyEditMode(on) {
       if (on) {
