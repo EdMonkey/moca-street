@@ -10,6 +10,7 @@ const Player = (() => {
   const ray = new THREE.Raycaster();
   ray.far = 2.8;
   let handGroup = null;      // 카메라에 붙는 손 그룹
+  let carryGroup = null;     // 카메라에 붙는 보조 휴대 슬롯(영수증 등)
   let heldMesh = null;
   let bobT = 0;
   let enabled = false;
@@ -50,6 +51,8 @@ const Player = (() => {
     handGroup = new THREE.Group();
     handGroup.position.set(0.34, -0.36, -0.62);
     camera.add(handGroup);
+    carryGroup = new THREE.Group();          // 영수증 등 손에 들고 옮기는 보조 슬롯
+    camera.add(carryGroup);
 
     document.addEventListener('keydown', ev => { keys[ev.code] = true; });
     document.addEventListener('keyup', ev => { keys[ev.code] = false; });
@@ -227,6 +230,18 @@ const Player = (() => {
     return heldMesh.getWorldPosition(out || new THREE.Vector3());
   }
 
+  // 영수증 등을 손에 들고 다니는 보조 슬롯 부착/해제 (카메라 앞 고정 위치)
+  function carryAttach(obj) {
+    obj.position.set(0.17, -0.17, -0.42);
+    obj.rotation.set(0.12, 0, 0.05);
+    obj.scale.setScalar(1.7);
+    carryGroup.add(obj);
+  }
+  function carryDetach(obj) {
+    if (obj.parent === carryGroup) carryGroup.remove(obj);
+    obj.scale.setScalar(1);
+  }
+
   // 화면 좌표(clientX/Y)로 평면 메시를 레이캐스트 → UV(0..1) 반환(없으면 null). POS 모니터 클릭용.
   const _scrRay = new THREE.Raycaster();
   function pickScreen(clientX, clientY, mesh) {
@@ -238,7 +253,7 @@ const Player = (() => {
   }
 
   return {
-    init, update, aim, aimSurface, aimGround, setHeld, reset, punch, heldWorldPos, enterFocus, exitFocus, pickScreen,
+    init, update, aim, aimSurface, aimGround, setHeld, reset, punch, heldWorldPos, enterFocus, exitFocus, pickScreen, carryAttach, carryDetach,
     setLook(on) { look = on; },
     get aimedObject() { return lastAimHit; },
     get position() { return pos; },

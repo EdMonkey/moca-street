@@ -1091,6 +1091,7 @@ const WORLD = (() => {
     env.machines.espressoSlots = [];
     env.machines.grinderJobs = [];
     env.machines.steamerJobs = [];
+    env.machines.espressoBoards = [];   // 머신 상단 주문 영수증 보드(들)
 
     /* ---------- 에스프레소 머신 (구매 시 재사용되는 빌더) ---------- */
     function buildEspresso(id, x, z, lockSecond) {
@@ -1207,6 +1208,16 @@ const WORLD = (() => {
         busy: false, done: false, t: 0, dur: 0, drink: null, cupMesh: null, makingFoam: false, sound: null
       };
       env.machines.steamerJobs.push(steamJob);
+      // ---- 주문 영수증 보드 (머신 상단 앞쪽 와이어 + 슬롯, +z=바리스타쪽) ----
+      const railMat = new THREE.MeshStandardMaterial({ color: 0x7a8186, metalness: 0.7, roughness: 0.4 });
+      const wireR = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.72, 6), railMat);
+      wireR.rotation.z = Math.PI / 2; wireR.position.set(0, 0.93, 0.30); wireR.castShadow = false; g.add(wireR);
+      [-0.34, 0.34].forEach(px => { const post = cyl(0.006, 0.006, 0.30, M().steelDark, px, 0.79, 0.30, 6, { cast: false }); g.add(post); });
+      const boardSlots = [-0.27, -0.09, 0.09, 0.27].map(sx => new THREE.Vector3(sx, 0.79, 0.30));
+      const board = { st, slots: boardSlots, occupied: boardSlots.map(() => null), hb: null };
+      board.hb = childHitbox(st, 0.76, 0.34, 0.18, 0, 0.81, 0.30, { id: 'receiptBoard', board });
+      board.hb.userData.interactDisabled = true;   // 영수증을 들고 있을 때만 활성(평소 머신 조작 방해 방지)
+      env.machines.espressoBoards.push(board);
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.15), textLabel('에스프레소 머신', 320, 60, '700 30px "Malgun Gothic"'));
       lbl.position.set(0, 0.85, 0.25);
       g.add(lbl);

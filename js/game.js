@@ -1113,43 +1113,29 @@ const Game = (() => {
 
     // 조작 안내
     ctx.fillStyle = '#5f7a8a'; ctx.font = '500 19px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('방향키 / WASD 로 칸 이동 · [E] 선택 · [Esc] 취소', W / 2, 628);
+    ctx.fillText('메뉴를 클릭해 주문을 담고 · 주문 확정 클릭(또는 [E]) · [Esc] 취소', W / 2, 628);
 
     if (posFlash > 0) { ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth = 8; ctx.strokeRect(4, 4, W - 8, H - 8); }
     ctx.textBaseline = 'alphabetic';
     ps.tex.needsUpdate = true;
   }
-  // ===== 키보드 칸 이동(터치식 POS — 마우스 포인터 없이 방향키/WASD로 칸 선택) =====
-  function firstDrinkKey() { return 'tile:drink:' + Object.keys(RECIPES)[0]; }
-  function posSelectedRect() {
-    return posHitRects.find(r => r.hoverKey === posHoverKey) || posHitRects[0] || null;
-  }
-  // 현재 선택 칸 기준으로 dx,dy 방향의 가장 가까운 칸으로 이동(공간 내비게이션)
-  function posNav(dx, dy) {
-    const cur = posSelectedRect();
-    if (!cur) return;
-    const cx = cur.x + cur.w / 2, cy = cur.y + cur.h / 2;
-    let best = null, bestScore = Infinity;
-    for (const r of posHitRects) {
-      if (r === cur) continue;
-      const rx = r.x + r.w / 2, ry = r.y + r.h / 2;
-      const along = dx * (rx - cx) + dy * (ry - cy);          // 진행 방향 거리(>0이어야 그 방향)
-      if (along <= 2) continue;
-      const perp = Math.abs(dx * (ry - cy) - dy * (rx - cx)); // 직선에서 벗어난 정도
-      const score = along + perp * 2.2;                       // 가깝고 일직선일수록 우선
-      if (score < bestScore) { bestScore = score; best = r; }
+  // ===== 마우스 포인터로 3D POS 화면 클릭 → 캔버스 좌표의 칸 동작 실행 =====
+  function posRectAt(cx, cy) {
+    for (let i = posHitRects.length - 1; i >= 0; i--) {
+      const r = posHitRects[i];
+      if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) return r;
     }
-    if (best && best.hoverKey !== posHoverKey) { posHoverKey = best.hoverKey; drawPosScreen(); }
+    return null;
   }
-  function posActivate() {
-    const r = posSelectedRect();
+  function handlePosClick(cx, cy) {
+    const r = posRectAt(cx, cy);
     if (!r) return;
     switch (r.act) {
       case 'add': addPosItem(r.kind, r.id); break;
-      case 'del': posCart.splice(r.i, 1); AudioFX.pick(); posHoverKey = firstDrinkKey(); drawPosScreen(); break;
+      case 'del': posCart.splice(r.i, 1); AudioFX.pick(); drawPosScreen(); break;
       case 'shot': { const it = posCart[r.i]; if (it) it.extraShot = !it.extraShot; AudioFX.pick(); drawPosScreen(); } break;
       case 'replay': if (posCustomer && posCustomer.pendingOrder) speakOrder(posCustomer.pendingOrder.items); break;
-      case 'clear': posCart = []; AudioFX.pick(); posHoverKey = firstDrinkKey(); drawPosScreen(); break;
+      case 'clear': posCart = []; AudioFX.pick(); drawPosScreen(); break;
       case 'cancel': closePos(); break;
       case 'confirm': confirmPos(); break;
     }
@@ -1164,13 +1150,12 @@ const Game = (() => {
     posCustomer = c;
     posCart = [];
     posOpen = true;
-    posHoverKey = firstDrinkKey();   // 첫 음료 칸을 기본 선택
+    posHoverKey = null;
     posFlash = 0;
     // 메뉴는 HTML 팝업이 아니라 실제 모니터(캔버스 텍스처)에 그린다
     if (env.posScreen) env.posScreen.mesh.visible = true;
     drawPosScreen();
-    const ch = $('crosshair'); if (ch) ch.style.display = 'none';   // 조준점 숨김
-    document.body.style.cursor = 'none';   // 터치식 POS — 마우스 포인터 숨김(키보드 칸 이동)
+    const ch = $('crosshair'); if (ch) ch.style.display = 'none';   // 조준점 숨김(마우스 커서로 클릭)
     Player.enabled = false;
     useDown = false;
     // POS 단말기로 카메라 줌인 (실제로 포스기를 들여다보는 시점)
@@ -1185,7 +1170,6 @@ const Game = (() => {
     posHoverKey = null;
     if (env.posScreen) env.posScreen.mesh.visible = false;
     const ch = $('crosshair'); if (ch) ch.style.display = '';
-    document.body.style.cursor = '';   // 마우스 포인터 복원
     if (Player.exitFocus) Player.exitFocus();   // 카메라 원래 시점으로 복귀
     if (relock) {   // 다시 1인칭 조작으로 (포인터 락 복귀)
       const cv = $('c');
@@ -1209,7 +1193,7 @@ const Game = (() => {
     c.pendingOrder = null;
     orders.push(order);
     Customers.takeOrder(c, order);
-    UI.addTicket(order);
+    if (typeof Receipts !== 'undefined') Receipts.add(order);   // POS에서 영수증 인쇄 → 주문 레일
     AudioFX.cash();
     toast(`주문 #${order.num} 접수 — ${order.items.map(itemName).join(', ')}`, 'gold');
     closePos();
@@ -1218,7 +1202,7 @@ const Game = (() => {
   /* ===== 손님 훅 ===== */
   function onAngryLeave(c) {
     const i = orders.findIndex(o => o.customer === c);
-    if (i >= 0) { UI.removeTicket(orders[i]); orders.splice(i, 1); }
+    if (i >= 0) { if (typeof Receipts !== 'undefined') Receipts.remove(orders[i], false); orders.splice(i, 1); }
     S.rep = Math.max(0, S.rep - 4);
     dayStats.angry++;
     toast('손님이 화나서 떠났어요… (평판 -4)', 'bad');
@@ -1270,6 +1254,12 @@ const Game = (() => {
     // 출입문 여닫기 — 밖으로 나가거나 들어올 때(준비·영업 모두 가능)
     if (id === 'door') {
       if (env.door) { env.door.toggle(); AudioFX.bell(); toast(env.door.open ? '🚪 문을 열었어요' : '🚪 문을 닫았어요'); }
+      return;
+    }
+
+    if (id === 'receipt') {
+      if (held) { toast('손을 비우면 영수증을 집을 수 있어요'); AudioFX.err(); return; }
+      Receipts.grab(it.ref);   // 영수증 집어 들기 → 다른 곳으로 옮길 수 있음
       return;
     }
 
@@ -1720,7 +1710,7 @@ const Game = (() => {
           const px = env.pickupPos.x + (Math.random() - 0.5) * 0.5;
           Effects.spawnServe(new THREE.Vector3(px, env.machines.pickupTrayY || 1.07, env.pickupPos.z), fxMesh);
         }
-        UI.renderTicketItems(o);
+        if (typeof Receipts !== 'undefined') Receipts.refresh(o);
         if (o.items.every(i => i.done)) completeOrder(o, servedDrink);
         else toast(`${itemName(item)} 전달! 나머지 항목도 준비하세요`, 'good');
         return;
@@ -1809,7 +1799,7 @@ const Game = (() => {
       toast(shotMismatch ? '⚠️ 주문과 샷 수가 달라요 — 손님 불만 · 평판 하락' : '😖 손님 불만 — 평판 하락', 'bad', 2200);
     else if (fresh < 1) toast(`⏳ 신선도 ${Math.round(fresh * 100)}% — 팁 감소`, 'bad', 1800);
     gainXP(Math.round(o.total / 100));
-    UI.removeTicket(o);
+    if (typeof Receipts !== 'undefined') Receipts.remove(o, true);
     orders.splice(orders.indexOf(o), 1);
     // 컵은 픽업대 연출에서 사라지므로 손님은 빈손으로 떠남
     Customers.serve(c, null, mood);
@@ -2355,7 +2345,7 @@ const Game = (() => {
     Pitchers.ensureMilkState(S);
     const arrivals = Logistics.collectArrivals(S, S.day);
     dayStats = freshDayStats();        // 준비~영업 지출이 누적되도록 여기서 1회 초기화
-    orders = []; orderSeq = 0;
+    orders = []; orderSeq = 0; if (typeof Receipts !== 'undefined') Receipts.clearAll();
     $('tickets').innerHTML = '';
     Tutorial.cancel();
     Customers.clear();
@@ -2395,7 +2385,7 @@ const Game = (() => {
     if (env.doorSign) env.doorSign.setOpen(true);   // 영업 중 = OPEN 팻말
     if (env.door) env.door.open = true;             // 영업 시작 = 문 열림
     if (typeof Weather !== 'undefined') Weather.setClock(9);   // 영업 시작 = 09시
-    orders = []; orderSeq = 0;
+    orders = []; orderSeq = 0; if (typeof Receipts !== 'undefined') Receipts.clearAll();
     $('tickets').innerHTML = '';
     spawnTimer = S.day <= 3 ? [7, 4.5, 3][S.day - 1] : 2.5;   // 초반일수록 첫 손님 입장까지 여유
     resetStations({ keepPrepTools: true });
@@ -2538,7 +2528,7 @@ const Game = (() => {
     mode = 'after';
     open = false;
     Customers.clear();
-    orders = []; orderSeq = 0;
+    orders = []; orderSeq = 0; if (typeof Receipts !== 'undefined') Receipts.clearAll();
     $('tickets').innerHTML = '';
     clearDebugOverlays();
     $('prepBar').classList.add('hidden');
@@ -2555,7 +2545,7 @@ const Game = (() => {
   function endDayNow() {
     if (!dayStats) dayStats = freshDayStats();
     Customers.clear();
-    orders = []; orderSeq = 0;
+    orders = []; orderSeq = 0; if (typeof Receipts !== 'undefined') Receipts.clearAll();
     $('tickets').innerHTML = '';
     if (mode === 'after') {
       $('hud').classList.add('hidden');
@@ -2884,6 +2874,7 @@ const Game = (() => {
     updateSlots(dt);
     updateJobs(dt);
     Effects.update(dt);
+    if (typeof Receipts !== 'undefined') Receipts.update(dt);
     updateFreshnessHUD();
 
     // POS 화면 입력 중 — 조준/배치/미니게임 잠금(카메라는 모니터에 줌인됨)
@@ -2910,6 +2901,11 @@ const Game = (() => {
     }
 
     // 조준 & 프롬프트 (+ 내려놓기 파란 표시, 조준 대상 아웃라인)
+    // 영수증 보드 히트박스는 영수증을 들고 있을 때만 활성(평소 머신 조작 방해 방지)
+    if (typeof Receipts !== 'undefined' && env.machines.espressoBoards) {
+      const carrying = Receipts.isCarrying();
+      env.machines.espressoBoards.forEach(b => { if (b.hb) b.hb.userData.interactDisabled = !carrying; });
+    }
     const aimData = Player.aim();
     updateAimHighlight(aimData ? Player.aimedObject : null);
     const tamping = updateTampGame(dt, aimData);
@@ -2918,6 +2914,10 @@ const Game = (() => {
     const grinding = updateGrindGame(dt, aimData);
     let p = UI.prompt(aimData);
     if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
+    if (typeof Receipts !== 'undefined' && Receipts.isCarrying()) {   // 영수증 휴대 중 — 붙이기/내려놓기 안내
+      if (aimData && aimData.id === 'receiptBoard') p = '<b>[E]</b> 머신에 영수증 붙이기';
+      else { const surf = Player.aimSurface(); p = surf ? '<b>[E]</b> 영수증 내려놓기' : '평평한 곳·머신 보드를 보면 영수증을 놓을 수 있어요'; }
+    }
     let placePoint = null;
     const playSurfacePt = isSurfacePlaceableItem(held) ? Player.aimSurface() : null;
     const surfaceOverridesAim = !!(playSurfacePt && playSurfacePt.fridgeSurface);
@@ -2959,6 +2959,7 @@ const Game = (() => {
     scene = s; env = e;
     S = freshState();
     Effects.init(scene);
+    if (typeof Receipts !== 'undefined') Receipts.init(scene, env);
     // 표현/튜토리얼 모듈에 코어 상태 라이브 게터 + 헬퍼 주입
     UI.init({
       S: () => S, held: () => held, orders: () => orders, mode: () => mode,
@@ -2975,6 +2976,18 @@ const Game = (() => {
     // E/클릭: 스테이션 상호작용 → 없으면 표면에 내려놓기
     function onUse() {
       if (LatteArt.active) return;   // 라떼아트 진행 중엔 입력이 푸어(useDown)에만 쓰임
+      // 영수증을 들고 있으면 — 머신 보드에 붙이거나 표면에 내려놓기
+      if (typeof Receipts !== 'undefined' && Receipts.isCarrying()) {
+        const aim = Player.aim();
+        if (aim && aim.id === 'receiptBoard') {
+          if (Receipts.attachToMachine(aim.board)) return;
+          toast('영수증 붙일 자리가 없어요', 'bad'); AudioFX.err(); return;
+        }
+        const pt = Player.aimSurface();
+        if (pt) Receipts.dropAt(pt);
+        else { toast('평평한 곳이나 머신 보드를 봐야 영수증을 놓을 수 있어요', 'bad'); AudioFX.err(); }
+        return;
+      }
       const aimData = Player.aim();
       if (held && isSurfacePlaceableItem(held)) {
         const fridgePt = Player.aimSurface();
@@ -3007,17 +3020,9 @@ const Game = (() => {
     document.addEventListener('keydown', ev => {
       if (mode !== 'playing' && mode !== 'prep' && mode !== 'closing' && mode !== 'after') return;
       if (editing()) return;   // 편집 모드 중엔 에디터가 입력 처리
-      if (posOpen) {           // POS 메뉴 — 방향키/WASD 칸 이동, [E]/Enter/Space 선택, [Esc] 취소
-        if (ev.repeat) { ev.preventDefault(); return; }   // 길게 눌러도 한 칸씩
-        switch (ev.code) {
-          case 'ArrowUp': case 'KeyW': posNav(0, -1); break;
-          case 'ArrowDown': case 'KeyS': posNav(0, 1); break;
-          case 'ArrowLeft': case 'KeyA': posNav(-1, 0); break;
-          case 'ArrowRight': case 'KeyD': posNav(1, 0); break;
-          case 'KeyE': case 'Enter': case 'Space': posActivate(); break;
-          case 'Escape': closePos(); break;
-        }
-        ev.preventDefault();
+      if (posOpen) {           // POS 메뉴 — 마우스로 클릭 선택, [E]/Enter 확정, [Esc] 취소
+        if (ev.code === 'KeyE' || ev.code === 'Enter') confirmPos();
+        else if (ev.code === 'Escape') closePos();
         return;
       }
       if (ev.repeat) return;   // 키 오토리피트 무시 — 단발 입력만 처리
@@ -3046,11 +3051,28 @@ const Game = (() => {
     $('recipeBook').addEventListener('click', ev => {
       if (ev.target === $('recipeBook')) $('recipeBook').classList.add('hidden'); // 바깥 클릭으로 닫기
     });
+    // POS 모니터 클릭 — 화면 평면을 레이캐스트해 UV→캔버스 좌표로 변환, 해당 칸 동작 실행
+    function posUVtoCanvas(ev) {
+      if (!posOpen || !env.posScreen) return null;
+      const uv = Player.pickScreen(ev.clientX, ev.clientY, env.posScreen.mesh);
+      if (!uv) return null;
+      return { cx: uv.x * env.posScreen.W, cy: (1 - uv.y) * env.posScreen.H };
+    }
     document.addEventListener('mousedown', ev => {
-      if (posOpen) return;   // POS는 키보드 칸 이동 — 마우스 입력 무시(포인터 숨김)
+      if (posOpen) {   // POS 입력 중 — 마우스 포인터로 화면 클릭
+        if (ev.button === 0) { const p = posUVtoCanvas(ev); if (p) handlePosClick(p.cx, p.cy); }
+        return;
+      }
       if ((mode === 'playing' || mode === 'closing' || mode === 'after') && document.pointerLockElement && ev.button === 0 && !editing()) {
         useDown = true; onUse();
       }
+    });
+    document.addEventListener('mousemove', ev => {   // POS 칸 호버 하이라이트
+      if (!posOpen) return;
+      const p = posUVtoCanvas(ev);
+      const r = p ? posRectAt(p.cx, p.cy) : null;
+      const key = r ? r.hoverKey : null;
+      if (key !== posHoverKey) { posHoverKey = key; drawPosScreen(); }
     });
     // 탬핑 홀드 해제: [E]/좌클릭에서 손을 떼면 게이지 판정
     document.addEventListener('keyup', ev => { if (ev.code === 'KeyE') useDown = false; });

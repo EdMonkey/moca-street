@@ -98,6 +98,8 @@ const UI = (() => {
         if (!box) return null;
         return held ? '손을 비우면 택배박스를 들 수 있어요' : E + `${RESTOCK[box.kind].name} 택배박스 들기 (${box.amount}개)`;
       }
+      case 'receipt': return held ? '손을 비우면 영수증을 집을 수 있어요' : E + '영수증 집기 — 다른 곳으로 옮기기';
+      case 'receiptBoard': return null;   // 안내는 영수증 휴대 중 game.js가 표시
       case 'register': return Customers.frontCustomer() ? E + 'POS 열어 주문 받기' : '대기 중인 손님이 없습니다';
       case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
       case 'door': return E + (env.door && env.door.open ? '문 닫기' : '문 열기');
