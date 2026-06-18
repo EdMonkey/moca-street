@@ -12,6 +12,8 @@
  * ============================================================ */
 const Assets = (() => {
   const LIB_URL = 'assets/models/cafe_props.glb';
+  // 메인 라이브러리에 없는 추가 상태 모델(작은 별도 glb) — 로드 후 lib에 병합해 이름 조회에 합류시킨다.
+  const EXTRA_PROP_URLS = ['assets/models/milk_carton_folded.glb'];   // 찌그러진(빈) 우유곽
   const NPC_URL = 'assets/models/npc_character.glb';
   let lib = null;            // gltf.scene (라이브러리 루트)
   let npc = null;            // { scene, animations } — 손님 NPC 베이스(리깅 + idle/walk 애니)
@@ -93,8 +95,16 @@ const Assets = (() => {
       (gltf) => {
         lib = gltf.scene; lib.updateMatrixWorld(true);
         tuneMetals(lib);   // 스테인리스/크롬 등 금속 광택(환경맵 반사) 강화
-        // 카페 프롭 로드 후, 손님 NPC 베이스(애니 포함) + 외형 변형들 로드
-        loader.loadAsync(NPC_URL).then((g2) => {
+        // 추가 상태 모델(예: 찌그러진 우유곽)을 lib에 합류 → getObjectByName/spawn으로 동일하게 사용
+        Promise.all(EXTRA_PROP_URLS.map((u) =>
+          loader.loadAsync(u).then((ge) => {
+            ge.scene.children.slice().forEach((c) => lib.add(c));   // lib 자식으로 재부모화(clone 시 영향 없음)
+          }).catch((e) => console.warn('[Assets] 추가 프롭 로드 실패:', u, e))
+        )).then(() => {
+          lib.updateMatrixWorld(true);
+          // 카페 프롭 로드 후, 손님 NPC 베이스(애니 포함) + 외형 변형들 로드
+          return loader.loadAsync(NPC_URL);
+        }).then((g2) => {
           npc = { scene: g2.scene, animations: g2.animations || [] };
           npc.scene.updateMatrixWorld(true);
           npcVariants.push(npc.scene);   // 베이스도 손님 외형 하나로 포함
