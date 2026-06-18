@@ -20,7 +20,7 @@ const Tutorial = (() => {
     return [
       { text: '<b>W A S D</b>로 이동하고, 마우스로 주변을 둘러보세요',
         check: () => tut.startPos && Player.position.distanceTo(tut.startPos) > 2 },
-      { text: '<b>ORDER</b> 팻말 아래 계산대에서 <b>[E]</b>를 눌러 손님의 주문을 받으세요',
+      { text: '손님이 주문을 말하면 <b>ORDER</b> 팻말 아래 <b>POS 계산대</b>에서 <b>[E]</b>로 화면을 열고, 말한 메뉴를 직접 골라 <b>주문 확정</b>하세요',
         check: () => orders().length > 0 },
       { text: '<b>에스프레소 머신</b>에 빈손으로 다가가 <b>[E]</b>를 눌러 <b>포터필터</b>를 분리하세요',
         check: () => { const h = held(); return (h && h.type === 'portafilter') || env().machines.grinderJobs.some(j => j.busy); } },

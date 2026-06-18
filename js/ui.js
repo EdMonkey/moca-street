@@ -98,7 +98,7 @@ const UI = (() => {
         if (!box) return null;
         return held ? '손을 비우면 택배박스를 들 수 있어요' : E + `${RESTOCK[box.kind].name} 택배박스 들기 (${box.amount}개)`;
       }
-      case 'register': return Customers.frontCustomer() ? E + '주문 받기' : '대기 중인 손님이 없습니다';
+      case 'register': return Customers.frontCustomer() ? E + 'POS 열어 주문 받기' : '대기 중인 손님이 없습니다';
       case 'pickup': return held ? E + '서빙하기' : '완성된 음료를 들고 오세요';
       case 'door': return E + (env.door && env.door.open ? '문 닫기' : '문 열기');
       case 'placedItem': {
