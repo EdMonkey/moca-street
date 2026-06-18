@@ -908,7 +908,11 @@ const WORLD = (() => {
       scene.add(sign);
       env.staticBlockers.push({ x: cx, z: -1.0, w: 1.9, d: 0.85 });
 
-      const fridgePos = new THREE.Vector3(cx, 0, -1.03);
+      // 본체(PrepTableFridge)를 슬롯 중앙(cx)에 맞추기 위한 개구부 중심 보정.
+      // makeMilkFridgeMesh가 OFF=-0.192로 본체를 옮겨 개구부를 그룹 원점에 두므로,
+      // 그룹 원점(개구부)을 cx-0.192에 두면 본체 전체가 슬롯 중앙(cx)에 정렬된다.
+      const fOpenX = cx - 0.192;
+      const fridgePos = new THREE.Vector3(fOpenX, 0, -1.03);
       let fridgeRoot = makeMilkFridgeMesh(false);
       fridgeRoot.position.copy(fridgePos);
       fridgeRoot.rotation.y = Math.PI;
@@ -936,7 +940,7 @@ const WORLD = (() => {
       const fridgeSurfaceMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
       const addFridgeSurface = (level, topY) => {
         const fridgeSurface = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.02, 0.32), fridgeSurfaceMat);
-        fridgeSurface.position.set(cx, topY - 0.01, -1.17);
+        fridgeSurface.position.set(fOpenX, topY - 0.01, -1.17);
         fridgeSurface.userData.fridgeSurface = true;
         fridgeSurface.userData.fridgeLevel = level;
         fridgeSurface.userData.storageRot = Math.PI;
@@ -947,8 +951,8 @@ const WORLD = (() => {
       };
       addFridgeSurface('bottom', 0.21);
       addFridgeSurface('middle', 0.50);
-      const leftDoorHb = addI(hitbox(0.53, 0.64, 0.16, cx + 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
-      const rightDoorHb = addI(hitbox(0.53, 0.64, 0.16, cx - 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
+      const leftDoorHb = addI(hitbox(0.53, 0.64, 0.16, fOpenX + 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'left', staffSideOnly: true, staffSideZ: -1.2 }));
+      const rightDoorHb = addI(hitbox(0.53, 0.64, 0.16, fOpenX - 0.288, 0.485, -1.40, { id: 'milkFridgeDoor', side: 'right', staffSideOnly: true, staffSideZ: -1.2 }));
       const _doorHbV = new THREE.Vector3();
       function syncMilkFridgeDoorHitboxes() {
         // 문 히트박스를 실제 문짝의 월드 위치·회전에 맞춰 따라가게 한다.
@@ -969,7 +973,7 @@ const WORLD = (() => {
         place(leftDoorHb, lDoor, 0.262);     // 좌측 문: 경첩이 좌측 → 패널은 +x
         place(rightDoorHb, rDoor, -0.262);   // 우측 문: 경첩이 우측 → 패널은 -x
       }
-      const milkHb = addI(hitbox(1.0, 0.62, 0.3, cx, 0.5, -1.32, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
+      const milkHb = addI(hitbox(1.0, 0.62, 0.3, fOpenX, 0.5, -1.32, { id: 'milkFridgeMilk', staffSideOnly: true, staffSideZ: -1.2 }));
       milkHb.userData.outlineRoot = milkRoot;
       milkHb.userData.interactDisabled = true;
       env.machines.milkFridge = { root: fridgeRoot, milkRoot, milkCartons, milkVisibleCount: milkCartons.length, doorHitboxes: [leftDoorHb, rightDoorHb], milkHitbox: milkHb, surfaces: fridgeSurfaces, open: false };
