@@ -7,31 +7,29 @@
  * ============================================================ */
 const Receipts = (() => {
   const RECIPES = DATA.RECIPES, DESSERTS = DATA.DESSERTS;   // data.js 전역(DATA)에서 가져옴
-  let scene = null, env = null, carried = null;
+  let scene = null, env = null, carried = null, ghost = null;
   const list = [];                 // {order, group, paper, tex, canvas, bar, barMat, slot, state, t, served}
-  // 레일 슬롯(POS 왼쪽으로 일렬). 직원쪽(-z)을 향하도록 group.rotation.y=π.
-  const SLOT0 = { x: 2.05, y: 1.40, z: -0.95 };
-  const SLOT_DX = -0.175;
-  const WIRE_Y = 1.53;
-  const PRINT = { x: 2.5, y: 1.18, z: -1.12 };   // POS 인쇄구(영수증 출현 위치)
+  const PRINT = { x: 2.2, y: 1.17, z: -1.15 };   // 프린터 슬롯 폴백(출현 위치)
   const RW = 0.158, RH = 0.235;                  // 영수증 가로/세로(m)
   const CW = 256, CH = 380;                      // 캔버스 해상도
+  const COUNTER_Y = 1.0;                          // 카운터 상판
   const _cGreen = new THREE.Color(0x53c98a), _cRed = new THREE.Color(0xff5a47), _cTmp = new THREE.Color();
+  let outBase = null;              // 프린터 슬롯 월드 좌표(출력 영수증 정렬 기준)
 
   function init(s, e) {
     scene = s; env = e;
-    // 주문 레일(가는 가로 와이어) — 시각적 근거
-    const wire = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.006, 0.006, 1.7, 6),
-      new THREE.MeshStandardMaterial({ color: 0x6a7176, metalness: 0.7, roughness: 0.4 }));
-    wire.rotation.z = Math.PI / 2;
-    wire.position.set(SLOT0.x - 0.65, WIRE_Y, SLOT0.z);
-    wire.castShadow = false;
-    scene.add(wire);
+    const pr = e && e.machines && e.machines.receiptPrinter;
+    outBase = pr && pr.slot ? pr.slot.clone() : new THREE.Vector3(PRINT.x, PRINT.y, PRINT.z);
+    // 별도 주문 레일 없음 — 출력된 영수증은 프린터 앞 카운터에 세워 정렬된다.
   }
 
+  // 프린터 앞 카운터에 세워둔 출력 영수증 위치(왼쪽·앞쪽으로 살짝씩 펼침)
   function slotPos(slot) {
-    return { x: SLOT0.x + slot * SLOT_DX, y: SLOT0.y, z: SLOT0.z };
+    return {
+      x: outBase.x - 0.02 - slot * 0.04,
+      y: COUNTER_Y + RH / 2 + 0.006,
+      z: outBase.z - 0.10 - slot * 0.02
+    };
   }
 
   /* ----- 캔버스에 영수증 내용 그리기 ----- */
@@ -114,7 +112,10 @@ const Receipts = (() => {
     const bar = new THREE.Mesh(new THREE.PlaneGeometry(barW, 0.0086), barMat);
     bar.position.set(0, RH * (0.5 - (CH - 25) / CH), 0.0015);
     group.add(bar);
-    group.position.set(PRINT.x, PRINT.y, PRINT.z);
+    // 인쇄 시작점 — POS 옆 프린터 슬롯(있으면) 또는 폴백 PRINT
+    const printer = env && env.machines && env.machines.receiptPrinter;
+    const from = printer && printer.slot ? printer.slot : PRINT;
+    group.position.set(from.x, from.y, from.z);
     group.scale.setScalar(0.2);
     scene.add(group);
     // 집기용 히트박스(그룹 자식 → 영수증과 함께 이동). 도킹/거치 상태에서만 조준 활성.
@@ -124,7 +125,8 @@ const Receipts = (() => {
     hb.userData.outlineRoot = paper;
     hb.userData.interactDisabled = true;   // 인쇄 애니 중엔 비활성
     group.add(hb);
-    const r = { order, group, paper, tex, canvas, bar, barMat, hb, slot: 0, state: 'in', t: 0, served: false };
+    const r = { order, group, paper, tex, canvas, bar, barMat, hb, slot: 0, state: 'in', t: 0, served: false,
+      from: { x: from.x, y: from.y, z: from.z } };
     hb.userData.interact = { id: 'receipt', ref: r };
     if (env && env.interactables) env.interactables.push(hb);
     list.push(r);
@@ -156,8 +158,8 @@ const Receipts = (() => {
     const r = carried; carried = null;
     if (typeof Player !== 'undefined' && Player.carryDetach) Player.carryDetach(r.group);
     scene.add(r.group);
-    r.group.position.set(point.x, point.y + RH / 2 + 0.005, point.z);   // 표면 위에 세움
-    r.group.rotation.set(0, Math.PI, 0);
+    r.group.position.set(point.x, point.y + 0.004, point.z);   // 표면에 납작하게 눕힘
+    r.group.rotation.set(-Math.PI / 2, 0, 0);                  // 앞면이 위를 향하도록
     r.group.scale.setScalar(1);
     r.state = 'free';
     setGrabbable(r, true);
@@ -181,6 +183,20 @@ const Receipts = (() => {
     if (typeof AudioFX !== 'undefined' && AudioFX.put) AudioFX.put();
     return true;
   }
+
+  // ----- 배치 고스트 (영수증을 들고 표면을 조준할 때 놓일 위치 미리보기) -----
+  function showGhost(point) {
+    if (!carried || !point) { hideGhost(); return; }
+    if (!ghost) {
+      ghost = new THREE.Mesh(new THREE.PlaneGeometry(RW, RH),
+        new THREE.MeshBasicMaterial({ color: 0x66d9a8, transparent: true, opacity: 0.45, depthWrite: false, side: THREE.DoubleSide }));
+      ghost.rotation.set(-Math.PI / 2, 0, 0); ghost.renderOrder = 5; ghost.visible = false;
+      scene.add(ghost);
+    }
+    ghost.position.set(point.x, point.y + 0.004, point.z);   // dropAt과 동일하게 납작하게 눕힘
+    ghost.visible = true;
+  }
+  function hideGhost() { if (ghost) ghost.visible = false; }
 
   function find(order) { return list.find(r => r.order === order); }
 
@@ -226,21 +242,25 @@ const Receipts = (() => {
   function update(dt) {
     for (let i = list.length - 1; i >= 0; i--) {
       const r = list[i];
-      if (r.state === 'in') {
-        r.t = Math.min(1, r.t + dt / 0.6);
+      if (r.state === 'in') {   // 프린터에서 뽑혀 나와 카운터에 세워지는 출력 애니메이션
+        r.t = Math.min(1, r.t + dt / 0.65);
         const e = 1 - Math.pow(1 - r.t, 3);
         const sp = slotPos(r.slot);
+        const f = r.from;
         r.group.position.set(
-          PRINT.x + (sp.x - PRINT.x) * e,
-          PRINT.y + (sp.y - PRINT.y) * e,
-          PRINT.z + (sp.z - PRINT.z) * e);
-        r.group.scale.setScalar(0.2 + 0.8 * e);
-        r.group.rotation.z = (1 - e) * 0.5;
+          f.x + (sp.x - f.x) * e,
+          f.y + (sp.y - f.y) * e,
+          f.z + (sp.z - f.z) * e);
+        // 폭은 먼저 들어오고, 높이는 종이가 뽑혀나오듯 길어진다 + 살짝 흔들리며 안착
+        r.group.scale.set(0.5 + 0.5 * Math.min(1, e * 1.6), 0.12 + 0.88 * e, 1);
+        r.group.rotation.z = Math.sin(e * Math.PI) * 0.12;
         updateBar(r);
-        if (r.t >= 1) { r.state = 'docked'; r.group.scale.setScalar(1); r.group.rotation.z = 0; setGrabbable(r, true); }
+        if (r.t >= 1) { r.state = 'docked'; r.group.scale.set(1, 1, 1); r.group.rotation.z = 0; setGrabbable(r, true); }
       } else if (r.state === 'docked') {
         const sp = slotPos(r.slot);
-        r.group.position.x += (sp.x - r.group.position.x) * Math.min(1, dt * 8);
+        const k = Math.min(1, dt * 8);
+        r.group.position.x += (sp.x - r.group.position.x) * k;
+        r.group.position.z += (sp.z - r.group.position.z) * k;
         updateBar(r);
       } else if (r.state === 'held' || r.state === 'free' || r.state === 'board') {
         updateBar(r);   // 위치는 손/배치/머신이 제어 — 바만 갱신
@@ -265,5 +285,5 @@ const Receipts = (() => {
     }
   }
 
-  return { init, add, remove, refresh, update, clearAll, grab, dropAt, attachToMachine, isCarrying };
+  return { init, add, remove, refresh, update, clearAll, grab, dropAt, attachToMachine, isCarrying, showGhost, hideGhost };
 })();

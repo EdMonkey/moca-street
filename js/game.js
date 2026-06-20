@@ -2914,9 +2914,15 @@ const Game = (() => {
     const grinding = updateGrindGame(dt, aimData);
     let p = UI.prompt(aimData);
     if (tamping || steaming || dosing || grinding) p = null;   // 미니게임 중엔 안내 텍스트를 숨겨 게이지 바를 가리지 않게
-    if (typeof Receipts !== 'undefined' && Receipts.isCarrying()) {   // 영수증 휴대 중 — 붙이기/내려놓기 안내
-      if (aimData && aimData.id === 'receiptBoard') p = '<b>[E]</b> 머신에 영수증 붙이기';
-      else { const surf = Player.aimSurface(); p = surf ? '<b>[E]</b> 영수증 내려놓기' : '평평한 곳·머신 보드를 보면 영수증을 놓을 수 있어요'; }
+    if (typeof Receipts !== 'undefined' && Receipts.isCarrying()) {   // 영수증 휴대 중 — 붙이기/내려놓기 안내 + 고스트
+      if (aimData && aimData.id === 'receiptBoard') { p = '<b>[E]</b> 머신에 영수증 붙이기'; Receipts.hideGhost(); }
+      else {
+        const surf = Player.aimSurface();
+        if (surf) { p = '<b>[E]</b> 영수증 내려놓기'; Receipts.showGhost(surf); }
+        else { p = '평평한 곳·머신 보드를 보면 영수증을 놓을 수 있어요'; Receipts.hideGhost(); }
+      }
+    } else if (typeof Receipts !== 'undefined') {
+      Receipts.hideGhost();
     }
     let placePoint = null;
     const playSurfacePt = isSurfacePlaceableItem(held) ? Player.aimSurface() : null;

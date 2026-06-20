@@ -897,6 +897,20 @@ const WORLD = (() => {
       pmesh.userData.noOutline = true;
       scene.add(pmesh);
       env.posScreen = { mesh: pmesh, canvas: pcv, ctx: pcv.getContext('2d'), tex: ptex, W: pcv.width, H: pcv.height };
+
+      // ---- 영수증 프린터 (POS 옆, 작은 감열 프린터 — 주문 확정 시 여기서 영수증이 출력됨) ----
+      const pr = new THREE.Group();
+      pr.position.set(2.2, 1.0, -1.0);   // 카운터 상판(y=1.0) 위, POS 왼쪽
+      scene.add(pr);
+      pr.add(box(0.2, 0.15, 0.24, M().steelDark, 0, 0.075, 0));                 // 본체
+      const prLid = box(0.2, 0.045, 0.17, M().blackMatte, 0, 0.165, -0.015); prLid.rotation.x = -0.18; pr.add(prLid);  // 경사 덮개
+      pr.add(box(0.165, 0.014, 0.02, M().blackMatte, 0, 0.158, -0.115));        // 종이 배출 슬롯(검은 홈)
+      pr.add(box(0.14, 0.006, 0.04, M().cupWhite, 0, 0.162, -0.10));            // 살짝 나온 종이(장식)
+      const prLed = new THREE.Mesh(new THREE.SphereGeometry(0.008, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0x55dd77, emissive: 0x2fbb55, emissiveIntensity: 1.8 }));
+      prLed.position.set(-0.072, 0.085, -0.122); pr.add(prLed);
+      // 영수증이 출현하는 슬롯의 월드 위치 — receipts.js가 여기서 인쇄 시작
+      env.machines.receiptPrinter = { group: pr, slot: new THREE.Vector3(2.2, 1.17, -1.15) };
     })();
 
     /* ---------- 픽업대 ---------- */
